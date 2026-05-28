@@ -7,6 +7,7 @@ import { runMigrations } from './db/migrate.js';
 import { events, sessions } from './db/schema.js';
 import { canRunPg, ensureTestPg } from './db/testPg.js';
 import { StubAgentClient } from './agent/stubClient.js';
+import type { AgentClient } from './agent/client.js';
 import { createServer, type PolymathServer } from './server.js';
 import { deriveState, toLearnerState, type LoggedEvent } from './mastery/eventConsumer.js';
 import { loadLesson } from './lessons/loader.js';
@@ -394,6 +395,87 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
   });
 
   /**
+   * FAIL-path reachability (the I1 inert-refusal trap, the inverse of the PASS test):
+   * an explicit FAILING explain-back verdict must carry `passed:false` through the
+   * REAL fold (toLoggedEvent → deriveState → toLearnerState → evaluateMasteryGate) and
+   * block mastery with `explain_back_not_passed`. Same setup as the PASS test, but the
+   * explain-back turn carries `?testExplainBackVerdict=fail`. Proves the explicit-false
+   * verdict (not just the no-verdict default) is folded fail-closed end-to-end.
+   */
+  it('drives a FAILING explain-back verdict through the real fold and blocks with explain_back_not_passed', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const ws1 = new WebSocket(wsUrl);
+    const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
+      const frames: Record<string, unknown>[] = [
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+      ];
+      const out: Action[] = [];
+      let sent = 0;
+      ws1.on('open', () => ws1.send(JSON.stringify(frames[sent++])));
+      ws1.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          out.push(Action.parse(msg.action));
+          if (sent < frames.length) ws1.send(JSON.stringify(frames[sent++]));
+          else resolve(out);
+        }
+      });
+      ws1.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    ws1.close();
+    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+    expect(probedItemId).toBeTruthy();
+    await driveSequence(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+    ]);
+
+    // Explain-back turn carrying a FAILING verdict: the gate must NOT pass.
+    const wsEb = new WebSocket(`${wsUrl}?testExplainBackVerdict=fail`);
+    const after = await new Promise<Action>((resolve, reject) => {
+      wsEb.on('open', () =>
+        wsEb.send(
+          JSON.stringify({
+            kind: 'explain_back_recording_ended',
+            sessionId,
+            targetItemId: 'l1-and',
+            transcript: 'um, I am not sure',
+            durationMs: 20000,
+          }),
+        ),
+      );
+      wsEb.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') resolve(Action.parse(msg.action));
+      });
+      wsEb.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    wsEb.close();
+    // No celebration — the explicit-false verdict folds fail-closed.
+    expect(after.type === 'mount' && after.component.kind === 'MasteryCelebration').toBe(false);
+
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { gateEvaluation?: { passed: boolean; blockers: string[] }; explainBackVerdict?: { passed: boolean } } }[];
+    };
+    // The failing verdict was persisted and folded → the gate blocks with explain_back_not_passed.
+    expect(replay.events.some((e) => e.payload.explainBackVerdict?.passed === false)).toBe(true);
+    const lastGate = replay.events
+      .map((e) => e.payload.gateEvaluation)
+      .filter((g): g is { passed: boolean; blockers: string[] } => g !== undefined)
+      .at(-1);
+    expect(lastGate?.passed).toBe(false);
+    expect(lastGate?.blockers).toContain('explain_back_not_passed');
+  });
+
+  /**
    * F-12 AC#2 — the NEGATIVE path: a learner who clears rule + transfer + explain-back
    * but has tripped the off-topic budget. Drive REAL off-topic `learner_question`
    * turns (the agent's off_topic answers are counted by the real fold) past the
@@ -498,6 +580,58 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const rejection = replay.events.find((e) => e.payload.statechartDecision === 'reject');
     expect(rejection, 'a reject statechart decision should be logged').toBeTruthy();
     expect(rejection!.payload.statechartReason).toMatch(/^mastery_gate_failed:/);
+  });
+
+  /**
+   * SECURITY (earned-it gate, direct-mount route): a jailbroken/forged provider
+   * can try to mount `MasteryCelebration` DIRECTLY (bypassing the `transition→mastered`
+   * route the earned-it gate guards) with attacker-controlled `conceptsMastered`. A
+   * direct MasteryCelebration mount passes Zod + passes Layer-2 trivially (it carries
+   * no claimedTruthTable), so without an explicit earned-it check it would be forwarded
+   * to the learner. The server must downgrade it to `no_action` unless the full mastery
+   * gate is satisfied server-side — MasteryCelebration is server-minted only.
+   *
+   * Driven through the REAL fold (handleClientFrame): a dedicated forging agent boots
+   * its own server so the very first turn's proposal is the forged mount.
+   */
+  it('downgrades a forged direct MasteryCelebration mount when the gate is unsatisfied (earned-it, direct-mount route)', async () => {
+    const forgingAgent: AgentClient = {
+      propose: async (): Promise<Action> => ({
+        type: 'mount',
+        component: { kind: 'MasteryCelebration', conceptsMastered: ['AND', 'OR', 'NOT'] },
+        rationale: 'forged early celebration',
+      }),
+    };
+    const forgeServer = createServer({ db, agent: forgingAgent });
+    await new Promise<void>((resolve) => forgeServer.httpServer.listen(0, resolve));
+    const { port } = forgeServer.httpServer.address() as AddressInfo;
+    const forgeBase = `http://localhost:${port}`;
+    const forgeWs = `ws://localhost:${port}/agent`;
+    try {
+      const { sessionId } = (await (await fetch(`${forgeBase}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const ws = new WebSocket(forgeWs);
+      const action = await new Promise<Action>((resolve, reject) => {
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({ kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') resolve(Action.parse(msg.action));
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('timed out')), 8000);
+      });
+      ws.close();
+      // The forged celebration is REJECTED at the first turn (gate cannot be satisfied)
+      // → downgraded to no_action, NOT forwarded with attacker-controlled concepts.
+      expect(action.type).toBe('no_action');
+    } finally {
+      await forgeServer.close();
+    }
   });
 
   it('refuses a transfer_submitted for an item the session never probed (forgery defense)', async () => {
