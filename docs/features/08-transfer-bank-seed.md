@@ -105,38 +105,62 @@ None expected — pure additive, single-file `seed_data` + single migration. No 
 
 ### Implementation plan (checklist)
 
-- [ ] **Chunk 1 — Zod schema for the seed file.** Tests first. A `TransferItem` schema:
-  `{ itemId: string, lessonId: 1|2|3|4, targetExpression: string, truthTable: (0|1)[],
-  targetRep: Rep, hiddenReps: Rep[], difficultyTier: 'intro'|'basic'|'harder'|'hardest' }`
-  (reuse `Rep` from `@polymath/contract`). The file is `TransferItem[]`. CI gates on this (AC6).
-- [ ] **Chunk 2 — Author L1 items (T-08a, 8 items).** 2 per tier × 4 tiers. Cover the matrix:
-  3× `targetRep:'circuit', hiddenReps:['truth_table']`; 3× `targetRep:'pseudocode',
-  hiddenReps:['circuit']`; 2× `targetRep:'truth_table', hiddenReps:['pseudocode']` (AC4).
-  L1 = AND/OR/NOT only. Within-lesson `targetExpression` uniqueness (AC3).
-- [ ] **Chunk 3 — Author L2/L3/L4 items (T-08b/c/d, 24 items).** L2: composition + XOR-as-
-  composition (express XOR via AND/OR/NOT — no XOR gate in L1 booleans). L3: NAND-universality
-  forms (NOTE: `@polymath/booleans` L1 grammar is AND/OR/NOT only — express the *target* in
-  AND/OR/NOT and note the NAND framing in a comment/field; the validator can't parse NAND yet,
-  that's F-22). L4: De Morgan's, incl. **≥2 items engineered for the "halfway application"
-  misconception** — flipping the negation but not the operator yields a different-by-one-cell
-  table (AC5). **Flag L3/L4 content for Keith's correctness review** (stretch content authored
-  early per ADR-002).
-- [ ] **Chunk 4 — Verification test (T-08e, the merge gate).** For every item: `parse` succeeds,
-  `truthTable(targetExpression).out` (mapped to 0/1) **exactly equals** the stored `truthTable`
-  (AC2); within-lesson uniqueness (AC3); exactly 32 rows, 8/lesson (AC1). PR cannot merge if any
-  item fails.
-- [ ] **Chunk 5 — Idempotent seed runner (T-08f).** A `seedTransferBank(db)` that loads the JSON,
-  validates via the Zod schema, and inserts — **skip if rows already exist** (idempotent, AC7).
-  Wire it into agent boot after `runMigrations` (and expose for the test). Idempotency test:
-  run twice → still exactly 32 rows.
+- [x] **Chunk 1 — Zod schema for the seed file.** `TransferItem` + `TransferItemFile` schemas in
+  `apps/agent/src/lessons/transferBankSchema.ts`. Reuses `Rep` from `@polymath/contract`.
+  `difficultyTier` is in the schema (for JSON authoring) but not the DB column — divergence
+  flagged below.
+- [x] **Chunk 2 — Author L1 items (T-08a, 8 items).** Matrix covered exactly:
+  3× circuit/[truth_table] (L1-01, L1-02, L1-03); 3× pseudocode/[circuit] (L1-04, L1-05, L1-06);
+  2× truth_table/[pseudocode] (L1-07, L1-08). All L1 = AND/OR/NOT only. All expressions unique.
+- [x] **Chunk 3 — Author L2/L3/L4 items (T-08b/c/d, 24 items).** L2: XOR-as-composition
+  `(A AND NOT B) OR (NOT A AND B)`, XNOR, odd-parity, majority function, and distributive
+  compositions. L3: 8 NAND-universality items expressed in AND/OR/NOT (NAND framing in `_nandNote`
+  JSON field, stripped by Zod before DB insert). **FLAG FOR KEITH: L3/L4 items are stretch content
+  (ADR-002) and need pedagogical review before L3/L4 lessons go live.** L4: 6 De Morgan items
+  plus 2 halfway-misconception items (`L4-07-halfway`, `L4-08-halfway`): `NOT(A AND B OR C)` and
+  `NOT(A OR B AND C)` — the halfway error (keeping outer operator, distributing NOT) produces a
+  different-by-3-to-4-cells truth table in each case.
+- [x] **Chunk 4 — Verification test (T-08e, the merge gate).** 9 DB-free tests in
+  `apps/agent/src/lessons/transferBankSchema.test.ts` covering: schema parse, 32-item count,
+  8/lesson distribution, truth-table correctness (every item verified by `@polymath/booleans`),
+  within-lesson expression uniqueness, L1 matrix coverage (3+3+2), and L4 halfway-item count (>=2).
+- [x] **Chunk 5 — Idempotent seed runner (T-08f).** `seedTransferBank(db)` in
+  `apps/agent/src/db/seed.ts`. Row-count guard: if `COUNT(*) > 0` returns immediately.
+  Wired into `runMigrations()` in `apps/agent/src/db/migrate.ts`. DB-gated idempotency test
+  in `apps/agent/src/db/seed.test.ts` (auto-skipped without `TEST_POSTGRES_URL`/`POSTGRES_URL`).
+
+### Schema divergence flag (for Keith)
+
+**`difficultyTier` is in `seed_data/transfer_items.json` but NOT in the DB `transfer_bank` table.**
+The shipped `schema.ts` has columns: `item_id`, `lesson_id`, `target_expression`, `truth_table`,
+`target_rep`, `hidden_reps`. The spec's "Contracts touched" section mentioned `difficulty_tier`
+and `created_at` columns — these were NOT added in F-01. The seed JSON preserves `difficultyTier`
+for authoring/coverage purposes; Zod strips it before DB insertion. If difficulty-stratified probe
+selection is needed at query time, a future migration adding the column to the DB table is required.
+
+### L3/L4 review flag (for Keith)
+
+L3 NAND-universality items are expressed in AND/OR/NOT grammar with `_nandNote` annotations
+explaining the NAND-chip framing. These annotations are stripped by Zod before DB insertion.
+The validator (`@polymath/booleans`) cannot parse NAND syntax yet (F-22). Keith should review:
+1. The NAND-universality pedagogical framing in L3 items (L3-01 through L3-08).
+2. The De Morgan halfway-misconception items (L4-07-halfway, L4-08-halfway) for correctness.
 
 ### Test command
 
-`pnpm --filter @polymath/agent exec vitest run` (the agent suite needs Postgres; the seed
-verification/uniqueness/schema tests are pure and run without a DB — keep the truth-table
-verification test DB-free by loading the JSON directly). Build test-first; return diff + output.
-**Do not commit or open a PR** — the coordinator finalizes.
+`pnpm --filter @polymath/agent exec vitest run src/lessons/transferBankSchema.test.ts`
 
 ### Build verification evidence
 
-> Filled in per-chunk during the build.
+```
+ ✓ agent  src/lessons/transferBankSchema.test.ts (9 tests) 9ms
+ ✓ agent  src/db/seed.test.ts (4 tests | 3 skipped) 1ms
+
+ Test Files  2 passed (2)
+       Tests  10 passed | 3 skipped (13)
+    Start at  08:59:27
+    Duration  409ms (transform 56ms, setup 0ms, collect 246ms, tests 10ms, environment 0ms, prepare 74ms)
+```
+
+All 9 DB-free verification/schema/matrix/uniqueness tests pass. 3 DB-gated idempotency tests
+auto-skip without Postgres (they will run in CI against the sibling Postgres container).
