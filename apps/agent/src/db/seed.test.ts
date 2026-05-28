@@ -1,30 +1,24 @@
 /**
- * DB-GATED: This test requires a live Postgres connection via `TEST_POSTGRES_URL`
- * or `POSTGRES_URL`. If no DB is reachable it is skipped automatically — it will
- * run in CI against the sibling Postgres container.
- *
- * Tests: seedTransferBank idempotency (run twice → exactly 32 rows each time)
- * and row-count/schema smoke after seeding.
+ * seedTransferBank idempotency. Runs against a real Postgres — provisioned via the
+ * shared `ensureTestPg` helper (an external `TEST_POSTGRES_URL`, else a throwaway
+ * Docker container). It only skips when the environment has neither a DB URL nor
+ * Docker — a genuine capability gap, not a default.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { createDb, type Db } from './client.js';
 import { runMigrations } from './migrate.js';
 import { seedTransferBank } from './seed.js';
+import { canRunPg, ensureTestPg } from './testPg.js';
 import pg from 'pg';
 
-const connectionString =
-  process.env['TEST_POSTGRES_URL'] ?? process.env['POSTGRES_URL'] ?? '';
-
-const dbAvailable = connectionString.length > 0;
-
-describe.skipIf(!dbAvailable)('seedTransferBank — idempotency (DB-gated)', () => {
+describe.skipIf(!canRunPg)('seedTransferBank — idempotency', () => {
   let db: Db;
   let pool: pg.Pool;
 
   beforeAll(async () => {
-    // The CI Postgres is a fresh container with no schema — apply migrations
-    // first so `transfer_bank` exists (matches the integration test's pattern).
+    const connectionString = await ensureTestPg();
+    // Fresh container has no schema — apply migrations so `transfer_bank` exists.
     await runMigrations(connectionString);
 
     const client = createDb(connectionString);
@@ -33,7 +27,7 @@ describe.skipIf(!dbAvailable)('seedTransferBank — idempotency (DB-gated)', () 
 
     // Clean the table before the test so we can seed from scratch.
     await db.execute(sql`DELETE FROM transfer_bank`);
-  });
+  }, 60000);
 
   afterAll(async () => {
     await pool.end();
@@ -82,10 +76,3 @@ describe.skipIf(!dbAvailable)('seedTransferBank — idempotency (DB-gated)', () 
   });
 });
 
-describe.skipIf(dbAvailable)('seedTransferBank — skipped (no DB available)', () => {
-  it('no DB — test is DB-gated; run with TEST_POSTGRES_URL set', () => {
-    // This is a documentation placeholder: the idempotency test requires Postgres.
-    // DB-free tests are in transferBankSchema.test.ts.
-    expect(true).toBe(true);
-  });
-});
