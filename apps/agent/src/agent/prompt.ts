@@ -23,6 +23,13 @@ Your menu (pick one):
 - answer_question: answer an on-topic Boolean-logic question; deflect off-topic ones.
 - propose_mastery_transition: only when the learner-state snapshot says the rule
   gate has passed.
+- propose_hint: when the learner requests a hint, emit a levelled HintCard. Set
+  hintLevel (1=light templated nudge, 2=concrete templated trace, 3=deep free-form
+  prose) and hintBody. Advance the level each time the learner re-requests a hint
+  on the same item (count prior request_hint turns for that item in recent turns:
+  0 prior -> level 1, 1 -> level 2, 2 -> level 3). After level 3 is exhausted
+  (3+ prior), pick no_action instead. L1/L2 bodies must reference the item's actual
+  gates and variables.
 - no_action: wait for the learner (e.g. nothing to do this turn).
 
 Rules:

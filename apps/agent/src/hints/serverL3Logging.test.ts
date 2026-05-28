@@ -2,8 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { Action } from '@polymath/contract';
 
 /**
- * Unit tests for the L3 hint validation logging logic in server.ts (criterion 7).
- * Tests the _decision logic_ in isolation without a real DB or WebSocket.
+ * LOGIC-UNIT TEST (criterion 7). This exercises the validation-layer *decision
+ * rule* that handleClientFrame applies before writing the events row — it
+ * deliberately re-implements that small rule here so it runs with NO Postgres
+ * and NO WebSocket (the agent integration test needs a DB and is skipped when
+ * one isn't reachable). The real-path coverage — that handleClientFrame actually
+ * writes this `validation` object into the `events` table — lives in
+ * server.integration.test.ts, which drives the real server against a live DB.
+ * Keeping a fast offline check here means the rule can't silently rot when the
+ * DB-backed suite is skipped locally; the copy below must stay in sync with
+ * server.ts's isL3Hint / validationLayer / validationStatus block.
  *
  * The production code in handleClientFrame sets:
  *   - layer: 3, status: 'unverified_prose'  for a HintCard level-3 mount
@@ -11,8 +19,8 @@ import type { Action } from '@polymath/contract';
  *   - layer: 1, status: 'pass'              for non-mount actions
  */
 
-/** Replicate the server's validation-layer determination logic (minimal
- *  copy so we can unit-test it without the full DB stack). */
+/** Mirror of the server's validation-layer determination logic (see the header
+ *  comment for why this is a copy, not a call into server.ts). */
 function determineValidation(
   shaped: Action,
   layer2Ok: boolean,

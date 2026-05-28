@@ -1,7 +1,7 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
 import type { AgentInput, MoveProvider } from './client.js';
-import type { ProposedItem, TacticalMove } from './menu.js';
+import { F06_MENU, type ProposedItem, type TacticalMove } from './menu.js';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompt.js';
 
 /**
@@ -28,16 +28,11 @@ const ItemSchema = z.object({
  *  Flat (not a discriminated union of disjoint shapes) so OpenAI strict JSON-schema
  *  mode accepts it; we narrow by `move` and read the relevant fields. */
 const MoveSchema = z.object({
-  move: z.enum([
-    'next_practice_item',
-    'simpler_item',
-    'rephrase',
-    'worked_example',
-    'alt_representation',
-    'answer_question',
-    'propose_mastery_transition',
-    'no_action',
-  ]),
+  // The enum is the agent's full internal menu (F06_MENU = F05 moves + the F-06
+  // hint). Sourcing it from the menu module keeps the LLM's option set in lockstep
+  // with the TacticalMove union — adding a menu move can't silently leave the
+  // keyed path unable to emit it.
+  move: z.enum(F06_MENU),
   rationale: z.string(),
   item: ItemSchema.nullable(),
   tier: z.number().nullable(),
@@ -49,6 +44,10 @@ const MoveSchema = z.object({
   answer: z.string().nullable(),
   topicClassification: z.enum(['on_topic', 'off_topic']).nullable(),
   noActionReason: z.enum(['wait_for_learner', 'thinking', 'agent_unsure']).nullable(),
+  /** ADR-010 Layer 3 hint fields (F-06). `hintLevel` selects the ladder rung;
+   *  `hintBody` is the templated (L1/L2) or free-form (L3) text. */
+  hintLevel: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable(),
+  hintBody: z.string().nullable(),
 });
 type RawMove = z.infer<typeof MoveSchema>;
 
@@ -86,6 +85,13 @@ function toTacticalMove(raw: RawMove): TacticalMove {
       };
     case 'propose_mastery_transition':
       return { move: 'propose_mastery_transition', rationale: r };
+    case 'propose_hint':
+      return {
+        move: 'propose_hint',
+        level: raw.hintLevel ?? 1,
+        body: raw.hintBody ?? '',
+        rationale: r,
+      };
     case 'no_action':
       return { move: 'no_action', reason: raw.noActionReason ?? 'agent_unsure', rationale: r };
   }

@@ -94,6 +94,57 @@ describe('L1/L2 slot-value subset property (ADR-010 Layer 3)', () => {
   }
 });
 
+/**
+ * Extract the gate/variable references actually present in a rendered hint
+ * string: every standalone single uppercase letter (a variable reference) and
+ * every gate keyword (AND/OR/NOT). Prose words ("Look", "output", "gate") are
+ * lowercase or multi-letter common words and are ignored — criterion 6 is about
+ * the item-content references, not the surrounding prose.
+ */
+function renderedItemReferences(text: string): Set<string> {
+  const refs = new Set<string>();
+  // Standalone single uppercase letters = variable references (e.g. "A", "B").
+  // \b ensures we don't catch the "A" inside "AND".
+  for (const m of text.matchAll(/\b[A-Z]\b/g)) refs.add(m[0]);
+  // Gate keywords as whole words.
+  for (const kw of ['AND', 'OR', 'NOT'] as const) {
+    if (new RegExp(`\\b${kw}\\b`).test(text)) refs.add(kw);
+  }
+  return refs;
+}
+
+describe('rendered hint text references only the item\'s own tokens (criterion 6)', () => {
+  /**
+   * Criterion 6 verbatim: "verifiable by reading the rendered hint text against
+   * the item's targetExpression." We render the actual L1/L2 body and assert
+   * every gate/variable reference in it is a member of the item's token set.
+   */
+  for (const expr of LESSON_1_EXPRESSIONS) {
+    it(`rendered L1 body references ⊆ item tokens for "${expr}"`, () => {
+      const body = generateL1(expr);
+      expect(body).not.toBeNull();
+      const tokens = itemTokens(expr);
+      const refs = renderedItemReferences(body!);
+      // At least one item reference must appear (the hint is item-specific).
+      expect(refs.size).toBeGreaterThan(0);
+      for (const ref of refs) {
+        expect(tokens.has(ref), `L1 body for "${expr}" referenced "${ref}" not in ${[...tokens].join(',')}`).toBe(true);
+      }
+    });
+
+    it(`rendered L2 body references ⊆ item tokens for "${expr}"`, () => {
+      const body = generateL2(expr);
+      expect(body).not.toBeNull();
+      const tokens = itemTokens(expr);
+      const refs = renderedItemReferences(body!);
+      expect(refs.size).toBeGreaterThan(0);
+      for (const ref of refs) {
+        expect(tokens.has(ref), `L2 body for "${expr}" referenced "${ref}" not in ${[...tokens].join(',')}`).toBe(true);
+      }
+    });
+  }
+});
+
 describe('generateL1 / generateL2', () => {
   it('returns a non-empty string for each L1 lesson expression', () => {
     for (const expr of LESSON_1_EXPRESSIONS) {

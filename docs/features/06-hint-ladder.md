@@ -96,3 +96,12 @@ F-09 owns `learner_state` as the single writer. Per spec criterion 9, `hintsUsed
 - `packages/contract/src/action.ts` — HintCard is a `mount` of the existing `mount` variant; no new wire variant needed.
 - `packages/statechart/src/lesson.ts` — the `hint` phase already exists; no spine changes needed.
 - `learner_state` — not written; F-09 reads hint count from the event log.
+
+### Adversarial review fixes
+
+- **C1 (keyed path):** the OpenAI provider (`openaiClient.ts`) couldn't emit a hint — its `MoveSchema.move` enum + `toTacticalMove` were still the F-05 menu. Fixed: `MoveSchema.move` now sources its enum from `F06_MENU` (was a dead export), added nullable `hintLevel`/`hintBody` schema fields + a `propose_hint` case in `toTacticalMove`, and added a `propose_hint` entry to the system prompt's menu enumeration (`prompt.ts`) describing the per-item level ladder. So with `OPENAI_API_KEY` set, a `request_hint` now routes to a real levelled HintCard (criteria 4/10 reachable in deployment, not just the heuristic path).
+- **C3:** added a rendered-text subset test in `templates.test.ts` — renders the actual L1/L2 body and asserts every gate/variable reference in the prose is a member of the item's token set (criterion 6 verbatim: "verifiable by reading the rendered hint text").
+- **C4:** documented that `serverL3Logging.test.ts` is a logic-unit test (offline, mirrors the server rule) with real-path coverage in the DB-backed `server.integration.test.ts`.
+
+### Deferred to integration (per reviewer)
+- **Server-side hint refusal during `transferring` (criterion 8):** the agent can't currently see the lesson `phase` (it's not threaded into `AgentInput`), which is a cross-cutting change. The UI already disables the Hint button during `transferring`; the reviewer is threading `phase` into `AgentInput` and adding the server-side refusal at integration. Left the UI-disable as the only guard here.
