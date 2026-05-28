@@ -91,3 +91,24 @@ export type LessonMachine = typeof lessonMachine;
 /** The machine's phase state names. Cross-checked against the `PhaseName`
  *  contract enum at runtime in the test suite (state nodes ↔ contract phases). */
 export const LESSON_PHASES = Object.keys(lessonMachine.states) as PhaseName[];
+
+/**
+ * ADR-005 refusal #2 (the transfer-probe hidden-rep refusal), as a pure guard.
+ * During the `transferring` phase, mounting (or revealing) a representation listed
+ * in the probe's `hiddenReps` is refused — even if the learner explicitly asks.
+ * Outside `transferring` nothing is hidden. Kept in the statechart package (the
+ * owner of *when* the UI may change) and pure so both the web mount path and the
+ * tests consult the same predicate.
+ *
+ * `rep` is the representation a candidate mount would reveal; `hiddenReps` is the
+ * active probe's held-out set (empty when not probing).
+ */
+export function isHiddenRepMountRefused(
+  phase: string,
+  rep: string | undefined,
+  hiddenReps: readonly string[],
+): boolean {
+  if (phase !== 'transferring') return false;
+  if (rep === undefined) return false;
+  return hiddenReps.includes(rep);
+}

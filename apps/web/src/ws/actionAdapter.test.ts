@@ -37,6 +37,34 @@ describe('adaptAction', () => {
     expect(adaptAction({ type: 'no_action', reason: 'thinking', rationale: 'r' })).toEqual({});
   });
 
+  it('refuses a mount that would reveal a hidden rep during a transfer probe (ADR-005 #2)', () => {
+    const ctx = { phase: 'transferring', hiddenReps: ['truth_table'] as const };
+    const r = adaptAction(
+      {
+        type: 'mount',
+        component: { kind: 'TruthTablePractice', expression: 'A AND B', claimedTruthTable: [0, 0, 0, 1], visibleReps: ['truth_table'] },
+        rationale: 'agent tried to bring back the truth table',
+      },
+      ctx,
+    );
+    expect(r.refused).toBe(true);
+    expect(r.mount).toBeUndefined();
+  });
+
+  it('allows the target rep mount during a transfer probe', () => {
+    const ctx = { phase: 'transferring', hiddenReps: ['truth_table'] as const };
+    const r = adaptAction(
+      {
+        type: 'mount',
+        component: { kind: 'TransferProbe', expression: 'A AND B', hiddenReps: ['truth_table'], targetRep: 'circuit', itemId: 'L1-01' },
+        rationale: 'mount the probe',
+      },
+      ctx,
+    );
+    expect(r.refused).toBeUndefined();
+    expect(r.mount?.kind).toBe('TransferProbe');
+  });
+
   it('the emitted lessonEvents actually drive the real statechart spine', () => {
     const actor = createActor(lessonMachine, { input: { lessonId: 1 } }).start();
     // intro → practicing via a mounted practice item

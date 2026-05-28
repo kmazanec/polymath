@@ -1,5 +1,5 @@
-import type { Action, ComponentSpec, PhaseName } from '@polymath/contract';
-import type { LessonEvent } from '@polymath/statechart';
+import type { Action, ComponentSpec, PhaseName, Rep } from '@polymath/contract';
+import { type LessonEvent, isHiddenRepMountRefused } from '@polymath/statechart';
 
 /**
  * Bridge the server's wire `Action` into the web's two consumers: the lesson
@@ -23,6 +23,16 @@ export interface AdapterResult {
   mount?: ComponentSpec;
   /** An answer to surface to the learner, if this Action is a Q&A response. */
   answer?: { question: string; answer: string; topicClassification: 'on_topic' | 'off_topic' };
+  /** True when a mount was refused by the transfer-probe hidden-rep guard
+   *  (ADR-005 refusal #2). The caller drops the mount and may surface the refusal. */
+  refused?: boolean;
+}
+
+/** The runtime context the adapter needs to enforce the transfer-probe refusal:
+ *  the current phase and the active probe's held-out reps. */
+export interface AdapterContext {
+  phase: string;
+  hiddenReps: readonly Rep[];
 }
 
 /** ComponentSpec kinds that put the learner into the `practicing` phase. */
@@ -32,6 +42,21 @@ const PRACTICE_KINDS = new Set<ComponentSpec['kind']>([
   'PseudocodeChallenge',
   'WorkedExample',
 ]);
+
+/** Which representation a mounted component would reveal (undefined for non-rep
+ *  components like AgentAnswer / HintCard / MasteryCelebration). */
+function repOf(spec: ComponentSpec): Rep | undefined {
+  switch (spec.kind) {
+    case 'TruthTablePractice':
+      return 'truth_table';
+    case 'CircuitBuilder':
+      return 'circuit';
+    case 'PseudocodeChallenge':
+      return 'pseudocode';
+    default:
+      return undefined;
+  }
+}
 
 /** Map a contract `PhaseName` transition target to the `LessonEvent` that reaches
  *  it from the current spine. Only the transitions the agent can drive in F-05. */
@@ -50,9 +75,14 @@ function transitionEvent(to: PhaseName): LessonEvent | undefined {
   }
 }
 
-export function adaptAction(action: Action): AdapterResult {
+export function adaptAction(action: Action, ctx?: AdapterContext): AdapterResult {
   switch (action.type) {
     case 'mount': {
+      // ADR-005 refusal #2: during a transfer probe, a mount that would reveal a
+      // held-out rep is refused — the agent cannot bring back a hidden scaffold.
+      if (ctx && isHiddenRepMountRefused(ctx.phase, repOf(action.component), ctx.hiddenReps)) {
+        return { refused: true };
+      }
       const result: AdapterResult = { mount: action.component };
       if (PRACTICE_KINDS.has(action.component.kind)) {
         result.lessonEvent = { type: 'start_practice' };

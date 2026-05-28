@@ -5,6 +5,7 @@ import { CircuitBuilder } from './CircuitBuilder.js';
 import { PseudocodeChallenge } from './PseudocodeChallenge.js';
 import { TruthTable } from './TruthTable.js';
 import { AgentAnswer } from './AgentAnswer.js';
+import { TransferProbe } from './TransferProbe.js';
 
 /**
  * The curated component registry renderer (ADR-005). A single exhaustive switch
@@ -68,10 +69,11 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
       );
     case 'AgentAnswer':
       return <AgentAnswer spec={spec} />;
+    case 'TransferProbe':
+      return <TransferProbe spec={spec} onSubmit={onSubmit} />;
     case 'IntroExplanation':
     case 'WorkedExample':
     case 'HintCard':
-    case 'TransferProbe':
     case 'ExplainBackPrompt':
     case 'ConfidenceCheck':
     case 'MasteryCelebration':

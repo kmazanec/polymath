@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createActor } from 'xstate';
 import { PhaseName } from '@polymath/contract';
-import { lessonMachine, LESSON_PHASES } from './lesson.js';
+import { lessonMachine, LESSON_PHASES, isHiddenRepMountRefused } from './lesson.js';
 
 function start(masteryReady = false) {
   const actor = createActor(lessonMachine, {
@@ -99,5 +99,24 @@ describe('lesson_1 machine definition (Stately-importable)', () => {
 
   it('marks mastered as a final state', () => {
     expect(lessonMachine.states.mastered.type).toBe('final');
+  });
+});
+
+describe('isHiddenRepMountRefused (ADR-005 refusal #2)', () => {
+  it('refuses mounting a hidden rep during transferring', () => {
+    expect(isHiddenRepMountRefused('transferring', 'truth_table', ['truth_table'])).toBe(true);
+  });
+
+  it('allows the target rep (not hidden) during transferring', () => {
+    expect(isHiddenRepMountRefused('transferring', 'circuit', ['truth_table'])).toBe(false);
+  });
+
+  it('hides nothing outside the transferring phase', () => {
+    expect(isHiddenRepMountRefused('practicing', 'truth_table', ['truth_table'])).toBe(false);
+    expect(isHiddenRepMountRefused('assessed', 'circuit', ['circuit'])).toBe(false);
+  });
+
+  it('is a no-op when the candidate has no rep (e.g. an AgentAnswer mount)', () => {
+    expect(isHiddenRepMountRefused('transferring', undefined, ['truth_table'])).toBe(false);
   });
 });
