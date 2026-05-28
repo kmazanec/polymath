@@ -246,6 +246,21 @@ graph TB
 >   drove the spine into `transferring` in the running app (the refusal was inert). The fix + the
 >   lesson: **for statechart-gated behavior, include an end-to-end test that drives the real spine
 >   through the adapter**, not just the guard in isolation.
+>
+> **Lessons from the MR !4 AI review (caught by the reviewer, missed by the adversarial subagents):**
+> - **The "fail closed on the mastery gate" class.** The heuristic declared `mastered` on a passed
+>   transfer / empty bank even though `mastery_config` requires explain-back (unbuilt in I1). The
+>   adversarial reviewers checked each condition in isolation but not "is a *partial* gate being treated
+>   as a *full* pass." **Brief the spec-compliance reviewer with a mastery-gate lens** on any feature
+>   that can emit a mastery/transition action: does a satisfied sub-condition ever short-circuit an
+>   unmet one? Codified in CLAUDE.md → invariants (the gate fails closed).
+> - **The var-cap is needed on EVERY learner-input `equivalent()` call, not just the obvious one.** F-09
+>   added it to the transfer-verdict path but not the BKT submit-correctness path (same DoS). **The
+>   security review lens for any boolean-equivalence call must enumerate all call sites**, not just the
+>   one the feature is "about." Codified in CLAUDE.md → invariants.
+> - **Outbound actions need an *earned-it* gate, not only Zod + Layer-2.** A forged/early `TransferProbe`
+>   passed shape + truth-table checks. The server now also checks `ruleGatePassed` + bank-membership.
+>   Codified in CLAUDE.md → invariants (semantic outbound gate).
 
 ### I2 — Voice + full mastery gate (3 features, mostly serial)
 
