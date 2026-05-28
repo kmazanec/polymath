@@ -294,4 +294,95 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     expect(verdicts.length).toBeGreaterThanOrEqual(1);
     expect(verdicts.every((v) => v!.correct === false)).toBe(true);
   });
+
+  describe('POST /api/realtime/session (ephemeral LiveKit token)', () => {
+    // The endpoint reads LiveKit credentials from env at request time; these
+    // tests set/unset them around each case and restore the prior values so the
+    // rest of the suite (and other suites in the run) see no leaked env.
+    const ENV_KEYS = ['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const;
+    let saved: Record<string, string | undefined>;
+
+    beforeAll(() => {
+      saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]])) as Record<
+        string,
+        string | undefined
+      >;
+    });
+
+    afterAll(() => {
+      for (const k of ENV_KEYS) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    });
+
+    function setVoiceEnv(): void {
+      process.env.LIVEKIT_URL = 'wss://livekit.example.com';
+      process.env.LIVEKIT_API_KEY = 'devkey';
+      process.env.LIVEKIT_API_SECRET = 'devsecret-at-least-32-bytes-long-padding';
+    }
+    function clearVoiceEnv(): void {
+      delete process.env.LIVEKIT_API_KEY;
+      delete process.env.LIVEKIT_API_SECRET;
+    }
+
+    it('mints a 201 token scoped to the session room for a known session', async () => {
+      setVoiceEnv();
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const res = await fetch(`${baseUrl}/api/realtime/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        token: string;
+        url: string;
+        roomName: string;
+        expiresAt: number;
+      };
+      expect(typeof body.token).toBe('string');
+      expect(body.token.split('.')).toHaveLength(3); // a JWT
+      expect(body.roomName).toBe(`session-${sessionId}`);
+      expect(body.url).toBe('wss://livekit.example.com');
+      expect(body.expiresAt).toBeGreaterThan(Date.now());
+    });
+
+    it('returns 404 for an unknown session', async () => {
+      setVoiceEnv();
+      const res = await fetch(`${baseUrl}/api/realtime/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: '11111111-1111-4111-8111-111111111111' }),
+      });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'unknown session' });
+    });
+
+    it('returns 400 for a missing/non-uuid sessionId', async () => {
+      setVoiceEnv();
+      const res = await fetch(`${baseUrl}/api/realtime/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 'not-a-uuid' }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 503 when voice is not configured', async () => {
+      clearVoiceEnv();
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const res = await fetch(`${baseUrl}/api/realtime/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'voice not configured' });
+    });
+  });
 });

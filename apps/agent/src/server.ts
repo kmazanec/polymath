@@ -30,6 +30,7 @@ import {
 } from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
 import { loadLesson, type Lesson } from './lessons/loader.js';
+import { mintRealtimeToken } from './voice/token.js';
 
 export interface ServerDeps {
   db: Db;
@@ -396,6 +397,105 @@ function send(ws: WebSocket, message: ServerMessage): void {
   ws.send(JSON.stringify(message));
 }
 
+/** Cap the request body we'll buffer for a REST POST. These endpoints take tiny
+ *  JSON (a single id); a 16 KB ceiling makes an oversized/slowloris body a clean
+ *  413 rather than unbounded memory growth. */
+const MAX_REST_BODY_BYTES = 16 * 1024;
+
+/** Collect a request body up to the cap, then parse it as JSON. Rejects with a
+ *  small tagged reason so the route can map it to the right 4xx without leaking
+ *  internals. Resolves `null` on an empty body (callers treat that as a 400). */
+function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_REST_BODY_BYTES) {
+        reject(new Error('body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8').trim();
+      if (raw === '') {
+        resolve(null);
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new Error('invalid JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+/** A UUID matcher local to the REST layer — the WS protocol enforces the same
+ *  shape via the contract's `z.string().uuid()`, but the realtime route doesn't
+ *  parse a full `ClientEvent`, so it validates the lone `sessionId` itself
+ *  rather than taking a contract dependency for one field. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Mint a LiveKit join token for an existing session. The browser calls this to
+ *  join the session's room directly, so the long-lived API secret never reaches
+ *  the client — only a 5-minute, single-room token does. Read the env credentials
+ *  here (matching how PORT etc. are read at the server layer) and keep `token.ts`
+ *  pure. */
+async function handleRealtimeSession(
+  deps: ServerDeps,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  // Credentials are env-only; the repo ships no real keys, so an unconfigured
+  // deploy serves a clean 503 rather than minting an unusable token.
+  const livekitUrl = process.env['LIVEKIT_URL'] ?? '';
+  const apiKey = process.env['LIVEKIT_API_KEY'];
+  const apiSecret = process.env['LIVEKIT_API_SECRET'];
+  if (!apiKey || !apiSecret) {
+    sendJson(res, 503, { error: 'voice not configured' });
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'invalid request body';
+    sendJson(res, reason === 'body too large' ? 413 : 400, { error: reason });
+    return;
+  }
+
+  const sessionId = (body as { sessionId?: unknown } | null)?.sessionId;
+  if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) {
+    sendJson(res, 400, { error: 'sessionId must be a UUID' });
+    return;
+  }
+
+  // The room is derived from a real session — minting a token for an unknown
+  // session would hand out a join token for a room no agent will ever attend.
+  const known = await deps.db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(eq(sessions.id, sessionId))
+    .limit(1);
+  if (known.length === 0) {
+    sendJson(res, 404, { error: 'unknown session' });
+    return;
+  }
+
+  const minted = await mintRealtimeToken({ sessionId, apiKey, apiSecret, livekitUrl });
+  sendJson(res, 201, {
+    token: minted.token,
+    url: minted.url,
+    roomName: minted.roomName,
+    expiresAt: minted.expiresAt,
+  });
+}
+
 /** Handle one inbound WebSocket frame: validate → run agent → validate output →
  *  persist → reply. Exported for direct unit/integration testing. */
 export async function handleClientFrame(
@@ -548,6 +648,13 @@ export function createServer(deps: ServerDeps): PolymathServer {
           sendJson(res, 201, { sessionId: row.id, startedAt: row.startedAt });
         })
         .catch(() => sendJson(res, 500, { error: 'failed to create session' }));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/realtime/session') {
+      handleRealtimeSession(deps, req, res).catch(() =>
+        sendJson(res, 500, { error: 'failed to mint realtime token' }),
+      );
       return;
     }
 

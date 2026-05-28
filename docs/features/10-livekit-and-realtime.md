@@ -88,6 +88,79 @@ None within I2 — F-11 and F-12 are downstream of F-10 and don't run concurrent
 
 ⚠ **iOS Safari quirks** are a known risk per [ADR-006](../adrs/ADR-006-voice-and-agent-llm-stack.md). If smoke-test fails on iOS, the fix is documented + scoped here, not in F-11.
 
+## Implementation plan (approved 2026-05-28)
+
+**Approach decisions (resolved with the user before build):**
+- **Mocked LiveKit/OpenAI-Realtime boundary.** The network boundary is behind an injectable
+  interface so the suite runs without secrets. The repo has no `.env` and blank LiveKit/OpenAI
+  keys, so the **live** round-trip + cross-platform device smoke are deferred to the user
+  (need real LiveKit Cloud keys + OpenAI Realtime access + physical devices).
+- **OTel attributes via `@opentelemetry/api` + a no-op/in-memory exporter.** F-10 owns the
+  voice-turn span *schema*; F-20 wires real exporters.
+- **Cross-platform (criterion 4) = scripted manual checklist + a desktop-Chromium Playwright
+  e2e.** Device-matrix boxes stay unchecked with an explicit "requires your devices" note.
+
+**Contract scope correction:** `packages/contract` wire union is NOT touched — voice flows over
+WebRTC; `voice_turn` is a value in the `events.kind` text column, not a new wire variant. The one
+cross-cutting touchpoint is the new REST route `POST /api/realtime/session` (append-only). No DB
+migration (`events.payload` is already JSONB).
+
+Critical path inside F-10: the realtime boundary interface (C2) locks first; the rest run parallel
+against the frozen interface.
+
+- [x] **C1 — Ephemeral token endpoint** (T-10a) — `voice/token.ts` mints a room-scoped LiveKit
+  token, 5-min TTL; wired as `POST /api/realtime/session`, validates session exists. → criterion 8.
+- [x] **C2 — Realtime boundary interface + cache-friendly persona** (T-10c seam, T-10d) —
+  `voice/realtimeClient.ts` (`RealtimeSession` interface + `MockRealtimeSession`) + `voice/persona.ts`
+  (cache-friendly system prompt, stable cache key). → criterion 5.
+- [ ] **C3 — LiveKit Agents bridge** (T-10c) — `voice/bridge.ts` joins room as agent participant,
+  proxies audio to/from `RealtimeSession`, handles barge-in (interrupt on learner audio). → criterion 3.
+- [ ] **C4 — voice_turn event + OTel attrs** (T-10e, T-10g) — `voice/voiceTurn.ts` (Zod payload) +
+  `voice/otel.ts` (span with the 8 required attrs, no-op exporter); bridge persists each turn. →
+  criteria 2, 7.
+- [ ] **C5 — Browser voice client + Ask-the-tutor affordance** (T-10b) — `apps/web/src/voice/client.ts`
+  + `AskTutorButton` requesting mic permission on click only, calling the token endpoint. →
+  criteria 1, 6.
+- [ ] **C6 — Token refresh across the 5-min boundary** (T-10a/b) — transparent re-mint before
+  expiry. → criterion 8 (refresh).
+- [ ] **C7 — Playwright desktop e2e + cross-platform checklist + Caddy note** (T-10h, T-10f) —
+  Playwright (fake media device) asserts transcript appears; `docs/voice-cross-platform-smoke.md`
+  scripted per ADR-006; confirm token endpoint passes through Caddy. → criterion 4 (desktop only).
+- [ ] **Review (Step 6)** — Wave 1 spec+security, Wave 2 robustness+efficiency; high/medium fixed.
+- [ ] **Smoke (Step 7)** — drive the web dev server (mocked boundary) end-to-end + regression.
+
+**Deferred (unchecked, requires user keys/devices):** criteria 1/2/3/5 *live*, 8 *live refresh*,
+4 *device matrix*. Mocked-boundary tests cover the contract.
+
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### C1 — Ephemeral token endpoint
+`apps/agent/src/voice/token.ts` exports `mintRealtimeToken({sessionId, apiKey, apiSecret, livekitUrl, now?})`
+→ `{token, url, roomName, expiresAt}`, `roomNameForSession(id)='session-<id>'`, `REALTIME_TOKEN_TTL_SECONDS=300`.
+Route `POST /api/realtime/session` in `server.ts`: 201 (valid session), 404 (unknown), 400 (bad/non-uuid body),
+413 (>16KB body), 503 (LiveKit keys unset — graceful "voice not configured", since the repo ships no keys).
+Grant is room-scoped (`roomJoin`, `room`, `canPublish`, `canSubscribe`) — **no admin/list/create grant** (least
+privilege; the browser gets a token that can only join its own session room). Participant identity is
+`learner-<sessionId>-<uuid>` so repeat mints don't collide/kick.
+
+**Verified against the running system** (agent booted on :8099 against the test Postgres, dummy LiveKit creds):
+```
+POST /api/realtime/session {sessionId:<valid>}  -> HTTP/1.1 201 Created
+  decoded JWT grant: {roomJoin:true, room:"session-<id>", canPublish:true, canSubscribe:true}, exp-nbf=300s, no admin
+POST /api/realtime/session {sessionId:<unknown-uuid>} -> 404
+POST /api/realtime/session {} -> 400
+```
+Tests: `src/voice/token.test.ts` 5 passed (no DB); `src/server.integration.test.ts` 13 passed (4 new, DB-backed).
+
+### C2 — Realtime boundary interface + persona (the frozen seam)
+`apps/agent/src/voice/realtimeClient.ts` defines `RealtimeSession` (connect / sendAudioFrame / onTranscript /
+onAudio / interrupt / isResponding / close / readonly cacheHit), `VoiceTranscript {role, text, at, final}`,
+`RealtimeSessionConfig {systemPrompt, cacheKey, model}`, and `MockRealtimeSession` (deterministic, no timers:
+`pushLearnerUtterance` + `tick()`/`flush()`; `interrupt()` drops the unemitted queue and clears `isResponding`;
+`cacheHit` warms on the 2nd connect with the same key via a module registry — `resetCacheRegistry()` per test).
+`apps/agent/src/voice/persona.ts`: `VOICE_PERSONA` (byte-identical stable prefix), `buildVoiceSystemPrompt(input)`
+(prefix + small volatile tail), `voiceCacheKey({lessonId, phase})='lesson:<id>|phase:<phase>'`. Cache-friendly =
+large stable persona first (cacheable prefix), volatile lesson context last.
+Tests: `realtimeClient.test.ts` 10 + `persona.test.ts` 9 = 19 passed (pure, no DB).
+
+> Downstream chunks (C3 bridge, C4 event/OTel) consume the **frozen** `RealtimeSession` above — do not reshape it.
