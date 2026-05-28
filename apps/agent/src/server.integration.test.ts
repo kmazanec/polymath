@@ -1,0 +1,137 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import type { AddressInfo } from 'node:net';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
+import { Action } from '@polymath/contract';
+import { createDb, type Db } from './db/client.js';
+import { runMigrations } from './db/migrate.js';
+import { events, sessions } from './db/schema.js';
+import { StubAgentClient } from './agent/stubClient.js';
+import { createServer } from './server.js';
+import { eq } from 'drizzle-orm';
+
+/**
+ * End-to-end integration test (F-01 testing requirements + acceptance criteria
+ * 3,4,5). Boots a throwaway Postgres in Docker, runs migrations, starts the real
+ * HTTP+WS server with the stub agent, then:
+ *   - POST /api/session writes a `sessions` row (criterion 4)
+ *   - a WS `submit` round-trips a valid `no_action` Action (criterion 3, 5)
+ *   - an `events` row is written (criterion 3)
+ *   - GET /api/health returns {status:"ok"} (criterion 2)
+ *
+ * Skips cleanly if Docker is unavailable so the rest of the suite still runs.
+ */
+
+function dockerAvailable(): boolean {
+  const r = spawnSync('docker', ['info'], { stdio: 'ignore' });
+  return r.status === 0;
+}
+
+const HAVE_DOCKER = dockerAvailable();
+const CONTAINER = 'polymath-test-pg';
+const PG_PORT = 55432;
+const POSTGRES_URL = `postgres://polymath:polymath@localhost:${PG_PORT}/polymath`;
+
+let db: Db;
+let pool: { end: () => Promise<void> };
+let server: import('node:http').Server;
+let baseUrl: string;
+let wsUrl: string;
+
+async function waitForPg(url: string, attempts = 30): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    const { db: probeDb, pool: probePool } = createDb(url);
+    try {
+      await probeDb.execute('select 1');
+      await probePool.end();
+      return;
+    } catch {
+      await probePool.end().catch(() => {});
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  throw new Error('Postgres did not become ready');
+}
+
+describe.skipIf(!HAVE_DOCKER)('agent server end-to-end', () => {
+  beforeAll(async () => {
+    spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
+    execFileSync('docker', [
+      'run', '-d', '--name', CONTAINER,
+      '-e', 'POSTGRES_USER=polymath',
+      '-e', 'POSTGRES_PASSWORD=polymath',
+      '-e', 'POSTGRES_DB=polymath',
+      '-p', `${PG_PORT}:5432`,
+      'postgres:16-alpine',
+    ]);
+    await waitForPg(POSTGRES_URL);
+    await runMigrations(POSTGRES_URL);
+
+    ({ db, pool } = createDb(POSTGRES_URL));
+    server = createServer({ db, agent: new StubAgentClient() });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    baseUrl = `http://localhost:${port}`;
+    wsUrl = `ws://localhost:${port}/agent`;
+  }, 60000);
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await pool.end().catch(() => {});
+    spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
+  });
+
+  it('GET /api/health returns {status:"ok"}', async () => {
+    const res = await fetch(`${baseUrl}/api/health`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok' });
+  });
+
+  it('POST /api/session creates a sessions row', async () => {
+    const res = await fetch(`${baseUrl}/api/session`, { method: 'POST' });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { sessionId: string; startedAt: string };
+    expect(body.sessionId).toMatch(/[0-9a-f-]{36}/);
+
+    const rows = await db.select().from(sessions).where(eq(sessions.id, body.sessionId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.startedAt).toBeTruthy();
+  });
+
+  it('round-trips a submit to a valid no_action and writes an events row', async () => {
+    // First create a session so the events FK is satisfiable.
+    const res = await fetch(`${baseUrl}/api/session`, { method: 'POST' });
+    const { sessionId } = (await res.json()) as { sessionId: string };
+
+    const ws = new WebSocket(wsUrl);
+    const action: Action = await new Promise((resolve, reject) => {
+      ws.on('open', () => {
+        ws.send(
+          JSON.stringify({
+            kind: 'submit',
+            sessionId,
+            itemId: 'l1-and',
+            submission: 'A AND B',
+          }),
+        );
+      });
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          resolve(Action.parse(msg.action));
+        }
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('timed out waiting for action')), 5000);
+    });
+    ws.close();
+
+    expect(action.type).toBe('no_action');
+
+    // Give the async insert a beat to land, then assert the events row exists.
+    await new Promise((r) => setTimeout(r, 300));
+    const rows = await db.select().from(events).where(eq(events.sessionId, sessionId));
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows.some((r) => r.kind === 'submit')).toBe(true);
+  });
+});

@@ -139,7 +139,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
       stub (constant) guards. Transition tests (incl. `introducing→practicing`, criterion 7).
 - [x] **Chunk 5 — `lessons/1/`.** `mastery_config.json` (full ADR-011 param set) +
       `content.json` (3 stub items, one per L1 KC). Zod config schema + contract test.
-- [ ] **Chunk 6 — `apps/agent`.** Drizzle schema + migrations (`sessions`, `events`,
+- [x] **Chunk 6 — `apps/agent`.** Drizzle schema + migrations (`sessions`, `events`,
       `learner_state`, `transfer_bank` empty, `validated_distractors`); REST
       (`GET /api/health`, `POST /api/session`, `GET /api/session/:id/replay` stub); `ws`
       server at `/agent`; LangGraph `StateGraph` no_action node behind `AgentClient` seam;
@@ -225,3 +225,36 @@ required). `content.json` = 3 stub items, one per L1 KC: `l1-and` (`A AND B`, `[
   `@polymath/booleans` `truthTable().out` — all three match (`l1-and/or/not` OK). The
   permanent automated version of this check lands in chunk 6 (the agent loads lessons at boot,
   so the loader+validation test belongs with it).
+
+**Chunk 6 — `apps/agent`.** Node + `ws` + `http` + Drizzle/`pg` + `@langchain/langgraph`.
+Modules: `db/{schema,client,migrate}.ts`, `agent/{client,graph,stubClient,validateAction}.ts`,
+`lessons/loader.ts`, `mastery/gate.ts`, `server.ts`, `index.ts`. Drizzle migration generated
+into `apps/agent/drizzle/`.
+- **Decision — dependency-injected `createServer({db, agent})`.** The HTTP+WS server takes its
+  `Db` and `AgentClient` as injected deps so the integration test supplies a throwaway pg and
+  the stub agent; `index.ts` wires the real ones (POSTGRES_URL, migrations on boot,
+  `StubAgentClient`).
+- **Decision — `AgentClient` provider seam + real LangGraph `StateGraph`.** F-01 stands up a
+  genuine compiled graph (`__start__ → propose → __end__`) whose single node emits
+  `no_action` — no LLM call. F-05 expands the graph and swaps `StubAgentClient` for an
+  LLM-backed client without touching the server. De-risks the framework bootstrap early.
+- **Decision — server-side Action validation is the final gate (criterion 5).**
+  `validateOutboundAction()` runs `Action.safeParse` on every proposal before send; a malformed
+  action is **downgraded to `no_action`**, never sent. Unit tests feed it a malformed `mount`
+  and a non-action object and assert the downgrade — this is the "mutate the stub to emit
+  malformed output" check from criterion 5, made permanent.
+- **Decision — `events.payload` stores `{event, action}`** as JSONB — the structured
+  per-turn record ADR-005 calls for (the replay artifact's basis). `GET /…/replay` returns
+  the session's events; richer replay shape lands with the agent loop.
+- **Decision — `loadLesson()` cross-checks content truth tables against the validator at load
+  time** (throws on mismatch) — the permanent version of chunk 5's check (ADR-010: the
+  validator is the source of truth, content answer keys must agree).
+- **Decision — `mastery/gate.ts` exposes the locked `isMastered(LearnerState, MasteryConfig)`
+  signature returning `false`** (ADR-011); F-09/F-12 fill the body.
+- **Verification (criteria 2,3,4,5):** integration test boots **real Postgres in Docker**,
+  migrates, starts the server, then asserts `GET /api/health` → `{status:"ok"}`,
+  `POST /api/session` writes a `sessions` row, and a WS `submit` round-trips a schema-valid
+  `no_action` with an `events` row written. **11 agent tests pass** (3 unit + 3 loader + 3
+  integration… actually 5 agent-unit + 3 loader + 3 integration = 11); typecheck + build clean;
+  test pg container torn down. `LangGraph checkpointer` schema deferred (stub graph doesn't
+  checkpoint).
