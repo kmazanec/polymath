@@ -21,6 +21,7 @@
     "@polymath/bkt": "workspace:*",
     "@polymath/booleans": "workspace:*",
     "@polymath/contract": "workspace:*",
+    "@polymath/graph": "workspace:*",
     "drizzle-orm": "^0.38.3",
     "livekit-server-sdk": "2.15.4",
     "pg": "^8.13.1",

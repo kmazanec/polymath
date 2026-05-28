@@ -17,6 +17,7 @@ COPY packages/contract/package.json packages/contract/
 COPY packages/booleans/package.json packages/booleans/
 COPY packages/statechart/package.json packages/statechart/
 COPY packages/bkt/package.json packages/bkt/
+COPY packages/graph/package.json packages/graph/
 COPY apps/agent/package.json apps/agent/
 COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --filter @polymath/agent...
@@ -31,6 +32,7 @@ COPY packages/contract packages/contract
 COPY packages/booleans packages/booleans
 COPY packages/statechart packages/statechart
 COPY packages/bkt packages/bkt
+COPY packages/graph packages/graph
 COPY apps/agent apps/agent
 COPY lessons lessons
 # seedTransferBank reads seed_data/transfer_items.json (repo root) at boot.
