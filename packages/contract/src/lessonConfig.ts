@@ -26,6 +26,12 @@ export const MasteryConfig = z.object({
   requireDifferentRepresentation: z.boolean(),
   requireExplainBackPass: z.boolean(),
 
+  // F-12: how many off-topic ANSWERS the agent may give (persisted
+  // `answer_question` Actions tagged `off_topic`) before the topic-guardrail
+  // condition blocks mastery. Optional + defaulted so existing lesson configs
+  // (which predate this key) still validate — a REQUIRED key would throw at
+  // `loadLesson` and crash the agent at boot (fail-closed = block, not crash).
+  topicGuardrailBudget: z.number().int().nonnegative().default(3),
   /** F-11 (append-only, OPTIONAL): the LangSmith eval bank's required pass-rate vs
    *  hand labels — the CI hard-block agreement threshold (default 0.9 when unset).
    *  Single agreed key name; F-12 reads the same key. Optional so existing lessons

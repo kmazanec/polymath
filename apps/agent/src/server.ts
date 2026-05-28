@@ -19,7 +19,7 @@ import type {
   TurnSummary,
 } from './agent/client.js';
 import { validateLayer2 } from './agent/layer2.js';
-import { evaluateRuleGate, isMastered, type LearnerState } from './mastery/gate.js';
+import { evaluateMasteryGate, evaluateRuleGate, type LearnerState } from './mastery/gate.js';
 import type { MasteryConfig } from '@polymath/contract';
 import {
   deriveState,
@@ -99,8 +99,13 @@ function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
   const p = (payload ?? {}) as {
     event?: { itemId?: string; submission?: string; correct?: boolean; responseTimeMs?: number; targetItemId?: string };
     transferVerdict?: { correct?: boolean };
+    // F-12 extends the projection to read `topicClassification` for the
+    // topic-guardrail counter (was type + component.kind only).
+    action?: { type?: string; component?: { kind?: string }; topicClassification?: string };
+    // F-11 writes / F-12 reads F-11's persisted verdict slot (write-full /
+    // read-narrow split, mirroring `transferVerdict`). Absent → undefined →
+    // fail-closed (no pass).
     explainBackVerdict?: { passed?: boolean };
-    action?: { type?: string; component?: { kind?: string } };
   };
   return {
     kind,
@@ -109,13 +114,16 @@ function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
     submission: p.event?.submission,
     responseTimeMs: p.event?.responseTimeMs,
     transferCorrect: p.transferVerdict?.correct,
-    // F-11 → F-12 seam: project the server-computed explain-back verdict so the
-    // derived state flips `explainBackPassed` (never a client flag).
-    explainBackPassed: p.explainBackVerdict?.passed,
     // A served hint = the logged action mounted a HintCard (a refused request is a
     // no_action). Only known for persisted events; the current turn's action isn't
     // decided yet (and doesn't count toward its own level).
     hintMounted: p.action?.type === 'mount' && p.action.component?.kind === 'HintCard',
+    // F-12 topic-guardrail: the agent's persisted answer was tagged off_topic.
+    offTopic: p.action?.type === 'answer_question' && p.action.topicClassification === 'off_topic',
+    // F-11 → F-12 seam: the server-computed explain-back verdict so the derived
+    // state flips `explainBackPassed` (never a client flag). `=== true` so a
+    // missing/false verdict stays false (fail-closed).
+    explainBackPassed: p.explainBackVerdict?.passed === true,
   };
 }
 
@@ -159,7 +167,7 @@ async function updateAndReadLearnerState(
   // transfer verdict so a passing transfer counts toward the gate this turn.
   const logged = [...priorLogged, toLoggedEvent(current.kind, { event: current, transferVerdict })];
   const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
-  const learnerState_ = toLearnerState(derived);
+  const learnerState_ = toLearnerState(derived, lesson.masteryConfig);
   const gate = evaluateRuleGate(learnerState_, lesson.masteryConfig);
 
   // Persist one learner_state row per KC (the single writer). Best-effort: a write
@@ -175,6 +183,11 @@ async function updateAndReadLearnerState(
       hintsUsed: derived.hintsUsed,
       consecutiveCorrect: derived.consecutiveCorrect,
       ruleGatePassed: gate.passed,
+      // F-12: thread the explain-back + topic-guardrail signals so the agent can
+      // organically propose mastery only when the FULL gate (not just the rule gate)
+      // is satisfied. Derived from the real fold — never a client flag.
+      explainBackPassed: learnerState_.explainBackPassed,
+      topicGuardrailClean: learnerState_.topicGuardrailClean,
     },
     masteryState: learnerState_,
     hintsByItem: derived.hintsByItem,
@@ -376,7 +389,12 @@ function rejectUnauthorizedAction(
   candidates: TransferProbeItem[] | undefined,
 ): string | null {
   if (action.type === 'transition' && action.to === 'mastered') {
-    return isMastered(masteryState, config) ? null : 'mastery transition before the full gate is satisfied';
+    // The earned-it gate for the privileged mastery transition (the same treatment
+    // TransferProbe gets). The server is the truth-maker — the XState machine is not
+    // driven at agent runtime (BUILD-PLAN decision #7), so this rejection path IS the
+    // statechart guard. On rejection, name the blockers so AC#3's log records *why*.
+    const gate = evaluateMasteryGate(masteryState, config);
+    return gate.passed ? null : `mastery_gate_failed: ${gate.blockers.join(',')}`;
   }
   if (action.type !== 'mount' || action.component.kind !== 'TransferProbe') return null;
   if (!learner.ruleGatePassed) return 'transfer probe before the rule gate passed';
@@ -389,6 +407,23 @@ function rejectUnauthorizedAction(
       JSON.stringify([...b.hiddenReps].sort()) === JSON.stringify([...c.hiddenReps].sort()),
   );
   return match ? null : 'transfer probe does not match an allowed unseen bank item';
+}
+
+/** F-12: build the MasteryCelebration mount for an AUTHORIZED mastery transition.
+ *  `conceptsMastered` is the set of KCs the learner has actually mastered (BKT ≥ the
+ *  lesson's threshold) — sourced from the derived learner_state, not the agent's
+ *  claim (AC#6). `nextLessonId` is left unset here; the "continue to Lesson 2"
+ *  affordance is wired in F-15. */
+function masteryCelebrationAction(masteryState: LearnerState, lesson: Lesson): Action {
+  const conceptsMastered = Object.entries(masteryState.bktByKc)
+    .filter(([, p]) => p >= lesson.masteryConfig.bktMasteryThreshold)
+    .map(([kc]) => kc)
+    .sort();
+  return {
+    type: 'mount',
+    component: { kind: 'MasteryCelebration', conceptsMastered },
+    rationale: 'mastery gate satisfied server-side — celebrating mastered concepts (F-12)',
+  };
 }
 
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
@@ -558,12 +593,23 @@ async function handleRealtimeSession(
   });
 }
 
+/** Per-connection options resolved from the WS upgrade request (dev seams). */
+export interface FrameOptions {
+  /** F-12 AC#3 dev seam (`?testForce=mastered`): inject a real `transition→mastered`
+   *  proposal so the earned-it gate's refusal is demoable. Dev-only — the connection
+   *  handler only sets it when `NODE_ENV!=='production'` (fail-closed on the seam
+   *  itself). It does NOT grant mastery: the gate still rejects it when the predicate
+   *  fails; it only forces the proposal so the rejection path runs. */
+  testForceMastered?: boolean;
+}
+
 /** Handle one inbound WebSocket frame: validate → run agent → validate output →
  *  persist → reply. Exported for direct unit/integration testing. */
 export async function handleClientFrame(
   deps: ServerDeps,
   ws: WebSocket,
   raw: string,
+  opts: FrameOptions = {},
 ): Promise<void> {
   let json: unknown;
   try {
@@ -651,9 +697,24 @@ export async function handleClientFrame(
   // proposal OR an item whose claimedTruthTable fails the recompute is downgraded
   // to `no_action` rather than forwarded. The server never trusts the agent, even
   // its own — defense in depth (CLAUDE.md invariant).
-  const proposed = await proposeWithTimeout(deps.agent, input);
+  const agentProposed = await proposeWithTimeout(deps.agent, input);
+  // F-12 AC#3 dev seam: `?testForce=mastered` injects a real mastery-transition
+  // proposal (bypassing the agent's own choice) so the earned-it gate's refusal is
+  // demoable. It still flows through validateOutboundAction → the earned-it gate, so
+  // it is REJECTED whenever the gate predicate fails — it proves the refusal, it does
+  // NOT grant mastery.
+  const proposed: Action = opts.testForceMastered
+    ? { type: 'transition', to: 'mastered', rationale: 'dev seam ?testForce=mastered — forced mastery proposal' }
+    : agentProposed;
   const { action: shaped, downgraded } = validateOutboundAction(proposed);
   const layer2 = validateLayer2(shaped);
+
+  // F-12: the single full-gate evaluation for this turn. The earned-it rejection AND
+  // the (informational) statechart decision both derive from THIS one call — no stale
+  // recompute. Computed every turn so the replay can show the gate failing then
+  // passing (AC#5).
+  const gateEvaluation = evaluateMasteryGate(learnerDerived.masteryState, lesson.masteryConfig);
+
   // Outbound earned-it gate (server never trusts the agent — matters once an LLM
   // provider is live): a TransferProbe mount is downgraded unless the rule gate
   // passed and it matches an allowed unseen bank row; a transition→mastered is
@@ -665,11 +726,29 @@ export async function handleClientFrame(
     lesson.masteryConfig,
     transferCandidates,
   );
+
+  // F-12 AC#3: the server rejection path IS the mastery-transition truth-maker. Record
+  // the statechart-style decision for a proposed mastery transition so the demo's
+  // "show the gate failing then passing" reads `statechartDecision`/`statechartReason`.
+  const isMasteryTransition = shaped.type === 'transition' && shaped.to === 'mastered';
+  const statechart = isMasteryTransition
+    ? earnedItRejection
+      ? { statechartDecision: 'reject' as const, statechartReason: earnedItRejection }
+      : { statechartDecision: 'accept' as const, statechartReason: 'mastery_gate_satisfied' }
+    : undefined;
+
+  // F-12 AC#1/AC#6: an ACCEPTED mastery transition mounts the MasteryCelebration. The
+  // transition Action itself carries no component, so the server reflexively resolves
+  // an authorized mastery transition into a MasteryCelebration mount listing the KCs
+  // the learner has actually mastered (BKT ≥ threshold). The F-11 transfer-pass reflex
+  // (below) may still supersede this with an ExplainBackPrompt mount.
   const validatedAction: Action = !layer2.ok
     ? noAction('agent_unsure', `outbound Layer-2 rejection: ${layer2.detail}`)
     : earnedItRejection
       ? noAction('agent_unsure', earnedItRejection)
-      : shaped;
+      : isMasteryTransition
+        ? masteryCelebrationAction(learnerDerived.masteryState, lesson)
+        : shaped;
 
   // F-11 TRANSFER-PASS REFLEX (deterministic, NOT via the LLM menu): when this turn
   // is a PASSED transfer probe and the lesson requires explain-back, the SERVER
@@ -729,6 +808,12 @@ export async function handleClientFrame(
       // The transfer verdict (when this turn is a transfer_submitted) is recorded
       // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
       ...(transferVerdict ? { transferVerdict } : {}),
+      // F-12 AC#5: the per-turn mastery-gate evaluation, so the replay can show the
+      // gate failing then passing across the session (the demo "show the gate").
+      gateEvaluation: { passed: gateEvaluation.passed, blockers: gateEvaluation.blockers },
+      // F-12 AC#3: the statechart-style decision on a proposed mastery transition
+      // (present only on a transition→mastered turn).
+      ...(statechart ?? {}),
       validation: {
         layer: validationLayer,
         status: validationStatus,
@@ -821,11 +906,18 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       return info.origin === undefined || allowed.has(info.origin);
     },
   });
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    // F-12 AC#3 dev seam: a `?testForce=mastered` on the WS upgrade URL injects a
+    // forced mastery-transition proposal so the earned-it refusal is demoable. Gated
+    // behind NODE_ENV!=='production' (fail-closed on the seam itself) — inert in prod,
+    // and even in dev the earned-it gate still rejects it when the predicate fails.
+    const reqUrl = new URL(req.url ?? '/agent', 'http://localhost');
+    const testForceMastered =
+      process.env['NODE_ENV'] !== 'production' && reqUrl.searchParams.get('testForce') === 'mastered';
     ws.on('message', (data) => {
       // The frame handler must never reject unhandled — an unawaited rejection
       // (e.g. a DB error on a bad sessionId) would crash the process.
-      handleClientFrame(deps, ws, data.toString()).catch((err) => {
+      handleClientFrame(deps, ws, data.toString(), { testForceMastered }).catch((err) => {
         console.error('error handling client frame', err);
         try {
           send(ws, { kind: 'error', message: 'internal error' });

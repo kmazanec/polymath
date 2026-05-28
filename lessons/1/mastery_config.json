@@ -18,5 +18,6 @@
   "requireDifferentRepresentation": true,
   "requireExplainBackPass": true,
 
+  "topicGuardrailBudget": 3,
   "explainBackJudgeAgreementThreshold": 0.9
 }

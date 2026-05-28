@@ -39,6 +39,11 @@ export interface LoggedEvent {
    *  refusing with no_action, e.g. during a transfer probe). Only a served hint
    *  counts toward `hintsUsed`/`hintsByItem`. */
   hintMounted?: boolean;
+  /** F-12: for a `learner_question` turn, whether the AGENT's `answer_question`
+   *  Action was tagged `off_topic`. Counts the agent's off-topic ANSWERS (not the
+   *  learner's questions) toward the topic-guardrail budget — a correctly-refused
+   *  off-topic question still produces an `off_topic` answer and so is counted. */
+  offTopic?: boolean;
 }
 
 /** The derived per-session state: one BKT per KC + the session-level aggregates
@@ -57,6 +62,9 @@ export interface DerivedState {
   retries: number;
   responseTimesMs: number[];
   transferPassed: boolean;
+  /** F-12: count of off-topic ANSWERS the agent gave this session (the topic-guardrail
+   *  counter). Computed from the bounded full-event fold, never `recentHistory`. */
+  offTopicCount: number;
   /** Whether THIS session has a persisted PASSING explain-back verdict (F-11 → F-12
    *  seam). Init false; flipped true only by a logged `explain_back_recording_ended`
    *  whose server-computed verdict passed. A missing verdict is BLOCK, never a pass. */
@@ -121,6 +129,7 @@ export function deriveState(
     retries: 0,
     responseTimesMs: [],
     transferPassed: false,
+    offTopicCount: 0,
     explainBackPassed: false,
   };
   /** Items the learner has previously gotten WRONG — a later submit on one of
@@ -159,9 +168,18 @@ export function deriveState(
       }
     } else if (ev.kind === 'transfer_submitted') {
       if (ev.transferCorrect === true) state.transferPassed = true;
+    } else if (ev.kind === 'learner_question') {
+      // F-12 topic-guardrail: count the off-topic ANSWERS the agent gave (the
+      // persisted `answer_question` Action tagged `off_topic`), not the learner's
+      // questions. A correctly-refused off-topic question still yields an off_topic
+      // answer and is counted (budget guards against an agent that keeps engaging
+      // off-topic content).
+      if (ev.offTopic === true) state.offTopicCount++;
     } else if (ev.kind === 'explain_back_recording_ended') {
-      // Server-derived (never a client flag): only a PASSING persisted verdict flips
-      // this. A failing/absent verdict leaves it false → the mastery gate blocks.
+      // F-11→F-12 seam. Server-derived (never a client flag): only a PASSING
+      // persisted verdict flips this. Latch the pass; never un-set it (a
+      // re-recording the judge later fails shouldn't revoke a real pass).
+      // Fail-closed: a failing/absent verdict leaves it false → the gate blocks.
       if (ev.explainBackPassed === true) state.explainBackPassed = true;
     }
   }
@@ -172,7 +190,7 @@ export function deriveState(
 /** Project the derived state into the rule-gate's `LearnerState` input. `hintsUsedInLastN`
  *  uses the total hint count as a conservative proxy (the window is N items; at L1
  *  scale the session is short, so total ≈ window). */
-export function toLearnerState(derived: DerivedState): LearnerState {
+export function toLearnerState(derived: DerivedState, config: MasteryConfig): LearnerState {
   const bktByKc: Record<string, number> = {};
   for (const [kc, params] of Object.entries(derived.bktByKc)) bktByKc[kc] = params.pMastered;
   const items = Math.max(1, derived.submits);
@@ -187,6 +205,8 @@ export function toLearnerState(derived: DerivedState): LearnerState {
     // F-11: derived from a persisted PASSING explain-back verdict (fail closed —
     // false with no verdict). F-12 reads this in the full mastery gate.
     explainBackPassed: derived.explainBackPassed,
-    topicGuardrailClean: true, // F-12 will compute from the session
+    // F-12: the agent's off-topic ANSWERS must stay within the lesson's budget.
+    // (Was hardcoded `true` — a fail-OPEN landmine; now computed.)
+    topicGuardrailClean: derived.offTopicCount <= config.topicGuardrailBudget,
   };
 }

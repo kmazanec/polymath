@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadLesson } from '../lessons/loader.js';
-import { evaluateRuleGate, isMastered, type LearnerState } from './gate.js';
+import { evaluateMasteryGate, evaluateRuleGate, isMastered, type LearnerState } from './gate.js';
 
 const { masteryConfig } = loadLesson(1); // ADR-011 params
 
@@ -84,5 +84,108 @@ describe('isMastered (rule-gate + transfer + explain-back)', () => {
         masteryConfig,
       ),
     ).toBe(true);
+  });
+});
+
+/** A state that satisfies EVERY mastery condition (rule-gate clears, transfer +
+ *  explain-back passed, topic-guardrail clean). The individual blocker tests below
+ *  flip exactly one field off this all-clear baseline. */
+function masteredState(): LearnerState {
+  return { ...cleanState(), transferPassed: true, explainBackPassed: true, topicGuardrailClean: true };
+}
+
+describe('evaluateMasteryGate (F-12 — the 4-condition gate with named blockers)', () => {
+  it('passes with NO blockers when all four conditions hold', () => {
+    const r = evaluateMasteryGate(masteredState(), masteryConfig);
+    expect(r.passed).toBe(true);
+    expect(r.blockers).toEqual([]);
+  });
+
+  it("folds rule-gate sub-blockers under 'rule_gate_failed'", () => {
+    const r = evaluateMasteryGate({ ...masteredState(), bktByKc: { AND: 0.1 } }, masteryConfig);
+    expect(r.passed).toBe(false);
+    expect(r.blockers).toContain('rule_gate_failed');
+    // The rule-gate's own sub-blocker literals (e.g. 'bkt_below_threshold') do NOT
+    // leak into the mastery blocker union — they fold under one bucket.
+    expect(r.blockers).not.toContain('bkt_below_threshold');
+  });
+
+  it("blocks with 'transfer_not_passed' when the transfer probe has not passed (config requires it)", () => {
+    const r = evaluateMasteryGate({ ...masteredState(), transferPassed: false }, masteryConfig);
+    expect(r.passed).toBe(false);
+    expect(r.blockers).toContain('transfer_not_passed');
+  });
+
+  it("blocks with 'explain_back_not_passed' when explain-back has not passed (config requires it)", () => {
+    const r = evaluateMasteryGate({ ...masteredState(), explainBackPassed: false }, masteryConfig);
+    expect(r.passed).toBe(false);
+    expect(r.blockers).toContain('explain_back_not_passed');
+  });
+
+  it("blocks with 'topic_guardrail_exceeded' when the guardrail is dirty", () => {
+    const r = evaluateMasteryGate({ ...masteredState(), topicGuardrailClean: false }, masteryConfig);
+    expect(r.passed).toBe(false);
+    expect(r.blockers).toContain('topic_guardrail_exceeded');
+  });
+
+  it('FAIL-CLOSED: a missing explain-back input (false) is a blocker, NEVER a pass', () => {
+    // The default for an unbuilt/absent verdict is `explainBackPassed:false`. The
+    // gate must BLOCK, not silently pass — the I1 fail-closed invariant.
+    const r = evaluateMasteryGate({ ...masteredState(), explainBackPassed: false }, masteryConfig);
+    expect(r.passed).toBe(false);
+  });
+
+  it('reports MULTIPLE blockers at once when several conditions fail', () => {
+    const r = evaluateMasteryGate(
+      { ...masteredState(), bktByKc: {}, transferPassed: false, explainBackPassed: false, topicGuardrailClean: false },
+      masteryConfig,
+    );
+    expect(r.blockers).toEqual(
+      expect.arrayContaining([
+        'rule_gate_failed',
+        'transfer_not_passed',
+        'explain_back_not_passed',
+        'topic_guardrail_exceeded',
+      ]),
+    );
+  });
+
+  it('honors requireHandCuratedTransfer=false (transfer not required → no transfer blocker)', () => {
+    const cfg = { ...masteryConfig, requireHandCuratedTransfer: false };
+    const r = evaluateMasteryGate({ ...masteredState(), transferPassed: false }, cfg);
+    expect(r.blockers).not.toContain('transfer_not_passed');
+    expect(r.passed).toBe(true);
+  });
+
+  it('honors requireExplainBackPass=false (explain-back not required → no explain-back blocker)', () => {
+    const cfg = { ...masteryConfig, requireExplainBackPass: false };
+    const r = evaluateMasteryGate({ ...masteredState(), explainBackPassed: false }, cfg);
+    expect(r.blockers).not.toContain('explain_back_not_passed');
+    expect(r.passed).toBe(true);
+  });
+
+  it('isMastered delegates to evaluateMasteryGate (same verdict for the same inputs)', () => {
+    const s = masteredState();
+    expect(isMastered(s, masteryConfig)).toBe(evaluateMasteryGate(s, masteryConfig).passed);
+    const blocked = { ...s, transferPassed: false };
+    expect(isMastered(blocked, masteryConfig)).toBe(evaluateMasteryGate(blocked, masteryConfig).passed);
+  });
+
+  it('is DETERMINISTIC: repeated calls on the same (state,config) return an identical result', () => {
+    const s = { ...masteredState(), bktByKc: {}, explainBackPassed: false };
+    const a = evaluateMasteryGate(s, masteryConfig);
+    const b = evaluateMasteryGate(s, masteryConfig);
+    expect(a).toEqual(b);
+    // Property-style: many randomized states each give a stable (idempotent) result.
+    for (let i = 0; i < 50; i++) {
+      const rnd: LearnerState = {
+        ...masteredState(),
+        transferPassed: i % 2 === 0,
+        explainBackPassed: i % 3 === 0,
+        topicGuardrailClean: i % 5 !== 0,
+        bktByKc: { AND: (i % 100) / 100 },
+      };
+      expect(evaluateMasteryGate(rnd, masteryConfig)).toEqual(evaluateMasteryGate(rnd, masteryConfig));
+    }
   });
 });

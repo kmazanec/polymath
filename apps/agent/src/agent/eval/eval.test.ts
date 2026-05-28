@@ -37,7 +37,7 @@ function inputFor(s: Scenario): AgentInput {
   return {
     event,
     lesson,
-    learnerState: { bktByKc: {}, ...s.learnerState },
+    learnerState: { bktByKc: {}, explainBackPassed: false, topicGuardrailClean: true, ...s.learnerState },
     recentHistory: [],
     transferCandidates: s.transferCandidates,
     // Mirror the scenario's `correct` into the server-derived flag the heuristic

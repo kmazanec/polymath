@@ -304,6 +304,7 @@ describe('lesson config schemas', () => {
       requireHandCuratedTransfer: true,
       requireDifferentRepresentation: true,
       requireExplainBackPass: true,
+      topicGuardrailBudget: 3,
     };
     expect(MasteryConfig.parse(cfg)).toEqual(cfg);
   });
@@ -312,6 +313,60 @@ describe('lesson config schemas', () => {
     expect(() =>
       MasteryConfig.parse({ bktMasteryThreshold: 1.5 }),
     ).toThrow();
+  });
+
+  it('F-12: defaults topicGuardrailBudget to 3 when a (pre-F-12) config omits it', () => {
+    // A lesson config authored before F-12 carries no topic-guardrail key. The key
+    // is OPTIONAL-with-default so the agent still boots (a required key would throw
+    // at loadLesson — a crash, not a fail-closed block).
+    const legacy = {
+      consecutiveCorrectAtHardestTier: 3,
+      hintsUsedInLastN_items: 0,
+      responseTimeFloorMs: 2000,
+      responseTimeCeilingMs: 60000,
+      responseTimeMedianBandMs: [2000, 60000] as [number, number],
+      bktMasteryThreshold: 0.95,
+      bktPrior_L0: 0.3,
+      bktTransition_T: 0.2,
+      bktGuess_G: 0.15,
+      bktSlip_S: 0.1,
+      hintRatioMax: 0.2,
+      retryRatioMax: 0.3,
+      requireHandCuratedTransfer: true,
+      requireDifferentRepresentation: true,
+      requireExplainBackPass: true,
+    };
+    const parsed = MasteryConfig.parse(legacy);
+    expect(parsed.topicGuardrailBudget).toBe(3);
+    expect(parsed.explainBackJudgeAgreementThreshold).toBeUndefined();
+  });
+
+  it('F-11/F-12: accepts an explicit topicGuardrailBudget + explainBackJudgeAgreementThreshold', () => {
+    const parsed = MasteryConfig.parse({
+      consecutiveCorrectAtHardestTier: 3,
+      hintsUsedInLastN_items: 0,
+      responseTimeFloorMs: 2000,
+      responseTimeCeilingMs: 60000,
+      responseTimeMedianBandMs: [2000, 60000],
+      bktMasteryThreshold: 0.95,
+      bktPrior_L0: 0.3,
+      bktTransition_T: 0.2,
+      bktGuess_G: 0.15,
+      bktSlip_S: 0.1,
+      hintRatioMax: 0.2,
+      retryRatioMax: 0.3,
+      requireHandCuratedTransfer: true,
+      requireDifferentRepresentation: true,
+      requireExplainBackPass: true,
+      topicGuardrailBudget: 5,
+      explainBackJudgeAgreementThreshold: 0.9,
+    });
+    expect(parsed.topicGuardrailBudget).toBe(5);
+    expect(parsed.explainBackJudgeAgreementThreshold).toBe(0.9);
+  });
+
+  it('F-11: rejects an explainBackJudgeAgreementThreshold outside [0,1]', () => {
+    expect(() => MasteryConfig.parse({ explainBackJudgeAgreementThreshold: 1.5 })).toThrow();
   });
 
   it('accepts a lesson content document', () => {

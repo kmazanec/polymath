@@ -108,17 +108,13 @@ export class HeuristicMoveProvider implements MoveProvider {
       // item. Correctness is computed server-side and threaded via `transferVerdict`.
       const passed = input.transferVerdict?.correct ?? false;
       if (passed) {
-        if (input.lesson.masteryConfig.requireExplainBackPass) {
-          return Promise.resolve({
-            move: 'no_action',
-            reason: 'wait_for_learner',
-            rationale: 'transfer passed; awaiting explain-back before mastery (F-11/F-12) (heuristic provider)',
-          });
-        }
-        return Promise.resolve({
-          move: 'propose_mastery_transition',
-          rationale: 'transfer passed and no further mastery condition required (heuristic provider)',
-        });
+        // F-12: a passed transfer clears the rule + transfer conditions, but mastery
+        // ALSO needs explain-back + a clean topic-guardrail (when required). Propose
+        // mastery only when the full gate's signals hold; otherwise wait (the
+        // explain_back_recording_ended turn re-triggers this decision once the
+        // verdict lands). Blockers go in the rationale (AC#2). The server re-checks
+        // the full gate and refuses an unearned transition regardless.
+        return Promise.resolve(proposeMasteryOrWait(input));
       }
       const items = [...input.lesson.content.items].sort((a, b) => a.difficultyTier - b.difficultyTier);
       const easiest = items[0];
@@ -149,6 +145,13 @@ export class HeuristicMoveProvider implements MoveProvider {
         });
       }
       return Promise.resolve(proposeHint(ev.itemId, input));
+    }
+
+    if (ev.kind === 'explain_back_recording_ended') {
+      // The explain-back recording just resolved. Its verdict (F-11) has been folded
+      // into the snapshot's `explainBackPassed` by the server. If the full gate's
+      // visible signals now hold, propose mastery; else wait with the blockers named.
+      return Promise.resolve(proposeMasteryOrWait(input));
     }
 
     if (ev.kind === 'learner_question') {
@@ -230,6 +233,37 @@ function proposeHint(itemId: string, input: AgentInput): TacticalMove {
     level,
     body,
     rationale: `L${level.toString()} hint for item "${itemId}" (${priorHints.toString()} prior hints; heuristic provider)`,
+  };
+}
+
+/**
+ * F-12: decide between proposing mastery and waiting, from the learner-state
+ * snapshot's gate signals. The agent proposes `propose_mastery_transition` only
+ * when rule-gate AND explain-back passed AND the topic-guardrail is clean (the
+ * transfer pass is what got us here). Otherwise it waits with the unmet conditions
+ * named in the rationale (AC#2). The SERVER re-evaluates the full gate and refuses
+ * an unearned transition regardless — this is the agent's organic proposal, not the
+ * truth-maker.
+ */
+function proposeMasteryOrWait(input: AgentInput): TacticalMove {
+  const ls = input.learnerState;
+  const blockers: string[] = [];
+  if (!ls.ruleGatePassed) blockers.push('rule_gate_not_passed');
+  if (input.lesson.masteryConfig.requireExplainBackPass && !ls.explainBackPassed) {
+    blockers.push('explain_back_not_passed');
+  }
+  if (!ls.topicGuardrailClean) blockers.push('topic_guardrail_exceeded');
+
+  if (blockers.length === 0) {
+    return {
+      move: 'propose_mastery_transition',
+      rationale: 'rule-gate + transfer + explain-back passed and topic-guardrail clean — proposing mastery (heuristic provider)',
+    };
+  }
+  return {
+    move: 'no_action',
+    reason: 'wait_for_learner',
+    rationale: `not proposing mastery; blockers: [${blockers.join(',')}] (heuristic provider)`,
   };
 }
 

@@ -75,6 +75,12 @@ export interface LearnerSnapshot {
   /** Whether the rule-gate currently judges the learner ready for a transfer
    *  probe. F-05 leaves this false (F-09 wires the real predicate). */
   ruleGatePassed: boolean;
+  /** F-12: whether the voice explain-back has passed (folded from F-11's persisted
+   *  verdict). Lets the agent ORGANICALLY propose mastery only when this holds. */
+  explainBackPassed: boolean;
+  /** F-12: whether the agent's off-topic-answer count is still within the lesson's
+   *  topic-guardrail budget. False blocks mastery (AC#2). */
+  topicGuardrailClean: boolean;
 }
 
 export interface TurnSummary {

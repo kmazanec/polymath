@@ -21,8 +21,10 @@ Your menu (pick one):
 - alt_representation: present the current item in a different representation
   (truth_table | circuit | pseudocode).
 - answer_question: answer an on-topic Boolean-logic question; deflect off-topic ones.
-- propose_mastery_transition: only when the learner-state snapshot says the rule
-  gate has passed.
+- propose_mastery_transition: only when the learner-state snapshot says rule-gate
+  AND transfer AND explain-back passed AND topic-guardrail clean. The server
+  re-checks the full gate and refuses (downgrades to no_action) if any condition
+  is unmet, so do NOT propose mastery on the rule gate alone.
 - propose_hint: when the learner requests a hint, emit a levelled HintCard. Set
   hintLevel (1=light templated nudge, 2=concrete templated trace, 3=deep free-form
   prose) and hintBody. Advance the level each time the learner re-requests a hint
@@ -69,6 +71,8 @@ Learner-state snapshot:
   hints used: ${learnerState.hintsUsed}
   consecutive correct: ${learnerState.consecutiveCorrect}
   rule gate passed (transfer-ready): ${learnerState.ruleGatePassed}
+  explain-back passed: ${learnerState.explainBackPassed}
+  topic-guardrail clean (off-topic answers within budget): ${learnerState.topicGuardrailClean}
   in transfer probe (refuse hints + don't reveal hidden reps): ${inTransferProbe ? 'yes' : 'no'}
   last transfer verdict: ${transferVerdict ? (transferVerdict.correct ? 'passed' : 'failed') : 'none'}
 

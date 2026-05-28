@@ -11,7 +11,7 @@ function input(overrides: Partial<AgentInput> = {}): AgentInput {
   return {
     event: { kind: 'submit', sessionId: '00000000-0000-0000-0000-000000000000', itemId: 'l1-and', submission: 'A AND B' },
     lesson,
-    learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 1, ruleGatePassed: false },
+    learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 1, ruleGatePassed: false, explainBackPassed: false, topicGuardrailClean: true },
     recentHistory: [],
     ...overrides,
   };

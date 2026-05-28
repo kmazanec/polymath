@@ -14,7 +14,7 @@ function input(
   return {
     event,
     lesson,
-    learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 0, ruleGatePassed: false },
+    learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 0, ruleGatePassed: false, explainBackPassed: false, topicGuardrailClean: true },
     recentHistory,
   };
 }

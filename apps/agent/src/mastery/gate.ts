@@ -88,16 +88,52 @@ export function evaluateRuleGate(state: LearnerState, config: MasteryConfig): Ru
   return { passed: blockers.length === 0, blockers };
 }
 
+/** The four top-level mastery conditions (ADR-011). Rule-gate sub-blockers
+ *  (`RuleGateBlocker`) fold under the single `'rule_gate_failed'` bucket so the
+ *  mastery union stays the coarse demo-facing set AC#3 logs (greppable). */
+export type MasteryBlocker =
+  | 'rule_gate_failed'
+  | 'transfer_not_passed'
+  | 'explain_back_not_passed'
+  | 'topic_guardrail_exceeded';
+
+export interface MasteryGateResult {
+  passed: boolean;
+  blockers: MasteryBlocker[];
+}
+
 /**
- * The full mastery gate (ADR-011): rule-gate AND the transfer pass AND (F-12) the
- * explain-back + topic-guardrail conditions. F-09 implements rule-gate + transfer;
- * F-12 extends the implementation (the signature is locked here).
+ * The full mastery gate (ADR-011, F-12): the conjunction of all four conditions,
+ * with a NAMED blocker for each unmet one so the agent's emission rationale, the
+ * server's earned-it rejection log (AC#3), and the demo can show *why* mastery was
+ * refused. The conditions are exactly what `isMastered` enforced before — this
+ * surfaces the blockers without changing the verdict:
+ *   - rule-gate (the behavioral + BKT half) → `rule_gate_failed`
+ *   - the held-out transfer pass (when `requireHandCuratedTransfer`) → `transfer_not_passed`
+ *   - the voice explain-back pass (when `requireExplainBackPass`) → `explain_back_not_passed`
+ *   - a clean topic-guardrail → `topic_guardrail_exceeded`
+ *
+ * FAIL-CLOSED: a missing/false input (e.g. an unpersisted explain-back verdict →
+ * `explainBackPassed:false`, or a dirty guardrail) is a BLOCKER, never a pass.
+ * Deterministic: a pure function of `(state, config)`.
+ */
+export function evaluateMasteryGate(state: LearnerState, config: MasteryConfig): MasteryGateResult {
+  const blockers: MasteryBlocker[] = [];
+
+  if (!evaluateRuleGate(state, config).passed) blockers.push('rule_gate_failed');
+  if (config.requireHandCuratedTransfer && !state.transferPassed) blockers.push('transfer_not_passed');
+  if (config.requireExplainBackPass && !state.explainBackPassed) blockers.push('explain_back_not_passed');
+  if (!state.topicGuardrailClean) blockers.push('topic_guardrail_exceeded');
+
+  return { passed: blockers.length === 0, blockers };
+}
+
+/**
+ * The boolean mastery predicate. Kept as a one-line delegate over
+ * `evaluateMasteryGate` so the boolean signature `server.ts` + `gate.test.ts`
+ * depend on is preserved while the named blockers live in one place (BUILD-PLAN
+ * decision #5: sibling + delegate, do NOT replace).
  */
 export function isMastered(state: LearnerState, config: MasteryConfig): boolean {
-  const rule = evaluateRuleGate(state, config);
-  if (!rule.passed) return false;
-  if (config.requireHandCuratedTransfer && !state.transferPassed) return false;
-  if (config.requireExplainBackPass && !state.explainBackPassed) return false;
-  if (!state.topicGuardrailClean) return false;
-  return true;
+  return evaluateMasteryGate(state, config).passed;
 }

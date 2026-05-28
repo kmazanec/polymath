@@ -12,6 +12,7 @@ import {
   type ExplainBackPromptDeps,
   type ExplainBackEndPayload,
 } from './ExplainBackPrompt.js';
+import { MasteryCelebration } from './MasteryCelebration.js';
 
 /**
  * The curated component registry renderer (ADR-005). A single exhaustive switch
@@ -102,10 +103,11 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
           onExplainBackEnd={opts.onExplainBackEnd}
         />
       );
+    case 'MasteryCelebration':
+      return <MasteryCelebration spec={spec} />;
     case 'IntroExplanation':
     case 'WorkedExample':
     case 'ConfidenceCheck':
-    case 'MasteryCelebration':
       return <Tbd kind={spec.kind} />;
     default: {
       // Exhaustiveness: if a new ComponentSpec variant is added without a case
