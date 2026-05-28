@@ -268,3 +268,25 @@ External: OpenAI API key with GPT-5 and GPT-5-mini access. LangSmith API key.
 correct submit → advanced to `"A OR B"`; **wrong submit → re-presented "A AND B"** (criterion
 3 confirmed in the real UI); on-topic question → answer; off-topic → "Off-topic redirect"
 deflection. No console errors.
+
+### Retro
+
+1. **Learned about the system (→ propagated to ROADMAP cross-cutting notes):** the `submit`
+   wire event gained an **optional append-only `correct: boolean`** field. The agent reads the
+   client-computed verdict to decide its next move (wrong → re-present, not advance) without
+   re-deriving correctness — consistent with ADR-008 (correctness is client-side). F-09's
+   event-consumer should read this for the retry-ratio signal. Propagated to ROADMAP §
+   Cross-cutting contracts (WebSocket message protocol row).
+2. **Learned that changes the roadmap:** none material — the inner loop landed on the predicted
+   contract surface. The one surprise was a *missing UX seam*: the intro had no affordance to
+   reach the first item, so `session_start` now mounts item 0 (loop kickoff). F-13/F-15
+   (lesson transitions) inherit this "mount-on-entry" behavior.
+3. **Contract changed:** `submit.correct` (optional, append-only — does not break existing
+   senders). Updated at its source of truth (`packages/contract/src/wire.ts`) + the ROADMAP
+   note; no dependent re-sync needed (it's optional).
+4. **Next builder should know (→ CLAUDE.md candidate):** the WS allowed-origins is now
+   **env-driven** (`ALLOWED_WS_ORIGINS`); the droplet deploy must set it to
+   `https://polymath.biograph.dev` or the WS upgrade 401s. Also: the rep `ComponentSpec`s carry
+   **no itemId**, so the web names the mounted item by its *expression* — any agent logic that
+   identifies "which item" must match on itemId/expression, never on the learner's `submission`
+   (that's the answer; wrong on a miss). Both noted for F-06/F-07.
