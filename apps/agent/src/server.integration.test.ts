@@ -256,12 +256,20 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
 
     // Submit a correct transfer answer (equivalent to the probed expression). The
     // rule + transfer conditions are now met, but L1 config requires explain-back
-    // (F-11/F-12) — so the agent does NOT declare mastery; it waits. Mastery in I1
-    // is deliberately unreachable until the voice explain-back ships.
+    // (F-11) — so the agent does NOT declare mastery. F-11's deterministic server
+    // reflex now mounts an ExplainBackPrompt for the just-passed item (superseding
+    // the I1 no_action arm); F-12 still owns the eventual mastery transition.
     const [afterTransfer] = await driveSequence(sessionId, [
       { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
     ]);
-    expect(afterTransfer!.type).toBe('no_action');
+    expect(afterTransfer!.type).toBe('mount');
+    if (afterTransfer!.type === 'mount') {
+      expect(afterTransfer!.component.kind).toBe('ExplainBackPrompt');
+      if (afterTransfer!.component.kind === 'ExplainBackPrompt') {
+        expect(afterTransfer!.component.targetItemId).toBe(probedItemId);
+        expect(afterTransfer!.component.maxDurationSec).toBe(15);
+      }
+    }
 
     // The transfer verdict is recorded in the replay log (criterion 5), and the
     // replay shows the per-turn BKT trajectory rising toward mastery (F-09 crit 8).
@@ -293,6 +301,136 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const verdicts = replay.events.map((e) => e.payload.transferVerdict).filter(Boolean);
     expect(verdicts.length).toBeGreaterThanOrEqual(1);
     expect(verdicts.every((v) => v!.correct === false)).toBe(true);
+  });
+
+  // ── F-11 explain-back rubric: REACHABILITY (the I1 inert-refusal lesson) ──────
+  // The single most important F-11 test: a raw `explain_back_recording_ended`
+  // ClientEvent driven through the real fold (handleClientFrame), NOT a hand-set
+  // state. Proves the subgraph is REACHABLE (wired), not merely correct in isolation.
+  describe('F-11 explain-back rubric (server reflex, reachability)', () => {
+    /** Drive the gate to a transfer-pass so an ExplainBackPrompt is mounted; return
+     *  the probed item id (the explain-back `targetItemId`). */
+    async function driveToExplainBackPrompt(sessionId: string): Promise<string> {
+      const actions = await driveSequence(sessionId, [
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+      ]);
+      const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+      const probedItemId =
+        probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+      const probedExpr =
+        probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+      const [afterTransfer] = await driveSequence(sessionId, [
+        { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+      ]);
+      // The transfer-pass reflex mounted the explain-back prompt.
+      expect(afterTransfer!.type === 'mount' && afterTransfer!.component.kind).toBe('ExplainBackPrompt');
+      return probedItemId;
+    }
+
+    it('routes a raw explain_back_recording_ended through the rubric, logs a verdict, and re-mounts on a precondition fail (AC#7, AC#8)', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const targetItemId = await driveToExplainBackPrompt(sessionId);
+
+      // A too-short transcript (< 10 words) fails precondition #3. No judge runs.
+      // The rubric must (a) persist a verdict row and (b) re-mount ExplainBackPrompt.
+      const [verdictAction] = await driveSequence(sessionId, [
+        {
+          kind: 'explain_back_recording_ended',
+          sessionId,
+          targetItemId,
+          transcript: 'um the AND gate',
+          durationMs: 6000,
+        },
+      ]);
+      // (b) A precondition fail loops back to a retry ExplainBackPrompt (AC#8).
+      expect(verdictAction!.type).toBe('mount');
+      if (verdictAction!.type === 'mount') {
+        expect(verdictAction!.component.kind).toBe('ExplainBackPrompt');
+        if (verdictAction!.component.kind === 'ExplainBackPrompt') {
+          expect(verdictAction!.component.targetItemId).toBe(targetItemId);
+        }
+      }
+
+      // (a) The verdict row is persisted with full precondition status (AC#7), and
+      // the verdict failed CLOSED (no key in this run → judge never reached because
+      // the precondition tripped first; reasons name the precondition).
+      await new Promise((r) => setTimeout(r, 300));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: {
+          kind: string;
+          payload: {
+            explainBackVerdict?: { passed: boolean; reasons: string[] };
+            validation?: { layer?: number; status?: string; detail?: { reasons?: string[] } };
+          };
+        }[];
+      };
+      const verdictRow = replay.events.find((e) => e.kind === 'explain_back_recording_ended');
+      expect(verdictRow, 'an explain-back verdict row is persisted').toBeTruthy();
+      expect(verdictRow!.payload.explainBackVerdict?.passed).toBe(false);
+      expect(verdictRow!.payload.explainBackVerdict?.reasons).toContain('too_few_words');
+      expect(verdictRow!.payload.validation?.layer).toBe(4);
+      expect(verdictRow!.payload.validation?.status).toBe('reject');
+    });
+
+    it('clamps the recording window server-side: an over-cap durationMs cannot extend it (AC#9)', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const targetItemId = await driveToExplainBackPrompt(sessionId);
+
+      // A manipulated client claims a 14s recording (under the 15s cap) but with a
+      // transcript that is empty — the clamp + preconditions both reject it. More
+      // importantly, a client claiming a HUGE durationMs cannot satisfy #2 by lying:
+      // the server clamps to maxDurationSec*1000 before the preconditions read it.
+      await driveSequence(sessionId, [
+        {
+          kind: 'explain_back_recording_ended',
+          sessionId,
+          targetItemId,
+          transcript: '',
+          durationMs: 9_999_999, // absurd over-cap value — must be clamped, not trusted
+        },
+      ]);
+      await new Promise((r) => setTimeout(r, 300));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: {
+          kind: string;
+          payload: { explainBackVerdict?: { passed: boolean }; validation?: { detail?: { effectiveDurationMs?: number } } };
+        }[];
+      };
+      const verdictRow = replay.events.find((e) => e.kind === 'explain_back_recording_ended');
+      expect(verdictRow!.payload.explainBackVerdict?.passed).toBe(false);
+      // The effective duration was clamped to the 15s window, never the lie.
+      expect(verdictRow!.payload.validation?.detail?.effectiveDurationMs).toBeLessThanOrEqual(15_000);
+    });
+
+    it('an unsolicited explain_back_recording_ended (no prompt mounted) fails closed', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      // No transfer pass → no ExplainBackPrompt mounted. A forged event must not
+      // produce a pass; the window is treated as 0 → precondition #1 trips.
+      await driveSequence(sessionId, [
+        {
+          kind: 'explain_back_recording_ended',
+          sessionId,
+          targetItemId: 'L1-01-and',
+          transcript: 'I used the AND gate on the variables A and B to get the output here today',
+          durationMs: 8000,
+        },
+      ]);
+      await new Promise((r) => setTimeout(r, 300));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { explainBackVerdict?: { passed: boolean; reasons: string[] } } }[];
+      };
+      const verdictRow = replay.events.find((e) => e.kind === 'explain_back_recording_ended');
+      expect(verdictRow!.payload.explainBackVerdict?.passed).toBe(false);
+      expect(verdictRow!.payload.explainBackVerdict?.reasons).toContain('duration_too_short');
+    });
   });
 
   describe('POST /api/realtime/session (ephemeral LiveKit token)', () => {

@@ -29,6 +29,10 @@ export interface LoggedEvent {
   submission?: string;
   /** Server-computed transfer verdict on a `transfer_submitted`. */
   transferCorrect?: boolean;
+  /** Server-computed explain-back verdict on an `explain_back_recording_ended`
+   *  (`payload.explainBackVerdict.passed`). Undefined on every other event kind;
+   *  a turn with no verdict leaves `explainBackPassed` false (fail closed). */
+  explainBackPassed?: boolean;
   /** Milliseconds the learner took (when available). */
   responseTimeMs?: number;
   /** For a `request_hint`: whether the agent actually mounted a HintCard (vs.
@@ -53,6 +57,10 @@ export interface DerivedState {
   retries: number;
   responseTimesMs: number[];
   transferPassed: boolean;
+  /** Whether THIS session has a persisted PASSING explain-back verdict (F-11 → F-12
+   *  seam). Init false; flipped true only by a logged `explain_back_recording_ended`
+   *  whose server-computed verdict passed. A missing verdict is BLOCK, never a pass. */
+  explainBackPassed: boolean;
 }
 
 function bktConfig(config: MasteryConfig): BKTConfig {
@@ -113,6 +121,7 @@ export function deriveState(
     retries: 0,
     responseTimesMs: [],
     transferPassed: false,
+    explainBackPassed: false,
   };
   /** Items the learner has previously gotten WRONG — a later submit on one of
    *  these is a retry. (Re-seeing an already-correct item is spaced practice, not
@@ -150,6 +159,10 @@ export function deriveState(
       }
     } else if (ev.kind === 'transfer_submitted') {
       if (ev.transferCorrect === true) state.transferPassed = true;
+    } else if (ev.kind === 'explain_back_recording_ended') {
+      // Server-derived (never a client flag): only a PASSING persisted verdict flips
+      // this. A failing/absent verdict leaves it false → the mastery gate blocks.
+      if (ev.explainBackPassed === true) state.explainBackPassed = true;
     }
   }
 
@@ -171,7 +184,9 @@ export function toLearnerState(derived: DerivedState): LearnerState {
     hintRatio: derived.hintsUsed / items,
     retryRatio: derived.retries / items,
     transferPassed: derived.transferPassed,
-    explainBackPassed: false, // F-11/F-12
+    // F-11: derived from a persisted PASSING explain-back verdict (fail closed —
+    // false with no verdict). F-12 reads this in the full mastery gate.
+    explainBackPassed: derived.explainBackPassed,
     topicGuardrailClean: true, // F-12 will compute from the session
   };
 }

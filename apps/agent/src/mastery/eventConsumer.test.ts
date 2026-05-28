@@ -120,4 +120,39 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
     expect(gate.passed).toBe(false);
     expect(gate.blockers).toContain('hint_ratio_exceeded');
   });
+
+  // F-11 → F-12 seam: a persisted PASSING explain-back verdict must flip the
+  // derived `explainBackPassed` to true. This is the input F-12's mastery gate
+  // reads. Fails closed: a session with no explain_back_recording_ended stays false.
+  it('explainBackPassed stays false with no explain-back event (fail closed)', () => {
+    const d = deriveState(
+      [{ kind: 'submit', itemId: 'l1-and', submission: RIGHT.and }],
+      content,
+      masteryConfig,
+    );
+    expect(d.explainBackPassed).toBe(false);
+    expect(toLearnerState(d).explainBackPassed).toBe(false);
+  });
+
+  it('a logged PASSING explain-back verdict flips explainBackPassed to true', () => {
+    const d = deriveState(
+      [
+        { kind: 'transfer_submitted', itemId: 'L1-01', transferCorrect: true },
+        { kind: 'explain_back_recording_ended', itemId: 'L1-01', explainBackPassed: true },
+      ],
+      content,
+      masteryConfig,
+    );
+    expect(d.explainBackPassed).toBe(true);
+    expect(toLearnerState(d).explainBackPassed).toBe(true);
+  });
+
+  it('a logged FAILING explain-back verdict leaves explainBackPassed false (fail closed)', () => {
+    const d = deriveState(
+      [{ kind: 'explain_back_recording_ended', itemId: 'L1-01', explainBackPassed: false }],
+      content,
+      masteryConfig,
+    );
+    expect(d.explainBackPassed).toBe(false);
+  });
 });

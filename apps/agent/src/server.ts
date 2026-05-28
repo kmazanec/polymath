@@ -91,16 +91,21 @@ function lessonIdForEvent(event: ClientEvent): number {
  *  server-side (the BKT/streak must not trust the client's `correct` flag). */
 function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
   const p = (payload ?? {}) as {
-    event?: { itemId?: string; submission?: string; correct?: boolean; responseTimeMs?: number };
+    event?: { itemId?: string; submission?: string; correct?: boolean; responseTimeMs?: number; targetItemId?: string };
     transferVerdict?: { correct?: boolean };
+    explainBackVerdict?: { passed?: boolean };
     action?: { type?: string; component?: { kind?: string } };
   };
   return {
     kind,
-    itemId: p.event?.itemId ?? p.event?.submission,
+    // An explain-back event names its item via `targetItemId` (not `itemId`).
+    itemId: p.event?.itemId ?? p.event?.targetItemId ?? p.event?.submission,
     submission: p.event?.submission,
     responseTimeMs: p.event?.responseTimeMs,
     transferCorrect: p.transferVerdict?.correct,
+    // F-11 → F-12 seam: project the server-computed explain-back verdict so the
+    // derived state flips `explainBackPassed` (never a client flag).
+    explainBackPassed: p.explainBackVerdict?.passed,
     // A served hint = the logged action mounted a HintCard (a refused request is a
     // no_action). Only known for persisted events; the current turn's action isn't
     // decided yet (and doesn't count toward its own level).
@@ -653,26 +658,53 @@ export async function handleClientFrame(
     lesson.masteryConfig,
     transferCandidates,
   );
-  const action: Action = !layer2.ok
+  const validatedAction: Action = !layer2.ok
     ? noAction('agent_unsure', `outbound Layer-2 rejection: ${layer2.detail}`)
     : earnedItRejection
       ? noAction('agent_unsure', earnedItRejection)
       : shaped;
 
+  // F-11 TRANSFER-PASS REFLEX (deterministic, NOT via the LLM menu): when this turn
+  // is a PASSED transfer probe and the lesson requires explain-back, the SERVER
+  // mounts `ExplainBackPrompt` directly — superseding the stub/LLM `no_action` arm.
+  // This keeps the integrity prompt off the forgeable/jailbroken-LLM path and out of
+  // the two-place menu lockstep. `targetItemId` is the just-passed transfer item; the
+  // browser TTSes `promptBody` then opens the server-clamped `maxDurationSec` window.
+  const action: Action =
+    transferVerdict?.correct === true && lesson.masteryConfig.requireExplainBackPass
+      ? {
+          type: 'mount',
+          component: {
+            kind: 'ExplainBackPrompt',
+            targetItemId: transferVerdict.itemId,
+            promptBody:
+              'Nice — you passed the transfer. In your own words, walk me through how you solved that specific problem.',
+            maxDurationSec: 15,
+          },
+          rationale: `transfer passed for ${transferVerdict.itemId}; mounting explain-back (server reflex, F-11)`,
+        }
+      : validatedAction;
+
   // ADR-010 Layer 3: a HintCard level-3 mount is logged as unverified_prose.
   // All other mounts go through the Layer-2 validator (layer 2); non-mounts
   // are layer 1. This is set on the pre-rejection `shaped` action so the log
   // reflects the original proposal even when it was downgraded.
+  // The transfer-pass reflex replaced the proposal with a deterministic
+  // server-authored ExplainBackPrompt mount; record THAT as a clean pass (it never
+  // went through the LLM, so the proposal-based layer below would mislabel it).
+  const reflexFired = action !== validatedAction;
   const isL3Hint =
     shaped.type === 'mount' &&
     shaped.component.kind === 'HintCard' &&
     shaped.component.level === 3;
-  const validationLayer = isL3Hint ? 3 : shaped.type === 'mount' ? 2 : 1;
-  const validationStatus = isL3Hint
-    ? 'unverified_prose'
-    : layer2.ok
-      ? 'pass'
-      : 'reject';
+  const validationLayer = reflexFired ? 2 : isL3Hint ? 3 : shaped.type === 'mount' ? 2 : 1;
+  const validationStatus = reflexFired
+    ? 'pass'
+    : isL3Hint
+      ? 'unverified_prose'
+      : layer2.ok
+        ? 'pass'
+        : 'reject';
 
   await deps.db.insert(events).values({
     sessionId: event.sessionId,
