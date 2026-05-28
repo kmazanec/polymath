@@ -101,6 +101,139 @@ External: OpenAI API key with GPT-5 and GPT-5-mini access. LangSmith API key.
 
 ⚠ **Replay endpoint** in T-01e is stubbed in F-01 and becomes meaningful in F-05. The replay endpoint's output shape is locked once F-05 ships; downstream evaluators (Keith showing the demo) depend on it.
 
+## Implementation plan (approved)
+
+> **Decision (locked with Keith):** The wire `Action` union stays the 4 locked variants
+> (`mount`/`transition`/`answer_question`/`no_action`, append-only per the `action.ts`
+> docstring + CLAUDE.md). The tactical menu (`next_practice_item`, `rephrase`, `simpler_item`,
+> `alt_representation`, `worked_example`, `propose_mastery_transition`) is the agent's
+> **internal** decision vocabulary in `apps/agent/src/agent/menu.ts`; each move *compiles
+> down* to one wire Action. The spec's "extend the Action union" language is superseded by the
+> shipped contract design.
+>
+> **Decision (locked with Keith):** No `OPENAI_API_KEY` is set. Build the real
+> `OpenAIAgentClient` + LangGraph flow + Layer-2 + fallback bank, fully exercised with a
+> **mocked `AgentClient`**. Live GPT-5/GPT-5-mini calls + the LangSmith ≥95% eval gate
+> (criterion #8) are wired but run only when a key exists — deferral documented honestly.
+
+- [x] **Internal tactical menu** — `apps/agent/src/agent/menu.ts`: `TacticalMove`
+      discriminated union (the ADR-003 menu) + pure `compileMove(move, ctx): Action` mapping
+      each move to a wire Action (`next_practice_item`/`rephrase`/`simpler_item`/`worked_example`/
+      `alt_representation` → `mount`; `propose_mastery_transition` → `transition`;
+      `answer_question` → `answer_question`). Extensible by discriminator literal (F-06
+      `propose_hint`, F-07 `propose_transfer_probe`). Unit-tested. *(criteria 1,2,3,4,5)*
+- [x] **Widen `AgentClient`** — `apps/agent/src/agent/client.ts`: `propose(input: AgentInput)`
+      where `AgentInput = { event, learnerState, lesson, recentHistory }`. Keep
+      `StubAgentClient` conforming so F-01's integration test still passes.
+- [x] **Layer-2 validator** — `apps/agent/src/agent/layer2.ts`: for a `mount` of an
+      item-generating component, recompute `truthTable(targetExpression).out` (map →0/1) and
+      compare to `claimedTruthTable`; cap distinct-var count first. Returns ok/mismatch.
+      Unit-tested against every fallback item + an injected bad table. *(criterion 2,9)*
+- [x] **Fallback bank** — `apps/agent/src/fallback_bank/lesson_1.json`: hand-curated L1 items
+      per tier; loader is non-fatal; every item passes Layer 2 (unit test). Dockerfile already
+      `COPY apps/agent` wholesale — no extra COPY needed (verified). *(criterion 9)*
+- [x] **OpenAI provider** — add `@langchain/openai`; `apps/agent/src/agent/openaiClient.ts`:
+      `withStructuredOutput` against the `TacticalMove` Zod schema; model routing (fast default,
+      strong for mastery/transfer); reads `INNER_AGENT_*`/`OPENAI_API_KEY`; single retry on
+      schema/Layer-2 failure then `no_action`. *(criterion 6)*
+- [x] **Prompt** — `apps/agent/src/agent/prompt.ts`: system prompt (persona, enumerated menu,
+      rationale expectation, topic guardrail) + per-turn user prompt (snapshot + history).
+- [x] **LangGraph flow** — expand `graph.ts`: snapshot → classify → branch → per-move arm →
+      emit (compile + Layer-2 + log). Provider injected (mockable). *(criteria 1,3)*
+- [x] **Server wiring** — `server.ts` `handleClientFrame`: build `AgentInput` (load lesson via
+      `loadLesson`, read `learner_state`), call `propose`, keep `validateOutboundAction`,
+      persist structured log (`rationale`, `validation:{layer,status,detail}`, snapshot) into
+      `events.payload`. Wrap `propose` in a timeout (F-01 build note). *(criteria 7,10)*
+- [x] **Web inner-loop wiring** — `App.tsx`/`ws`: stop discarding `send`; adapter feeds inbound
+      `action` into the statechart (`mount`→render proposed spec; `transition`→`send`
+      LessonEvent); normalize the 3 reps' `onSubmit` → `submit` `ClientEvent`; question textbox
+      → `learner_question`; render `AgentAnswer` (incl. off-topic deflection). Registry threads
+      `onSubmit`/`hiddenReps`; real `AgentAnswer` case. *(criteria 1,4,5)*
+- [x] **Tests** — Layer-2 unit; `compileMove` unit; property test (every retry path → conforming
+      Action or `no_action`, never malformed); in-process WS integration with a **mocked**
+      `AgentClient` asserting Action-sequence patterns; web adapter test. *(testing requirements)*
+- [x] **LangSmith eval scenarios (data) + skipped-without-key runner** — criterion #8 (≥95%)
+      authored as labelled cases; gate runs live only with a key. **Deferred & documented.**
+
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### Architecture as built
+
+- **Two-layer agent seam.** `MoveProvider.proposeMove(input, validationError?)` is the raw
+  reasoning step (returns one internal `TacticalMove`); `AgentClient.propose(input)` is the
+  *flow* (snapshot → propose → Layer-2 validate → retry once → fallback → compile to a wire
+  `Action`). The flow is provider-agnostic and fully tested with a deterministic double, so
+  the OpenAI provider is a drop-in. `AgentInput` widened the old bare-`ClientEvent` seam to
+  `{ event, lesson, learnerState, recentHistory }`.
+- **The wire `Action` union was NOT extended** (locked, append-only). The tactical menu lives
+  in `apps/agent/src/agent/menu.ts` as `TacticalMove`; `compileMove` maps each move to one of
+  the 4 wire variants. This honored the contract design over the spec's literal "extend the
+  union" wording (decision recorded above).
+- **Layer 2 (`agent/layer2.ts`)** recomputes `truthTable(targetExpression).out` and compares
+  to `claimedTruthTable` for the 3 item-generating `mount` kinds; non-item Actions pass
+  trivially. Var-count capped at 10 before enumeration. The retry/fallback contract lives in
+  `proposeAction` (graph.ts): one model retry carrying the validation error, then a
+  hand-curated `fallback_bank/lesson_1.json` item (re-validated), then `no_action`.
+- **Key-free heuristic provider** (`HeuristicMoveProvider`, exported as `StubAgentClient`)
+  drives the loop without an LLM: `session_start`→mount first item, `submit`→next item (or
+  mastery transition when `ruleGatePassed`), `learner_question`→on/off-topic answer. This is
+  what runs in dev, the smoke test, and CI. The OpenAI provider replaces only the *provider*,
+  not the flow.
+- **Web inner-loop wiring**: `ws/actionAdapter.ts` (pure, node-tested against the real
+  statechart) maps a server `Action` → `{ lessonEvent?, mount?, answer? }`; `App.tsx` stops
+  discarding `send`, mounts the proposed `ComponentSpec`, normalizes the 3 reps' `onSubmit`
+  to a `submit` event, and adds a "ask the tutor" box → `learner_question` → `AgentAnswer`.
+
+### Decisions + their rationale
+
+- **session_start now mounts the lesson's first item** (was `no_action`). Found during the
+  smoke test: the intro has no submit affordance, so without a kickoff the learner could
+  never reach a workspace through the UI. Mounting item 0 on session start is what makes the
+  spec's "the learner does an L1 practice item" true end-to-end.
+- **`createServer`'s `allowedOrigins` is now env-driven** (`ALLOWED_WS_ORIGINS` in `index.ts`
+  + compose). The CSWSH origin check previously hard-coded `localhost:5173/8080`; the WS
+  upgrade returned **401** for any other serving origin (incl. the droplet's
+  `https://polymath.biograph.dev`). F-01 never connected the loop so it never surfaced. This
+  is a deployment-config fix, not a contract change.
+- **Heuristic advance matches itemId OR canonical expression.** The rep `ComponentSpec`s carry
+  no `itemId`, so the web names the current item by its expression on submit; the provider
+  matches on either so the loop advances regardless of caller.
+
+### Verification (evidence, not assertion)
+
+- **Unit/integration green:** full workspace `pnpm test` → **257 passed, 4 skipped**
+  (the 4 skipped are DB-gated seed tests in the unfiltered run); the agent integration suite
+  ran its own throwaway Postgres and passed all 6 (incl. the new submit-sequence + Q&A
+  patterns). `pnpm typecheck` clean across 5 packages; `pnpm build` succeeded.
+- **Layer-2 / retry property (criteria 2,6,9):** `flow.test.ts` proves first-valid (1 call),
+  one-retry-on-mismatch (2 calls, error threaded), persistent-malformation→fallback-bank
+  item, provider-error→fallback, exhausted-bank→`no_action`, and the property that *every*
+  outcome `Action.parse`s regardless of provider behavior.
+- **Deploy-packaging lens (CLAUDE.md blind spot):** `docker build` the agent image, then
+  `docker run … ls /app/apps/agent/src/fallback_bank/` → `lesson_1.json` present; and
+  `@langchain+openai@0.3.17` present in the image `node_modules`. Boot-time bank load is
+  non-fatal (degrades to empty).
+- **Step-7 smoke (real stack, heuristic agent), `docker compose up` on :8091, driven via
+  Chrome DevTools MCP:**
+  - On load: `region "Truth table for A AND B"` mounted (the kickoff item) — DOM quoted.
+  - Toggled the correct output cell, clicked Submit → `region "Truth table for A OR B"`
+    (the loop advanced to the next item) — **criterion 1 verified end-to-end**.
+  - Asked "what does an AND gate output?" → `region "Answer"` with an on-topic reply
+    (**criterion 4**); asked "can you book me a flight to Paris?" → `region "Off-topic
+    redirect"` with the stock deflection (**criterion 5**).
+  - No console errors. WS health/session/round-trip all 200/101.
+- **Replay (criterion 10):** the integration test asserts `/api/session/:id/replay` returns
+  each turn's `action.rationale` and `validation.status === 'pass'`.
+
+### Deferred & documented (no `OPENAI_API_KEY` available)
+
+- **Live GPT-5/GPT-5-mini inference** — `OpenAIMoveProvider` is built, typechecked, and wired
+  (structured output + model routing + retry), but never invoked without a key. The flow it
+  plugs into is fully tested with a deterministic double.
+- **LangSmith ≥95% eval gate (criterion 8)** — labelled scenarios authored in
+  `agent/eval/scenarios.json`; `eval.test.ts` asserts the heuristic provider agrees with all
+  of them offline and runs the live OpenAI gate **only when a key is present** (skipped here).
+  LangSmith tracing itself (env wiring) is F-20.
+- **Postgres LangGraph checkpointer** — the graph runs in-memory; no criterion needs durable
+  checkpoints in F-05 (replay is reconstructed from the `events` log). Noted for F-11's
+  multi-step subgraph.
