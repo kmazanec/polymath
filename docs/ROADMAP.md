@@ -103,7 +103,7 @@ A contract is shared shape that multiple features must agree on. Every contract 
 | **`packages/booleans` validator** | `packages/booleans/src/` (parser, AST, truth-table compare, equivalence) | F-01 (minimum: parse + compare AND/OR/NOT) | F-02, F-03, F-04, F-13, F-16, F-22 | New gate support (NAND in F-22) extends parser + evaluator. The API surface (`parse`, `truthTable`, `equivalent`) does not change after I0. | None expected — additions are pure (new gates), not changes. The contract is "shape preserved, alphabet grows." |
 | **Statechart spine** | `packages/statechart/src/lesson.ts` (XState) | F-01 (lesson_1 sub-statechart with phases) | F-09 (guards), F-12 (mastery guard), F-13 (lesson_2), F-15 (macro lesson_1→lesson_2), F-22, F-23, F-26 | The intra-lesson phase shape (`introducing → practicing → {hint, transferring} → assessed → {mastered, remediating}`) is locked in F-01. New lessons reuse via parameterisation. New phases require a new ADR. | ⚠ F-15 introduces the macro transition; depends on F-12's mastery guard being merged. F-22/F-23/F-26 each add a lesson_N sub-statechart; sequential by lesson order. |
 | **`transfer_bank` Postgres table + seed** | `db.transfer_bank` (table) + `seed_data/transfer_items.json` | F-08 (32 hand-curated items, all 4 MVP+stretch lessons covered) | F-07 (consumes), F-16 (consumes for baseline pre/post), F-22 (L3 items pre-authored), F-23 (L4 items pre-authored) | The bank is **never written to at runtime**. Adding items is a code change committed to git + a migration. Removals require justification in the limitations memo. | None expected — the table is read-only at runtime. Convergence between F-07 (probe consumer) and F-16 (baseline pre/post) is a *use* convergence, not a *modify* convergence. |
-| **WebSocket message protocol** | `packages/contract/src/wire.ts` (event types + Action wrapping) | F-01 | F-05, F-09, F-11, F-12, F-14, F-17 | Adds new event kinds (e.g., `transfer_submitted`, `explain_back_recording_ended`). Existing event kinds are append-only — never re-shape an existing event's payload. | Moderate. Two features extending the wire format in the same iteration must coordinate. Within I1, F-05 (agent loop) and F-09 (BKT updates) both extend it; serialize them at file-edit level. |
+| **WebSocket message protocol** | `packages/contract/src/wire.ts` (event types + Action wrapping) | F-01 | F-05, F-09, F-11, F-12, F-14, F-17 | Adds new event kinds (e.g., `transfer_submitted`, `explain_back_recording_ended`). Existing event kinds are append-only — never re-shape an existing event's payload. **New optional fields on an existing event are allowed** (they don't break existing senders) — see `submit.repSubmission`, added in I1. | Moderate. Two features extending the wire format in the same iteration must coordinate. **I1 update:** the `submit` event gained an optional `repSubmission` discriminated union (truth_table/circuit/pseudocode), locked in I1 Step 0 before the rep features fanned out — this removed the predicted per-rep submit-union convergence (one shared field instead of three competing edits). The required `submission` string is unchanged. |
 | **Mastery gate predicate** | `apps/agent/src/mastery/gate.ts` | F-09 (rule-gate + BKT only) | F-12 (adds transfer + explain-back conditions), F-22/F-23 (lesson-specific tuning) | The predicate's *inputs* (`LearnerState`, `MasteryConfig`) are locked in F-09. F-12 extends the *implementation*, not the signature. Lesson-specific configs live in `lessons/<id>/mastery_config.json` and are loaded by the existing predicate. | ⚠ F-12 is the only feature that meaningfully changes gate behavior. F-22/F-23 only ship new lesson configs; the predicate is unchanged. |
 | **Lesson config JSON** | `lessons/<id>/mastery_config.json` + `lessons/<id>/content.json` | F-01 (lesson_1 stub: thresholds + 3 items) | F-09 (full mastery params), F-13 (lesson_2), F-22, F-23, F-26 | Adding a lesson = new directory + new JSON. Existing lesson configs are not edited cross-feature (only by the feature that owns that lesson). | None expected — directory-scoped ownership. |
 | **Curated component registry (rendering)** | `apps/web/src/components/registry.ts` (switch on `ComponentSpec.kind`) | F-01 (stub components) | F-02..F-04, F-06, F-07, F-11, F-14, F-18, F-22..F-26 | Every new `ComponentSpec.kind` adds a `case` to the switch. The switch must remain exhaustive (TS enforced via discriminated union). | ⚠ I1: F-02/F-03/F-04 all add a `case` to the same switch file. Sub-agents must coordinate at the file-edit level (claim a case alphabetically; merge order matters). |
@@ -181,6 +181,30 @@ graph TB
 **Convergence point:** F-09 (BKT + rule-gate) is the merge sink for the iteration. It consumes hint usage (F-06), submission history (F-02/F-03/F-04 via F-05), and transfer pass/fail (F-07). Expected rework at F-09: small — it consumes from the existing event log, doesn't change the event shape.
 
 **Wall-clock estimate: 7–10 days** with 3 concurrent reps + 1 agent track + 1 data track. Critical sub-path: F-03 → F-05 → F-07 → F-09.
+
+> **Build notes from I1 batch (F-02/F-03/F-04/F-08, carried forward):**
+> - **`submit` wire gained an optional `repSubmission`** discriminated union (`packages/contract/src/wire.ts`,
+>   on `main`) — the rep-native learner input (truth-table cells / circuit topology / pseudocode source)
+>   for agent+replay logging. Append-only/optional, so it never breaks existing senders; the required
+>   `submission` canonical-expression string is unchanged and stays the correctness channel (computed
+>   client-side). This **replaces** the per-feature "extend submit with a rep-tagged union" the F-02/03/04
+>   specs each anticipated — it's now one shared field locked before fan-out. F-05/F-09 consuming submit
+>   should read `repSubmission` for logging, never re-derive the verdict from it.
+> - **`PulseContext` shipped wider than the F-03 spec's stated lock**: `{ activeStep, schedule, vars, env }`
+>   (the spec said `{ activeStep, schedule }`). `vars`/`env` let F-02/F-04 subscribers find the row/line
+>   matching the animated input assignment. Additive; F-02/F-04 PulseContext subscribers (deferred) pin to
+>   this shape. `PulseStep` also carries a `label` (gate-semantics SR sentence).
+> - **F-01 left `apps/web` without `@polymath/booleans` and without `@xyflow/react`/`motion`/`codemirror`**
+>   despite ADR-008. All three reps need booleans (client-side validation); F-03 needs react-flow+motion,
+>   F-04 needs codemirror. Added in the I1 batch. **Future web features that validate client-side must
+>   ensure the dep is declared** — it's now present, so this is a one-time fix.
+> - **Renderer-switch convergence resolved cleanly** exactly as the roadmap predicted: each rep branch wired
+>   only its own `case` (coordinator-owned at integration), so the 3-way merge was purely additive
+>   (alphabetical case order, identical-intent dep adds auto-reconciled). 223 tests pass with all four merged.
+> - **react-flow/CodeMirror can't be meaningfully driven in jsdom** (no layout geometry). Component logic was
+>   split into pure, DOM-free modules (circuit model, pulse scheduler, submission, parser) that ARE unit-
+>   testable; axe-core + Playwright visual-regression are deferred to a real-browser pass at F-05 mount.
+>   Future canvas/editor features should expect the same split + deferral.
 
 ### I2 — Voice + full mastery gate (3 features, mostly serial)
 

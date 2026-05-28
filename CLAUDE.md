@@ -71,7 +71,7 @@ The agent integration test needs Postgres. Locally it can spin its own; in CI it
 
 Contracts lock at the end of iteration 0 specifically so iterations 1–6 can fan out across parallel feature branches. Changing them ripples everywhere, so:
 
-- The WebSocket event/message kinds and the `Action` wire union are **append-only** — never re-shape an existing kind's payload. New variants are added behind a version, per `docs/ROADMAP.md`.
+- The WebSocket event/message kinds and the `Action` wire union are **append-only** — never re-shape an existing kind's payload. New variants are added behind a version, per `docs/ROADMAP.md`. Adding a **new optional field** to an existing event is allowed (it doesn't break existing senders) — e.g. `submit.repSubmission`, the optional rep-native learner-input union added in I1 alongside the unchanged required `submission` string.
 - Adding a `ComponentSpec` `kind` is a **coordinated change across three places**: the union in `packages/contract/src/component.ts`, the `COMPONENT_KINDS` array, the web renderer switch in `apps/web/src/components/registry.tsx` (the `never` default makes a missing case a compile error), and the agent's prompt+validator. Removals require a deprecation window.
 - `@polymath/booleans` public signatures are locked; the gate alphabet may grow but the function shapes don't.
 
