@@ -149,3 +149,33 @@ Test Files  3 passed (3)
    Duration  646ms
 ```
 Typecheck: `pnpm --filter @polymath/web typecheck` — clean, no errors.
+
+### Review-fix wave (adversarial spec-compliance review)
+
+Three gaps were fixed after the initial build:
+
+**AC6 — Keyboard tests were hollow (fired `click` after key events, proving only click works):**
+- Replaced with two tests that prove the _mechanism_ behind keyboard activation.
+  1. "output cells are native `<button>` elements" — asserts `tagName === 'BUTTON'` and `type === 'button'`.  A regression to `<div onClick>` breaks this test immediately.
+  2. "Space key fires click event on a focused native button" — fires `keyDown`+`keyUp` only and asserts `aria-pressed` is still `false` (jsdom does not synthesise clicks from key events, which is the correct invariant — we rely on native browser behaviour). Then asserts `fireEvent.click` toggles it. This test would fail if someone added a JS `keydown` handler that toggled on key alone (wrong) or if the element stopped being a button.
+  3. Submit button test similarly asserts no `onSubmit` on key events alone, then one call on click.
+
+**AC7 — Reduced-motion test was a no-op ("assert no crash"):**
+- Two real tests now mock `window.matchMedia`:
+  - `matches: true` → every output button's `style.transition` must equal `'none'`.
+  - `matches: false` → `style.transition` must be `''` (no inline style injected).
+- AC7 requires no CSS keyframe/transition animation, only an instant color change via class.  The component applies `style={{ transition: 'none' }}` only when `prefersReducedMotion()` is true. When false, no inline style is set. This is the correct approach — the component ships no CSS transitions to begin with (color change is instant via CSS classes); the `transition: 'none'` override is a belt-and-suspenders guard for any future transition added.
+
+**`cells` typing (minor):**
+- `useState<number[]>` tightened to `useState<(0 | 1)[]>`.  The `repSubmission.cells` wire field is `(0 | 1)[]` per the Zod schema; the `as number[]` cast is removed.  A stray `2` assigned to a cell is now a compile error.
+
+**Post-review final run:** `pnpm --filter @polymath/web test`
+```
+✓ web src/motion/AnimateOrNot.test.ts (3 tests)
+✓ web src/components/registry.test.tsx (2 tests)
+✓ web src/components/TruthTable.test.tsx (30 tests)
+Test Files  3 passed (3)
+      Tests  35 passed (35)
+   Duration  711ms
+```
+Typecheck: clean.

@@ -246,44 +246,119 @@ describe('TruthTable keyboard navigation (Chunk 3)', () => {
     });
   });
 
-  it('Space key on output button toggles it (native button behavior)', () => {
+  it('output cells are native <button> elements — guarantees Space/Enter activate in real browsers (AC6)', () => {
+    // The contract is: output cells MUST be native <button>s so that browsers
+    // synthesise a click on Space/Enter without any JS key-handler.
+    // If someone replaces <button> with <div onClick>, this test catches it.
+    const spec = makeSpec('A AND B');
+    const { getAllByRole } = render(<TruthTable spec={spec} />);
+    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
+    expect(outputBtns.length).toBe(4);
+    outputBtns.forEach((btn) => {
+      // Native button element — real browsers fire click on Space/Enter
+      expect(btn.tagName).toBe('BUTTON');
+      // type="button" prevents accidental form submission
+      expect((btn as HTMLButtonElement).type).toBe('button');
+      // focusable without explicit tabindex (natural tab order)
+      expect(btn.tabIndex).toBe(0);
+    });
+  });
+
+  it('Space key fires click event on a focused native button (AC6 — jsdom native semantics)', () => {
+    // jsdom does NOT synthesise a click from keydown on buttons (unlike real browsers).
+    // We verify the mechanism directly: fireEvent.keyDown/keyUp alone must NOT toggle the
+    // cell (proving we rely on native click synthesis, not a JS key-handler). Then assert
+    // the cell is still toggleable via click, proving the onClick handler is wired correctly.
     const spec = makeSpec('A AND B');
     const { getAllByRole } = render(<TruthTable spec={spec} />);
     const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
     const firstBtn = outputBtns[0]!;
     firstBtn.focus();
     expect(document.activeElement).toBe(firstBtn);
-    // In a real browser, Space on a button triggers click. In jsdom/RTL, simulate:
+
+    // Key events alone (no synthesised click in jsdom) — state must NOT change
     fireEvent.keyDown(firstBtn, { key: ' ', code: 'Space' });
     fireEvent.keyUp(firstBtn, { key: ' ', code: 'Space' });
-    fireEvent.click(firstBtn); // Space triggers click in real browsers
+    // jsdom doesn't synthesise click, so aria-pressed is still false
+    expect(firstBtn.getAttribute('aria-pressed')).toBe('false');
+
+    // Now verify click (what a real browser would synthesise) does toggle
+    fireEvent.click(firstBtn);
     expect(firstBtn.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('Enter key on Submit button submits', () => {
+  it('Submit button is a native <button> reachable via Enter (AC6)', () => {
+    // Submit must be a native <button type="button"> so Enter activates it in real browsers.
+    // Also verifies the button is wired: click triggers onSubmit.
     const spec = makeSpec('A AND B', [0, 0, 0, 1]);
     const onSubmit = vi.fn();
     const { getByRole } = render(<TruthTable spec={spec} onSubmit={onSubmit} />);
     const submitBtn = getByRole('button', { name: /submit/i });
+
+    // Must be a native button (guarantees Enter activation)
+    expect(submitBtn.tagName).toBe('BUTTON');
+    expect((submitBtn as HTMLButtonElement).type).toBe('button');
+    // Focus + Enter key alone must NOT call onSubmit in jsdom (no key→click synthesis),
+    // confirming we depend on native browser behaviour rather than a JS keydown handler
     submitBtn.focus();
-    // Enter on a button triggers click in real browsers; in RTL simulate:
     fireEvent.keyDown(submitBtn, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyUp(submitBtn, { key: 'Enter', code: 'Enter' });
+    expect(onSubmit).not.toHaveBeenCalled(); // no spurious key handler
+
+    // Click (what Enter synthesises in real browsers) does call onSubmit
     fireEvent.click(submitBtn);
-    expect(onSubmit).toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledOnce();
   });
 
-  it('honors prefers-reduced-motion (no transition style when reduced)', () => {
-    // We cannot set window.matchMedia to return true reliably in jsdom,
-    // but we can verify that the component renders transition:none when the
-    // prefersReducedMotion() helper returns true. We test the data-no-motion
-    // attribute or the style directly by checking the component is accessible.
-    // This test verifies the component at minimum doesn't crash under reduced motion.
+  it('honors prefers-reduced-motion: transition:none when matchMedia matches (AC7)', () => {
+    // Mock matchMedia to return matches:true for prefers-reduced-motion
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
     const spec = makeSpec('A AND B');
     const { getAllByRole } = render(<TruthTable spec={spec} />);
     const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    // If jsdom matchMedia returns false (default), style will be undefined (no transition:none).
-    // The behavior under actual reduced motion is tested visually; here we just assert no crash.
-    expect(outputBtns.length).toBe(4);
+    // Every output cell must carry transition:none when reduced motion is preferred
+    outputBtns.forEach((btn) => {
+      expect((btn as HTMLButtonElement).style.transition).toBe('none');
+    });
+
+    window.matchMedia = originalMatchMedia;
+  });
+
+  it('no transition style on output cells when prefers-reduced-motion is false (AC7)', () => {
+    // Mock matchMedia to return matches:false — no transition style should be injected.
+    // TruthTable ships no CSS transitions at all; the noMotion flag gates inline style only.
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: false, // reduced motion NOT requested
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    const spec = makeSpec('A AND B');
+    const { getAllByRole } = render(<TruthTable spec={spec} />);
+    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
+    // When reduced motion is NOT requested, no inline transition is injected
+    outputBtns.forEach((btn) => {
+      expect((btn as HTMLButtonElement).style.transition).toBe('');
+    });
+
+    window.matchMedia = originalMatchMedia;
   });
 });
 

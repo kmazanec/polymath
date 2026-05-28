@@ -68,7 +68,7 @@ export function TruthTable({ spec, onSubmit }: TruthTableProps): ReactElement {
   // State: learner output cells (0 = false, 1 = true) + post-submit verdicts
   // -----------------------------------------------------------------------
   const rowCount = tableRows.length;
-  const [cells, setCells] = useState<number[]>(() => new Array(rowCount).fill(0) as number[]);
+  const [cells, setCells] = useState<(0 | 1)[]>(() => new Array(rowCount).fill(0) as (0 | 1)[]);
   const [verdicts, setVerdicts] = useState<CellVerdict[]>(() =>
     new Array(rowCount).fill(null) as CellVerdict[],
   );
@@ -81,7 +81,7 @@ export function TruthTable({ spec, onSubmit }: TruthTableProps): ReactElement {
     (rowIdx: number) => {
       if (submitted) return; // lock after submit
       setCells((prev) => {
-        const next = [...prev];
+        const next = [...prev] as (0 | 1)[];
         next[rowIdx] = next[rowIdx] === 0 ? 1 : 0;
         return next;
       });
@@ -103,7 +103,7 @@ export function TruthTable({ spec, onSubmit }: TruthTableProps): ReactElement {
     onSubmit?.({
       kind: 'submit',
       submission: spec.expression,
-      repSubmission: { rep: 'truth_table', cells: cells as number[] },
+      repSubmission: { rep: 'truth_table', cells },
       correct,
     });
   }, [submitted, parseError, cells, expectedOut, spec.expression, onSubmit]);
