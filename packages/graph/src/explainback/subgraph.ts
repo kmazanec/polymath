@@ -38,6 +38,41 @@ interface GraphState {
  *  the verdict's `reasons` is a free `string[]`, so this is a content-fail tag. */
 const JUDGE_FAILED = 'judge_failed';
 
+/** Deadline on the LLM judge call. `llm.invoke()` has no timeout of its own, and the
+ *  explain-back route returns from the WS handler BEFORE the generic agent-turn
+ *  timeout (which only wraps `proposeMove`). A hung/slow OpenAI call would otherwise
+ *  block the explain-back frame indefinitely (violating AC#5 "verdict within ~2s").
+ *  On timeout the judge resolves to `judge_unavailable` — fail closed, never a hang.
+ *  Generous vs. the ~2s target so a normal call is never cut off. */
+const JUDGE_TIMEOUT_MS = 10_000;
+
+/** Race a promise against a deadline. The timer is unref'd-equivalent (cleared on
+ *  settle) so it never keeps the event loop alive. On timeout the fallback resolves. */
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(onTimeout());
+    }, ms);
+    p.then(
+      (v) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      },
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(onTimeout());
+      },
+    );
+  });
+}
+
 function buildGraph() {
   const graph = new StateGraph<GraphState>({
     channels: {
@@ -68,18 +103,29 @@ function buildGraph() {
       return { verdict: { passed: false, reasons: ['judge_unavailable'] } };
     }
     try {
-      const { passed, subScores } = await judge.judge({
-        transcript: state.input.transcript,
-        itemTokens: state.input.itemTokens,
-        kcVocabulary: state.input.kcVocabulary,
-        ...(state.input.prosody ? { prosody: state.input.prosody } : {}),
-      });
+      // Race the judge against a deadline: a hung/slow LLM call must not block the
+      // explain-back WS frame (AC#5). On timeout → `judge_unavailable` (fail closed).
+      const result = await withTimeout(
+        judge.judge({
+          transcript: state.input.transcript,
+          itemTokens: state.input.itemTokens,
+          kcVocabulary: state.input.kcVocabulary,
+          ...(state.input.prosody ? { prosody: state.input.prosody } : {}),
+        }),
+        JUDGE_TIMEOUT_MS,
+        () => null,
+      );
+      if (result === null) {
+        // Timed out — fail closed (never a degraded pass on a hung judge).
+        return { verdict: { passed: false, reasons: ['judge_unavailable'] } };
+      }
+      const { passed, subScores } = result;
       if (passed) {
         return { verdict: { passed: true, reasons: [], llmJudgmentDetail: subScores } };
       }
       return { verdict: { passed: false, reasons: [JUDGE_FAILED], llmJudgmentDetail: subScores } };
     } catch {
-      // No key / rate limit / timeout / malformed structured output → fail closed.
+      // No key / rate limit / malformed structured output → fail closed.
       return { verdict: { passed: false, reasons: ['judge_unavailable'] } };
     }
   });

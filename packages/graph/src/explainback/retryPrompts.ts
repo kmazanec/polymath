@@ -25,14 +25,19 @@ const COPY: Record<PreconditionReason, string> = {
 const GENERIC_RETRY =
   "Let's try that explanation again — walk me through how you solved this specific problem.";
 
-/** The stock retry copy for a single precondition/judge reason. */
-export function retryPromptFor(reason: PreconditionReason): string {
-  return COPY[reason] ?? GENERIC_RETRY;
+/** The stock retry copy for a single reason. Accepts any string (a verdict's
+ *  `reasons` is a free `string[]`: a content-fail tag like `judge_failed` or
+ *  `attempt_cap_reached` is NOT a `PreconditionReason`) and falls through to the
+ *  generic copy for any reason without a specific entry. */
+export function retryPromptFor(reason: string): string {
+  return COPY[reason as PreconditionReason] ?? GENERIC_RETRY;
 }
 
 /** The retry copy for the FIRST reason in a verdict's `reasons` list (deterministic),
- *  or the generic fallback when the list is empty. */
-export function retryPromptForFirst(reasons: readonly PreconditionReason[]): string {
+ *  or the generic fallback when the list is empty. Accepts `readonly string[]` so the
+ *  caller need not unsoundly cast a `judge_failed`/`attempt_cap_reached` tag to a
+ *  `PreconditionReason`. */
+export function retryPromptForFirst(reasons: readonly string[]): string {
   const first = reasons[0];
   return first ? retryPromptFor(first) : GENERIC_RETRY;
 }

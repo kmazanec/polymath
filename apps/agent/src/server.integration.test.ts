@@ -8,6 +8,9 @@ import { events, sessions } from './db/schema.js';
 import { canRunPg, ensureTestPg } from './db/testPg.js';
 import { StubAgentClient } from './agent/stubClient.js';
 import { createServer, type PolymathServer } from './server.js';
+import { deriveState, toLearnerState, type LoggedEvent } from './mastery/eventConsumer.js';
+import { loadLesson } from './lessons/loader.js';
+import type { ExplainBackJudge } from '@polymath/graph';
 import { eq } from 'drizzle-orm';
 
 /**
@@ -408,6 +411,45 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(verdictRow!.payload.validation?.detail?.effectiveDurationMs).toBeLessThanOrEqual(15_000);
     });
 
+    it('caps judge invocations: a 3rd attempt short-circuits to escalation WITHOUT running the rubric (anti-farming, AC#8)', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const targetItemId = await driveToExplainBackPrompt(sessionId);
+
+      // Two failing attempts (precondition fail; no judge). The 2nd hits the cap and
+      // escalates AFTER running the rubric. A 3rd frame must NOT run the rubric at
+      // all — it short-circuits to escalation (a client can't farm judge calls by
+      // replaying preconditions-passing frames).
+      const frame = {
+        kind: 'explain_back_recording_ended',
+        sessionId,
+        targetItemId,
+        transcript: 'um the AND gate', // < 10 words → precondition fail
+        durationMs: 6000,
+      };
+      const a1 = (await driveSequence(sessionId, [frame]))[0];
+      expect(a1!.type).toBe('mount'); // attempt 1 → retry mount
+      const a2 = (await driveSequence(sessionId, [frame]))[0];
+      expect(a2!.type).toBe('no_action'); // attempt 2 (cap) → escalate
+      const a3 = (await driveSequence(sessionId, [frame]))[0];
+      expect(a3!.type).toBe('no_action'); // attempt 3 → short-circuit, no rubric
+
+      await new Promise((r) => setTimeout(r, 300));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { explainBackVerdict?: { passed: boolean; reasons: string[] } } }[];
+      };
+      const ebRows = replay.events.filter((e) => e.kind === 'explain_back_recording_ended');
+      expect(ebRows.length).toBe(3);
+      // Exactly one row is the short-circuit (the 3rd attempt): its verdict carries
+      // `attempt_cap_reached`, proving the rubric/judge never executed for it. The
+      // other two carry the precondition reason (`too_few_words`).
+      const capped = ebRows.filter((r) => r.payload.explainBackVerdict?.reasons.includes('attempt_cap_reached'));
+      const tripped = ebRows.filter((r) => r.payload.explainBackVerdict?.reasons.includes('too_few_words'));
+      expect(capped.length).toBe(1);
+      expect(tripped.length).toBe(2);
+    });
+
     it('an unsolicited explain_back_recording_ended (no prompt mounted) fails closed', async () => {
       const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
         sessionId: string;
@@ -559,5 +601,132 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(statuses.slice(0, 6).every((s) => s === 201)).toBe(true);
       expect(statuses[6]).toBe(429);
     });
+  });
+});
+
+/**
+ * F-11 PASS-PATH reachability: the single most important assertion that was missing.
+ * The main suite boots the server with NO judge, so every explain-back resolves to a
+ * precondition-fail or `judge_unavailable` — the entire PASS→derived-state chain was
+ * never driven through `handleClientFrame`. This boots a server WITH an injected
+ * passing judge (the production seam) and a server-side transcript provider (the
+ * bridge seam), drives a raw `explain_back_recording_ended` through the real fold,
+ * and asserts: (a) the persisted row carries `explainBackVerdict.passed === true`,
+ * and (b) projecting that real persisted verdict through the real `deriveState`
+ * flips `explainBackPassed` to true (the F-12 mastery-gate input).
+ *
+ * This guards against the I1 inert-subgraph trap on the PASS path specifically: a
+ * green precondition-fail suite hid that no learner could ever pass end-to-end.
+ */
+describe.skipIf(!canRunPg)('F-11 explain-back PASS path through the real fold', () => {
+  let pdb: Db;
+  let ppool: { end: () => Promise<void> };
+  let pserver: PolymathServer;
+  let pBaseUrl: string;
+  let pWsUrl: string;
+
+  // A deterministic judge that always passes — the production seam, injected.
+  const passingJudge: ExplainBackJudge = {
+    judge: () =>
+      Promise.resolve({
+        passed: true,
+        subScores: { itemSpecific: true, itemSpecificReasoning: true, prosodyThinking: true, overall: true },
+      }),
+  };
+  // The server-side authoritative transcript (the bridge seam): a genuine, fluent
+  // item-specific explanation that clears all 5 preconditions for the AND item.
+  const bridgeTranscript =
+    'For this AND gate the output is true only when both A and B are true, so I marked the bottom row true and the other three false in the truth table.';
+
+  beforeAll(async () => {
+    const POSTGRES_URL = await ensureTestPg();
+    await runMigrations(POSTGRES_URL);
+    ({ db: pdb, pool: ppool } = createDb(POSTGRES_URL));
+    pserver = createServer({
+      db: pdb,
+      agent: new StubAgentClient(),
+      explainBackJudge: passingJudge,
+      explainBackTranscriptFor: () => bridgeTranscript,
+    });
+    await new Promise<void>((resolve) => pserver.httpServer.listen(0, resolve));
+    const { port } = pserver.httpServer.address() as AddressInfo;
+    pBaseUrl = `http://localhost:${port}`;
+    pWsUrl = `ws://localhost:${port}/agent`;
+  }, 60000);
+
+  afterAll(async () => {
+    await pserver.close();
+    await ppool.end().catch(() => {});
+  });
+
+  async function drive(sessionId: string, frames: Record<string, unknown>[]): Promise<Action[]> {
+    const ws = new WebSocket(pWsUrl);
+    const actions: Action[] = [];
+    await new Promise<void>((resolve, reject) => {
+      let sent = 0;
+      ws.on('open', () => ws.send(JSON.stringify(frames[sent++])));
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          actions.push(Action.parse(msg.action));
+          if (sent < frames.length) ws.send(JSON.stringify(frames[sent++]));
+          else resolve();
+        }
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('sequence timed out')), 8000);
+    });
+    ws.close();
+    return actions;
+  }
+
+  it('a raw explain_back_recording_ended → passing judge → persisted PASS verdict → derived explainBackPassed true', async () => {
+    const { sessionId } = (await (await fetch(`${pBaseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // Drive the gate to a transfer-pass so the server mounts ExplainBackPrompt.
+    const actions = await drive(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+    ]);
+    const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+    const [afterTransfer] = await drive(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+    ]);
+    expect(afterTransfer!.type === 'mount' && afterTransfer!.component.kind).toBe('ExplainBackPrompt');
+
+    // Now send the explain-back completion signal. The client transcript is empty
+    // (the bridge supplies the authoritative one server-side); durationMs within the
+    // window. With the passing judge wired, this MUST pass end-to-end.
+    const [verdictAction] = await drive(sessionId, [
+      { kind: 'explain_back_recording_ended', sessionId, targetItemId: probedItemId, transcript: '', durationMs: 9000 },
+    ]);
+    // F-11 stops at the verdict on a pass → no_action (F-12 owns the transition).
+    expect(verdictAction!.type).toBe('no_action');
+
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${pBaseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { kind: string; payload: { explainBackVerdict?: { passed: boolean; reasons: string[] } } }[];
+    };
+    const verdictRow = replay.events.find((e) => e.kind === 'explain_back_recording_ended');
+    // (a) the persisted verdict is a PASS — driven through the real route + judge.
+    expect(verdictRow, 'an explain-back verdict row is persisted').toBeTruthy();
+    expect(verdictRow!.payload.explainBackVerdict?.passed).toBe(true);
+    expect(verdictRow!.payload.explainBackVerdict?.reasons).toEqual([]);
+
+    // (b) projecting the REAL persisted verdict through the REAL deriveState flips
+    // explainBackPassed — exactly the projection toLoggedEvent does server-side
+    // (kind + explainBackVerdict.passed). This is the F-12 mastery-gate input.
+    const logged: LoggedEvent[] = replay.events.map((e) => ({
+      kind: e.kind,
+      explainBackPassed: e.payload.explainBackVerdict?.passed,
+    }));
+    const lesson = loadLesson(1);
+    const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
+    expect(derived.explainBackPassed).toBe(true);
+    expect(toLearnerState(derived).explainBackPassed).toBe(true);
   });
 });

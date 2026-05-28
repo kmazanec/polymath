@@ -45,18 +45,27 @@ function wordCount(transcript: string): number {
   return transcript.split(/\s+/).filter((w) => w.length > 0).length;
 }
 
-/** Case-insensitive, word-boundary match: does the transcript contain ANY of
- *  `terms` as a whole word? Escapes regex metachars in each term. "android" must
- *  not match "AND"; "Band" must not match "B". */
+/** Word-boundary match: does the transcript contain ANY of `terms` as a whole word?
+ *  Escapes regex metachars in each term.
+ *
+ *  CASE-SENSITIVITY is load-bearing for the anti-cheat. A single-letter VARIABLE
+ *  token ('A', 'B') is matched CASE-SENSITIVELY: the variable 'A' in the problem is
+ *  distinct from the English article 'a'. A case-INSENSITIVE `\bA\b` matches the
+ *  article in essentially every 10+-word English sentence, which structurally
+ *  defeats precondition #5 (the load-bearing "references THIS problem" check,
+ *  ADR-010 §Tradeoffs) — a learner who never engaged with the item passes on the
+ *  word "a". Multi-character tokens ('AND', 'gate') keep the case-insensitive match
+ *  (a learner naturally says "and"); they don't collide with a common short word. */
 function containsAnyToken(transcript: string, terms: string[]): boolean {
-  const text = transcript.toLowerCase();
   for (const term of terms) {
-    const t = term.trim().toLowerCase();
+    const t = term.trim();
     if (t.length === 0) continue;
     const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // \b around the term; works for single-letter vars (A, B) and words (AND, gate).
-    const re = new RegExp(`\\b${escaped}\\b`, 'i');
-    if (re.test(text)) return true;
+    // Single-letter token → case-sensitive (the variable 'A' ≠ the article 'a').
+    // Multi-letter token → case-insensitive ("and" == "AND").
+    const re =
+      t.length === 1 ? new RegExp(`\\b${escaped}\\b`) : new RegExp(`\\b${escaped}\\b`, 'i');
+    if (re.test(transcript)) return true;
   }
   return false;
 }

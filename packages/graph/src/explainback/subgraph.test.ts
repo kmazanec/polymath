@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runExplainBack, type ExplainBackInput } from './subgraph.js';
 import type { ExplainBackJudge } from './judge.js';
 
@@ -98,5 +98,24 @@ describe('runExplainBack — fail-closed StateGraph', () => {
     const v = await runExplainBack(input({ kcVocabulary: [] }), { judge: passingJudge });
     expect(v.passed).toBe(false);
     expect(v.reasons).toEqual(['no_kc_vocab']);
+  });
+});
+
+describe('runExplainBack — judge timeout (a hung judge must not hang the turn)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('FAIL-CLOSED: a judge that never resolves times out → judge_unavailable', async () => {
+    vi.useFakeTimers();
+    // A judge whose promise never settles (simulates a hung OpenAI call).
+    const hungJudge: ExplainBackJudge = {
+      judge: () => new Promise(() => {}),
+    };
+    const p = runExplainBack(input(), { judge: hungJudge });
+    // Advance past the 10s judge deadline; the race resolves to the fail-closed verdict.
+    await vi.advanceTimersByTimeAsync(10_001);
+    const v = await p;
+    expect(v).toEqual({ passed: false, reasons: ['judge_unavailable'] });
   });
 });

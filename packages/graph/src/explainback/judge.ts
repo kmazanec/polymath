@@ -103,8 +103,18 @@ export class OpenAIExplainBackJudge implements ExplainBackJudge {
     }).withStructuredOutput(JudgeSchema, { name: 'explain_back_judgment' });
 
     const judgment = (await llm.invoke(buildJudgePrompt(input))) as JudgeJudgment;
+    // CONJOIN the sub-criteria server-side rather than trusting the model's own
+    // `overall` boolean alone. An LLM can self-contradict (emit overall:true while
+    // itemSpecific:false); the item-specific reference + reasoning checks are the
+    // load-bearing ones (ADR-010 §Tradeoffs). Requiring overall AND itemSpecific AND
+    // itemSpecificReasoning makes the integrity boundary robust to a contradictory
+    // judgment (fail closed). prosodyThinking is a softer signal — it is recorded but
+    // not made a hard gate (prosody may be absent / unreliable on some devices), so a
+    // genuine thinking explanation isn't blocked when prosody capture is unavailable. */
+    const passed =
+      judgment.overall && judgment.itemSpecific && judgment.itemSpecificReasoning;
     return {
-      passed: judgment.overall,
+      passed,
       subScores: {
         itemSpecific: judgment.itemSpecific,
         itemSpecificReasoning: judgment.itemSpecificReasoning,

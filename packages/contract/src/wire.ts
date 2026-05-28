@@ -113,7 +113,14 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     kind: z.literal('explain_back_recording_ended'),
     sessionId: SessionId,
     targetItemId: z.string(),
-    transcript: z.string(),
+    /** The learner's spoken explanation, transcribed. Capped to MAX_SOURCE_LEN like
+     *  every other learner-controlled string in this contract (the server also feeds
+     *  it into the LLM judge prompt). Narrowing an existing optional-shaped field is
+     *  append-compatible: a real ~15s utterance is a few hundred chars, far under the
+     *  cap, and the 64KB WS frame cap already bounded it — this removes the reliance
+     *  on the frame cap as the only bound and matches the "cap every learner string"
+     *  convention. */
+    transcript: z.string().max(MAX_SOURCE_LEN),
     durationMs: z.number(),
   }),
   z.object({

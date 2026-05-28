@@ -83,16 +83,19 @@ describe('checkPreconditions (ordered, first-fail)', () => {
   });
 
   it('#5 no_item_reference: AC#4 — the keyword-stuffing gamer (KC vocab, no item-specific ref)', () => {
-    // "yeah I just used the AND and OR gates" — 10+ words, KC vocab present, but NO
-    // reference to THIS item's variables (A/B). #4 passes, #5 fails. The load-bearing
-    // anti-cheat: #4 and #5 are DISTINCT code paths.
+    // The PRODUCTION token set for an L1 item is the item's vars + its OPERATOR
+    // literal (deriveItemTokens returns ['A','B','AND'] for l1-and). A gamer who
+    // stuffs generic KC vocab + names a DIFFERENT operator than the item used (here
+    // the item is NOT-A → tokens ['A','NOT']; the learner says "AND and OR gates")
+    // still fails #5: they never reference THIS item's vars or its operator. #4 and
+    // #5 stay DISTINCT code paths under the real token set, not a sanitized one.
     expect(
       checkPreconditions(
         base({
           transcript:
             'yeah I just used the AND and OR gates like the input and output expression stuff',
           kcVocabulary: KC,
-          itemTokens: ['A', 'B'], // this item used vars A,B — not mentioned
+          itemTokens: ['A', 'NOT'], // item is NOT A; learner names neither A nor NOT
         }),
       ),
     ).toEqual({ passed: false, failedReason: 'no_item_reference' });
@@ -119,6 +122,36 @@ describe('checkPreconditions (ordered, first-fail)', () => {
     );
     // No real KC term (only the substring inside "android"/"brandnew") → #4 fails.
     expect(r.failedReason).toBe('no_kc_vocab');
+  });
+
+  it('#5 anti-cheat: the variable token "A" is NOT satisfied by the English article "a"', () => {
+    // REGRESSION: a case-insensitive \bA\b matched the article "a" in any sentence,
+    // structurally defeating #5 (the load-bearing item-reference check). A learner
+    // who never engaged with THIS item — but said the word "a" (and named a generic
+    // operator) — must still FAIL #5. Item used vars A,B and operator NOT.
+    const r = checkPreconditions(
+      base({
+        transcript:
+          'yeah I just worked out a result with the gate and got the output value pretty quickly',
+        kcVocabulary: KC,
+        itemTokens: ['A', 'B', 'NOT'], // item operator NOT; learner never says it or A/B
+      }),
+    );
+    expect(r).toEqual({ passed: false, failedReason: 'no_item_reference' });
+  });
+
+  it('#5: an explicit uppercase variable "A" DOES satisfy the item reference', () => {
+    // When the learner genuinely references the variable A (capitalized, as the
+    // transcript of "variable A" would be), #5 passes.
+    const r = checkPreconditions(
+      base({
+        transcript:
+          'For this gate the output is true only when variable A is true, per the truth table here',
+        kcVocabulary: KC,
+        itemTokens: ['A', 'B', 'NOT'],
+      }),
+    );
+    expect(r).toEqual({ passed: true });
   });
 
   it('empty kcVocabulary (missing kc_vocabulary.json) FAILS CLOSED at #4', () => {

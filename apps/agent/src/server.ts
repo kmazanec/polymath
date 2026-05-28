@@ -51,6 +51,12 @@ export interface ServerDeps {
   /** F-11 prosody provider (AC#10): the WebRTC bridge's captured prosody for a
    *  session's explain-back utterance. Absent → the judge sees no prosody. */
   explainBackProsodyFor?: (sessionId: string, targetItemId: string) => ProsodyFeatures | undefined;
+  /** F-11 transcript provider: the WebRTC bridge's server-side authoritative
+   *  transcript for a session's explain-back utterance. When present it OVERRIDES
+   *  the client-supplied `transcript` (the server must not trust the client for the
+   *  central integrity input). Absent (bridge capture deferred) → the client
+   *  transcript is used as a fallback, still gated by the preconditions + judge. */
+  explainBackTranscriptFor?: (sessionId: string, targetItemId: string) => string | undefined;
 }
 
 /** Cap inbound WS frames — protocol messages are small JSON. Prevents a single
@@ -610,6 +616,7 @@ export async function handleClientFrame(
       db: deps.db,
       ...(deps.explainBackJudge ? { judge: deps.explainBackJudge } : {}),
       ...(deps.explainBackProsodyFor ? { prosodyFor: deps.explainBackProsodyFor } : {}),
+      ...(deps.explainBackTranscriptFor ? { transcriptFor: deps.explainBackTranscriptFor } : {}),
       transferItems,
     };
     const ebAction = await handleExplainBack(routeDeps, event, lesson);
@@ -670,8 +677,14 @@ export async function handleClientFrame(
   // This keeps the integrity prompt off the forgeable/jailbroken-LLM path and out of
   // the two-place menu lockstep. `targetItemId` is the just-passed transfer item; the
   // browser TTSes `promptBody` then opens the server-clamped `maxDurationSec` window.
+  // Guard: do NOT re-mount explain-back once it has already passed for this session.
+  // Without this, every subsequent correct transfer (in a future where the judge is
+  // wired and a learner CAN pass) loops a mastered learner back into explain-back.
+  // explainBackPassed is server-derived from the full log (never a client flag).
   const action: Action =
-    transferVerdict?.correct === true && lesson.masteryConfig.requireExplainBackPass
+    transferVerdict?.correct === true &&
+    lesson.masteryConfig.requireExplainBackPass &&
+    !learnerDerived.masteryState.explainBackPassed
       ? {
           type: 'mount',
           component: {
@@ -738,7 +751,20 @@ export interface PolymathServer {
 
 /** Build the HTTP + WebSocket server. Dependencies are injected so tests can
  *  supply an in-memory/throwaway DB and a stub agent. */
-export function createServer(deps: ServerDeps): PolymathServer {
+export function createServer(rawDeps: ServerDeps): PolymathServer {
+  // Default the explain-back judge from the key-gated `@langchain/openai` impl when
+  // the caller didn't inject one (tests inject a deterministic double; production
+  // never constructs it). `makeExplainBackJudge` self-gates on `OPENAI_API_KEY` and
+  // returns `undefined` without a key — so a key-less deploy still fails CLOSED
+  // (`judge_unavailable`), and a keyed deploy now actually RUNS the judge instead of
+  // shipping it as dead code (Stage 4b was previously unreachable: index.ts never
+  // called makeExplainBackJudge and createServer never defaulted it).
+  const defaultedJudge = rawDeps.explainBackJudge ?? makeExplainBackJudge();
+  const deps: ServerDeps = {
+    ...rawDeps,
+    ...(defaultedJudge ? { explainBackJudge: defaultedJudge } : {}),
+  };
+
   const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
 
