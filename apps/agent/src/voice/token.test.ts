@@ -51,11 +51,11 @@ describe('mintRealtimeToken', () => {
 
     const payload = decodeJwtPayload(token);
     const exp = payload['exp'] as number;
-    const nbf = payload['nbf'] as number;
     expect(typeof exp).toBe('number');
-    expect(typeof nbf).toBe('number');
-    // The token lives exactly the configured TTL from when it was signed.
-    expect(exp - nbf).toBe(REALTIME_TOKEN_TTL_SECONDS);
+    // Assert the absolute `exp` lands in the [signedAt + TTL] window. We deliberately
+    // do NOT assert `exp - nbf === TTL`: `nbf` is set by the LiveKit SDK, not this
+    // wrapper, so keying the TTL check off it would make the test break on an SDK
+    // change (omitted/zeroed nbf) even when the real expiry is correct.
     expect(exp).toBeGreaterThanOrEqual(before + REALTIME_TOKEN_TTL_SECONDS);
     expect(exp).toBeLessThanOrEqual(after + REALTIME_TOKEN_TTL_SECONDS);
   });

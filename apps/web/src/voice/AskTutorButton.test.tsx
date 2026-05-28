@@ -101,11 +101,22 @@ describe('AskTutorButton — state reflection', () => {
     expect((btn as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('shows connected label when state is connected', () => {
+  it('shows an end-session label and stays enabled when connected (toggle)', () => {
     const client = makeClientSpy('connected');
     render(<AskTutorButton sessionId="sess-1" client={client as unknown as VoiceClient} />);
     const btn = screen.getByRole('button');
-    expect(btn.textContent?.toLowerCase()).toMatch(/listen|connect/);
+    // Connected offers ending the session, and the button must remain clickable so
+    // the learner can stop without navigating away.
+    expect(btn.textContent?.toLowerCase()).toMatch(/end/);
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('calls client.stop() (not start) when clicked while connected', () => {
+    const client = makeClientSpy('connected');
+    render(<AskTutorButton sessionId="sess-1" client={client as unknown as VoiceClient} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(client.stop).toHaveBeenCalledTimes(1);
+    expect(client.start).not.toHaveBeenCalled();
   });
 
   it('shows unavailable label when state is unavailable', () => {

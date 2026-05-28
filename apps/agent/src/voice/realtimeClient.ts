@@ -32,8 +32,12 @@ export interface RealtimeSessionConfig {
 }
 
 export interface RealtimeSession {
-  /** Open the realtime connection. Resolves once ready to receive audio. */
-  connect(): Promise<void>;
+  /** Open the realtime connection with the cache-friendly persona config. The
+   *  bridge builds the config from lesson state and passes it here, so the system
+   *  prompt + cache key the room uses are derived from the same state the bridge
+   *  reasons about (rather than being fixed at session construction). Resolves
+   *  once ready to receive audio. */
+  connect(config: RealtimeSessionConfig): Promise<void>;
   /** Push a chunk of learner audio (PCM/opus frame as bytes). */
   sendAudioFrame(frame: Uint8Array): void;
   /** Subscribe to finalized/partial transcripts (both learner ASR + tutor text). */
@@ -115,6 +119,8 @@ export class MockRealtimeSession implements RealtimeSession {
   private clock = 0;
 
   constructor(config: RealtimeSessionConfig, opts: MockRealtimeSessionOpts = {}) {
+    // The construction-time config is a fallback for callers (and tests) that
+    // don't pass one to connect(); connect()'s argument takes precedence.
     this.config = config;
     this.opts = opts;
     this.reply = opts.reply ?? DEFAULT_REPLY;
@@ -124,11 +130,11 @@ export class MockRealtimeSession implements RealtimeSession {
     return this._cacheHit;
   }
 
-  async connect(): Promise<void> {
+  async connect(config: RealtimeSessionConfig = this.config): Promise<void> {
     if (this.closed) throw new Error('cannot connect a closed session');
-    this.connectedWith = this.config;
-    this._cacheHit = this.opts.cacheHit ?? seenCacheKeys.has(this.config.cacheKey);
-    seenCacheKeys.add(this.config.cacheKey);
+    this.connectedWith = config;
+    this._cacheHit = this.opts.cacheHit ?? seenCacheKeys.has(config.cacheKey);
+    seenCacheKeys.add(config.cacheKey);
     this.connected = true;
     return Promise.resolve();
   }

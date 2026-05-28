@@ -403,35 +403,57 @@ function send(ws: WebSocket, message: ServerMessage): void {
  *  413 rather than unbounded memory growth. */
 const MAX_REST_BODY_BYTES = 16 * 1024;
 
+/** A stalled client that opens a request and dribbles (or never finishes) the
+ *  body would otherwise hold the connection open indefinitely (slowloris), since
+ *  the size cap alone doesn't bound *time*. Abort a body that isn't complete
+ *  within this window. */
+const REST_BODY_TIMEOUT_MS = 5_000;
+
 /** Collect a request body up to the cap, then parse it as JSON. Rejects with a
  *  small tagged reason so the route can map it to the right 4xx without leaking
- *  internals. Resolves `null` on an empty body (callers treat that as a 400). */
+ *  internals. Resolves `null` on an empty body (callers treat that as a 400).
+ *  Aborts the socket if the body doesn't complete within REST_BODY_TIMEOUT_MS. */
 function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('body timeout'));
+      req.destroy();
+    }, REST_BODY_TIMEOUT_MS);
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_REST_BODY_BYTES) {
-        reject(new Error('body too large'));
+        finish(() => reject(new Error('body too large')));
         req.destroy();
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8').trim();
-      if (raw === '') {
-        resolve(null);
-        return;
-      }
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error('invalid JSON'));
-      }
+      finish(() => {
+        const raw = Buffer.concat(chunks).toString('utf8').trim();
+        if (raw === '') {
+          resolve(null);
+          return;
+        }
+        try {
+          resolve(JSON.parse(raw));
+        } catch {
+          reject(new Error('invalid JSON'));
+        }
+      });
     });
-    req.on('error', reject);
+    req.on('error', (err) => finish(() => reject(err)));
   });
 }
 
@@ -459,11 +481,13 @@ async function handleRealtimeSession(
   res: http.ServerResponse,
 ): Promise<void> {
   // Credentials are env-only; the repo ships no real keys, so an unconfigured
-  // deploy serves a clean 503 rather than minting an unusable token.
-  const livekitUrl = process.env['LIVEKIT_URL'] ?? '';
+  // deploy serves a clean 503 rather than minting an unusable token. The URL is
+  // required too — a token with no server URL is useless to the browser, so a
+  // missing/blank LIVEKIT_URL is "not configured", not a 201 with url:"".
+  const livekitUrl = (process.env['LIVEKIT_URL'] ?? '').trim();
   const apiKey = process.env['LIVEKIT_API_KEY'];
   const apiSecret = process.env['LIVEKIT_API_SECRET'];
-  if (!apiKey || !apiSecret) {
+  if (!apiKey || !apiSecret || livekitUrl === '') {
     sendJson(res, 503, { error: 'voice not configured' });
     return;
   }
@@ -473,7 +497,8 @@ async function handleRealtimeSession(
     body = await readJsonBody(req);
   } catch (err) {
     const reason = err instanceof Error ? err.message : 'invalid request body';
-    sendJson(res, reason === 'body too large' ? 413 : 400, { error: reason });
+    const status = reason === 'body too large' ? 413 : reason === 'body timeout' ? 408 : 400;
+    sendJson(res, status, { error: reason });
     return;
   }
 

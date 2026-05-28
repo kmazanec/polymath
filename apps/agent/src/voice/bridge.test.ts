@@ -20,6 +20,7 @@ import {
 } from './realtimeClient.js';
 import { VoiceBridge, type VoiceBridgeOpts } from './bridge.js';
 import { VoiceTurnPayload } from './voiceTurn.js';
+import { voiceCacheKey, VOICE_PERSONA } from './persona.js';
 
 const CONFIG: RealtimeSessionConfig = {
   systemPrompt: 'persona...',
@@ -46,6 +47,48 @@ function bridgeOpts(
     ...overrides,
   };
 }
+
+describe('VoiceBridge — persona config wired into session.connect (no DB needed)', () => {
+  beforeEach(() => resetCacheRegistry());
+
+  it('bridge.start() calls session.connect with a config whose cacheKey matches voiceCacheKey and systemPrompt starts with VOICE_PERSONA', async () => {
+    const stubDb = {
+      insert: () => ({
+        values: (v: { payload: unknown }) => ({
+          returning: async () => [{ id: 'fake-row' }],
+        }),
+      }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    } as unknown as Db;
+
+    const session = new MockRealtimeSession(CONFIG);
+    const connectSpy = vi.spyOn(session, 'connect');
+
+    const bridge = new VoiceBridge(
+      bridgeOpts(session, stubDb, 'sess-persona'),
+    );
+    await bridge.start();
+
+    // connect must have been called with a config argument (not no-arg / constructor default).
+    expect(connectSpy).toHaveBeenCalledTimes(1);
+    expect(session.connectedWith).toBeDefined();
+
+    const connectedConfig = session.connectedWith!;
+
+    // cacheKey must match what voiceCacheKey produces for the bridge's lesson opts.
+    const expectedKey = voiceCacheKey({
+      lessonId: 3,        // matches bridgeOpts default
+      lessonTitle: 'AND, OR, NOT',
+      phase: 'practicing',
+    });
+    expect(connectedConfig.cacheKey).toBe(expectedKey);
+
+    // systemPrompt must begin with the stable VOICE_PERSONA prefix — this is the
+    // byte-identical prefix that provider prompt caches key on.
+    expect(connectedConfig.systemPrompt).toContain(VOICE_PERSONA);
+    expect(connectedConfig.systemPrompt.startsWith(VOICE_PERSONA)).toBe(true);
+  });
+});
 
 describe('VoiceBridge — barge-in (no DB needed)', () => {
   beforeEach(() => resetCacheRegistry());

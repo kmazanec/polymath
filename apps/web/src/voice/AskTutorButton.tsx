@@ -12,12 +12,13 @@ type VoiceState = VoiceClient['state'];
 function labelFor(state: VoiceState): string {
   switch (state) {
     case 'idle':
-    case 'requesting-permission':
       return '🎤 Ask the tutor';
+    case 'requesting-permission':
+      return 'Connecting…';
     case 'connecting':
       return 'Connecting…';
     case 'connected':
-      return 'Listening…';
+      return 'End voice session';
     case 'unavailable':
       return 'Voice unavailable';
     case 'error':
@@ -25,8 +26,10 @@ function labelFor(state: VoiceState): string {
   }
 }
 
+/** The button is actionable when idle (start) or connected (stop); the transient
+ *  connecting states and the terminal unavailable/error states are disabled. */
 function isDisabled(state: VoiceState): boolean {
-  return state !== 'idle';
+  return state !== 'idle' && state !== 'connected';
 }
 
 /**
@@ -62,7 +65,14 @@ export function AskTutorButton({ sessionId, client: injectedClient }: AskTutorBu
 
   const handleClick = useCallback(() => {
     void (async () => {
-      await client.start();
+      // Toggle: start a session from idle, end it when connected. This is the only
+      // in-UI way to stop voice — without it the learner could only end by
+      // navigating away (unmount cleanup).
+      if (client.state === 'connected') {
+        await client.stop();
+      } else {
+        await client.start();
+      }
       setVoiceState(client.state);
     })();
   }, [client]);
@@ -73,7 +83,7 @@ export function AskTutorButton({ sessionId, client: injectedClient }: AskTutorBu
       onClick={handleClick}
       disabled={isDisabled(voiceState)}
       data-voice-state={voiceState}
-      aria-label={voiceState === 'connected' ? 'Voice session active' : 'Start voice session with tutor'}
+      aria-label={voiceState === 'connected' ? 'End voice session with tutor' : 'Start voice session with tutor'}
     >
       {labelFor(voiceState)}
     </button>

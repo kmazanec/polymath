@@ -126,6 +126,51 @@ describe('MockRealtimeSession — contract', () => {
     expect(s.cacheHit).toBe(true);
   });
 
+  it('connect(configB) uses configB, not the constructor config', async () => {
+    const s = makeSession(); // constructed with `config` (cacheKey: 'lesson:1|phase:assessed')
+    const configB: RealtimeSessionConfig = {
+      systemPrompt: 'different prompt',
+      cacheKey: 'lesson:2|phase:practicing',
+      model: 'gpt-realtime-v2',
+    };
+    await s.connect(configB);
+    // connectedWith must reflect the argument, not the constructor config.
+    expect(s.connectedWith).toEqual(configB);
+    expect(s.connectedWith).not.toEqual(config);
+  });
+
+  it('connect(configB) derives cacheHit from configB.cacheKey, not constructor config cacheKey', async () => {
+    const configB: RealtimeSessionConfig = {
+      systemPrompt: 'prompt B',
+      cacheKey: 'lesson:5|phase:transferring',
+      model: 'gpt-realtime',
+    };
+    // Warm the registry with configB's key first.
+    const warmer = new MockRealtimeSession(configB);
+    await warmer.connect(configB);
+
+    // Now a second session connecting with configB should see cacheHit:true.
+    const s = makeSession(); // constructed with the default `config`
+    await s.connect(configB);
+    expect(s.cacheHit).toBe(true); // cache hit is derived from configB.cacheKey
+
+    // A session connecting with the constructor config (different key) sees miss.
+    resetCacheRegistry();
+    const s2 = makeSession();
+    await s2.connect(configB);
+    // After reset, configB key is gone; first connect with it is a miss.
+    // (s2 used configB — which was just cleared — so it's a miss again.)
+    // Wait: resetCacheRegistry already cleared it. Re-add via a warmer to confirm
+    // the miss/hit logic is keyed on the PASSED config, not the constructor one.
+    expect(s2.cacheHit).toBe(false);
+  });
+
+  it('no-arg connect() falls back to the constructor config', async () => {
+    const s = makeSession(); // constructor config has cacheKey 'lesson:1|phase:assessed'
+    await s.connect(); // no argument
+    expect(s.connectedWith).toEqual(config);
+  });
+
   it('close is idempotent', async () => {
     const s = makeSession();
     await s.connect();

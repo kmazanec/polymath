@@ -24,6 +24,7 @@ import {
   type RealtimeSession,
   type VoiceTranscript,
 } from './realtimeClient.js';
+import { buildVoiceSystemPrompt, voiceCacheKey } from './persona.js';
 import { logVoiceTurn, type VoiceTurnPayload } from './voiceTurn.js';
 import { recordVoiceTurnSpan } from './otel.js';
 
@@ -37,8 +38,11 @@ export interface VoiceBridgeOpts {
   lessonTitle: string;
   /** Statechart phase the turn happens in (drives persona + cache key). */
   phase: string;
-  /** Model identifier recorded on the turn + span (e.g. 'gpt-realtime'). */
+  /** Model identifier recorded on the turn + span (e.g. 'gpt-realtime'). Also the
+   *  realtime model the session connects with, unless `realtimeModel` overrides. */
   modelVersion: string;
+  /** Realtime model id for the connection config; defaults to `modelVersion`. */
+  realtimeModel?: string;
   /** Publishes a tutor audio frame to the room. Injected so it is testable. */
   publishAudio: (frame: Uint8Array) => void;
   /** Injected clock for deterministic ttft measurement; defaults to Date.now. */
@@ -68,6 +72,12 @@ function freshTurn(turnId: string): PendingTurn {
   };
 }
 
+/** A turn is real once a learner utterance has begun it (text or a final mark).
+ *  A fresh, untouched accumulator is not a turn worth persisting. */
+function turnHasContent(turn: PendingTurn): boolean {
+  return turn.learnerText !== undefined || turn.learnerFinalAt !== undefined;
+}
+
 export class VoiceBridge {
   private readonly opts: VoiceBridgeOpts;
   private readonly now: () => number;
@@ -91,7 +101,21 @@ export class VoiceBridge {
     session.onTranscript((t) => this.handleTranscript(t));
     session.onAudio((frame) => this.handleAudio(frame));
 
-    await session.connect();
+    // Build the cache-friendly persona config from this bridge's lesson state and
+    // hand it to the session — so the room connects with the Socratic system prompt
+    // and a cache key stable across turns in the session (keeping the provider
+    // prompt cache warm). The stable persona prefix dominates the prompt; only the
+    // small lesson-context tail varies (see persona.ts).
+    const personaInput = {
+      lessonId: this.opts.lessonId,
+      lessonTitle: this.opts.lessonTitle,
+      phase: this.opts.phase,
+    };
+    await session.connect({
+      systemPrompt: buildVoiceSystemPrompt(personaInput),
+      cacheKey: voiceCacheKey(personaInput),
+      model: this.opts.realtimeModel ?? this.opts.modelVersion,
+    });
   }
 
   /**
@@ -139,7 +163,7 @@ export class VoiceBridge {
     // on a final tutor transcript. After a barge-in, completeTurn() already reset
     // to a fresh empty turn; a late final tutor segment racing the interrupt must
     // not log a phantom empty turn.
-    if (t.final && this.turnHasContent()) {
+    if (t.final && turnHasContent(this.turn)) {
       void this.completeTurn();
     }
   }
@@ -155,19 +179,20 @@ export class VoiceBridge {
     this.opts.publishAudio(frame);
   }
 
-  /** A turn is real once a learner utterance has begun it (text or a final mark).
-   *  A fresh, untouched accumulator is not a turn worth persisting. */
-  private turnHasContent(): boolean {
-    return this.turn.learnerText !== undefined || this.turn.learnerFinalAt !== undefined;
-  }
-
   /**
    * Assemble, persist, and observe a finished turn, then reset the accumulator for
    * the next one. Persistence runs before the span so the span can carry the real
    * `transcriptLogId` (the persisted row's id).
+   *
+   * The accumulator swap is the serialization point: it is synchronous and there
+   * is no `await` before it, so two callers (e.g. a barge-in racing a final tutor
+   * transcript) can never both read the *same* pending turn — the first swaps in a
+   * fresh turn and the second sees it. The empty-turn guard then drops that second
+   * call so it can't insert a phantom `voice_turn` row.
    */
   private async completeTurn(): Promise<void> {
     const finished = this.turn;
+    if (!turnHasContent(finished)) return;
     // Reset immediately so any further emissions belong to the next turn, even if
     // the async persistence below is still in flight.
     this.turn = freshTurn(this.nextTurnId());

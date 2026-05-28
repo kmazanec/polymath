@@ -26,6 +26,10 @@ export interface RoomConnector {
   connect(opts: {
     url: string;
     token: string;
+    /** The learner's captured mic stream; the connector publishes its audio track
+     *  to the room so the tutor/agent actually hears the learner. Without this the
+     *  room joins but stays silent and the say-hello round-trip can't work. */
+    micStream: MediaStream;
     onRemoteAudio: (stream: MediaStream) => void;
   }): Promise<void>;
   disconnect(): Promise<void>;
@@ -63,7 +67,7 @@ function createDefaultConnector(): RoomConnector {
   let audioEl: HTMLAudioElement | null = null;
 
   return {
-    async connect({ url, token, onRemoteAudio }) {
+    async connect({ url, token, micStream, onRemoteAudio }) {
       lastUrl = url;
       // Dynamic import via the runtime-assembled specifier — Vite cannot resolve
       // a non-literal, so this silently skips static analysis. The package must be
@@ -96,9 +100,19 @@ function createDefaultConnector(): RoomConnector {
       });
 
       await room.connect(url, token);
+
+      // Publish the learner's mic so the tutor/agent actually hears them — joining
+      // the room is not enough on its own. Publish the audio track directly; the
+      // room keeps it across the reconnect that updateToken() performs.
+      const micTrack = micStream.getAudioTracks()[0];
+      if (micTrack) {
+        await room.localParticipant.publishTrack(micTrack);
+      }
     },
 
     async disconnect() {
+      // Disconnecting the room unpublishes and detaches local tracks; the caller
+      // (VoiceClient.stop) stops the underlying mic tracks.
       await roomInstance?.disconnect();
       roomInstance = null;
       if (audioEl) {
@@ -200,11 +214,12 @@ export class VoiceClient {
     }
     if (this._abortStart()) return;
 
-    // Phase 3: join the LiveKit room.
+    // Phase 3: join the LiveKit room and publish the learner's mic.
     try {
       await this.connector.connect({
         url: body.url,
         token: body.token,
+        micStream: stream,
         onRemoteAudio: (_stream: MediaStream) => {
           // Remote audio playback is handled by the connector implementation.
           // In jsdom tests, onRemoteAudio is never invoked (mock connector).
@@ -240,6 +255,16 @@ export class VoiceClient {
           return { token: b.token, expiresAt: Number(b.expiresAt) };
         },
         applyToken: (t) => apply(t),
+        // When the refresher gives up (a non-finite expiry, or too many consecutive
+        // failed re-mints), surface it as a connection error and tear down rather
+        // than letting the session silently ride to the 5-minute TTL and drop with
+        // no signal. Transient failures the refresher will retry do NOT fire this.
+        onGiveUp: () => {
+          if (this._state === 'connected') {
+            this._state = 'error';
+            void this.stop();
+          }
+        },
       });
       this.refresher.start(Number(body.expiresAt));
     }

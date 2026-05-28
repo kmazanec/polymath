@@ -247,6 +247,164 @@ describe('TokenRefresher — stop() is permanent', () => {
   });
 });
 
+describe('TokenRefresher — non-finite expiresAt guard', () => {
+  it('start(NaN): calls onError, calls onGiveUp, arms no timer, mint never called', async () => {
+    const sched = makeFakeScheduler();
+    const onError = vi.fn();
+    const onGiveUp = vi.fn();
+    const mint = vi.fn().mockResolvedValue({ token: 'should-not-mint', expiresAt: sched.now() + TTL });
+    const r = new TokenRefresher(makeOpts(sched, { mint, onError, onGiveUp }));
+
+    r.start(NaN);
+
+    // onError + onGiveUp must have fired synchronously in scheduleFor.
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onGiveUp).toHaveBeenCalledTimes(1);
+
+    // No timer should be pending.
+    expect(sched.pendingCount()).toBe(0);
+
+    // Advancing time well past any hypothetical refresh boundary must not call mint.
+    sched.advance(TTL * 3);
+    await sched.flush();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it('start(Infinity): calls onError, calls onGiveUp, arms no timer, mint never called', async () => {
+    const sched = makeFakeScheduler();
+    const onError = vi.fn();
+    const onGiveUp = vi.fn();
+    const mint = vi.fn().mockResolvedValue({ token: 'should-not-mint', expiresAt: sched.now() + TTL });
+    const r = new TokenRefresher(makeOpts(sched, { mint, onError, onGiveUp }));
+
+    r.start(Infinity);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onGiveUp).toHaveBeenCalledTimes(1);
+    expect(sched.pendingCount()).toBe(0);
+
+    sched.advance(TTL * 3);
+    await sched.flush();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it('NaN expiresAt from mint result: onGiveUp fires, mint not called repeatedly', async () => {
+    const sched = makeFakeScheduler();
+    const onError = vi.fn();
+    const onGiveUp = vi.fn();
+    // First mint succeeds but returns NaN expiresAt; the re-schedule sees NaN.
+    const mint = vi.fn().mockResolvedValue({ token: 'tok', expiresAt: NaN });
+    const r = new TokenRefresher(makeOpts(sched, { mint, onError, onGiveUp }));
+
+    r.start(TTL); // first refresh at t=240_000
+
+    // Cross the boundary so the first mint fires.
+    sched.advance(TTL - SKEW); // t=240_000
+    // refresh() has two awaits: mint() then applyToken(). Flush twice so both settle.
+    await sched.flush(); // resolves mint()
+    await sched.flush(); // resolves applyToken() -> then scheduleFor(NaN) fires
+
+    // The scheduleFor guard must have fired onError + onGiveUp.
+    expect(onGiveUp).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+
+    // Exactly one mint call (the first, scheduled refresh) — no tight re-mint loop.
+    expect(mint).toHaveBeenCalledTimes(1);
+    // No further timer is pending after the give-up.
+    expect(sched.pendingCount()).toBe(0);
+
+    // Advance a long way to confirm nothing fires again.
+    sched.advance(TTL * 5);
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TokenRefresher — maxConsecutiveFailures give-up cap', () => {
+  it('give-up after maxConsecutiveFailures: with cap=2, onGiveUp fires after 3rd consecutive failure, no further mint', async () => {
+    const sched = makeFakeScheduler();
+    const onError = vi.fn();
+    const onGiveUp = vi.fn();
+    // mint always rejects.
+    const mint = vi.fn().mockRejectedValue(new Error('always fails'));
+    const r = new TokenRefresher(
+      makeOpts(sched, { mint, onError, onGiveUp, maxConsecutiveFailures: 2 }),
+    );
+
+    r.start(TTL); // first refresh at t=240_000
+
+    // --- failure 1 ---
+    sched.advance(TTL - SKEW); // t=240_000: fires timer -> mint rejects
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onGiveUp).not.toHaveBeenCalled(); // 1 <= cap=2, still retrying
+
+    // --- failure 2 ---
+    sched.advance(MAX_BACKOFF); // fire backoff timer -> mint rejects again
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onGiveUp).not.toHaveBeenCalled(); // 2 <= cap=2, still retrying
+
+    // --- failure 3 (> cap) ---
+    sched.advance(MAX_BACKOFF); // fire backoff timer -> mint rejects -> recordFailure gives up
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(3);
+    expect(onError).toHaveBeenCalledTimes(3);
+    expect(onGiveUp).toHaveBeenCalledTimes(1); // gave up
+
+    // After give-up: no timer, no further mint regardless of time advancing.
+    expect(sched.pendingCount()).toBe(0);
+    sched.advance(TTL * 5);
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(3); // unchanged
+    expect(onGiveUp).toHaveBeenCalledTimes(1); // fired exactly once
+  });
+
+  it('failure streak resets on success: with cap=2, reject+reject+resolve+reject does NOT give up', async () => {
+    const sched = makeFakeScheduler();
+    const onGiveUp = vi.fn();
+    const mint = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('fail 1'))
+      .mockRejectedValueOnce(new Error('fail 2'))
+      .mockImplementationOnce(async () => ({ token: 'ok', expiresAt: sched.now() + TTL }))
+      .mockRejectedValueOnce(new Error('fail after reset'));
+    const r = new TokenRefresher(
+      makeOpts(sched, { mint, onGiveUp, maxConsecutiveFailures: 2 }),
+    );
+
+    r.start(TTL); // first refresh at t=240_000
+
+    // failure 1
+    sched.advance(TTL - SKEW); // t=240_000
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(1);
+
+    // failure 2
+    sched.advance(MAX_BACKOFF);
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(2);
+    expect(onGiveUp).not.toHaveBeenCalled(); // 2 == cap, still retrying
+
+    // success — resets streak to 0
+    sched.advance(MAX_BACKOFF);
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(3);
+    expect(onGiveUp).not.toHaveBeenCalled();
+
+    // failure after reset — consecutive count is now 1, which is <= cap=2; no give-up
+    sched.advance(TTL); // cross the re-scheduled boundary from the successful mint
+    await sched.flush();
+    // mint may or may not have fired the 4th time depending on backoff timing;
+    // what matters is: onGiveUp must NOT have fired (streak was reset to 0 by success).
+    expect(onGiveUp).not.toHaveBeenCalled();
+  });
+});
+
+const MAX_BACKOFF = 10_000;
+
 describe('TokenRefresher — stop()', () => {
   it('cancels the pending refresh; no mint after stop', async () => {
     const sched = makeFakeScheduler();

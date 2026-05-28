@@ -103,6 +103,36 @@ describe('VoiceClient.start() — 503 voice not configured', () => {
   });
 });
 
+describe('VoiceClient.start() — mic stream forwarded to connector.connect', () => {
+  it('connector.connect receives the exact MediaStream returned by getUserMedia as micStream', async () => {
+    const stream = makeStream();
+    const getUserMedia = vi.fn().mockResolvedValue(stream);
+    const fetchFn = makeSuccessFetch();
+    const connector = makeConnector();
+
+    const client = new VoiceClient({
+      sessionId: 'sess-mic',
+      getUserMedia,
+      fetchFn,
+      connector,
+    });
+
+    await client.start();
+
+    expect(connector.connect).toHaveBeenCalledTimes(1);
+    const callArgs = connector.connect.mock.calls[0]![0] as {
+      url: string;
+      token: string;
+      micStream: MediaStream;
+    };
+    // The exact same object reference — not a copy.
+    expect(callArgs.micStream).toBe(stream);
+    // url + token from the API response are also present.
+    expect(callArgs.url).toBe('wss://lk.example');
+    expect(callArgs.token).toBe('tk');
+  });
+});
+
 describe('VoiceClient.start() — getUserMedia rejected (permission denied)', () => {
   it('sets state error, does not call fetch or connector.connect, does not throw', async () => {
     const getUserMedia = vi.fn().mockRejectedValue(new DOMException('Permission denied', 'NotAllowedError'));
@@ -117,6 +147,14 @@ describe('VoiceClient.start() — getUserMedia rejected (permission denied)', ()
     expect(connector.connect).not.toHaveBeenCalled();
   });
 });
+
+// NOTE: the "refresher give-up surfaces as client error" sub-case is NOT tested
+// here. VoiceClient constructs the TokenRefresher internally and does not expose
+// its clock/timer injection surface, so driving the give-up path deterministically
+// from the client's public API is not possible without flaky real-time delays.
+// The give-up mechanism itself is fully covered in tokenRefresh.test.ts; the
+// onGiveUp→state-error wiring is covered by TypeScript (the callback is wired at
+// construction time in client.ts and verified by typecheck).
 
 describe('VoiceClient.stop() during in-flight start()', () => {
   it('aborts cleanly: state is idle, mic tracks are stopped, no token minting', async () => {

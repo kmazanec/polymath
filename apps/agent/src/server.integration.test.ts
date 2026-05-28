@@ -385,6 +385,25 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(await res.json()).toEqual({ error: 'voice not configured' });
     });
 
+    it('returns 503 when LIVEKIT_API_KEY+SECRET are set but LIVEKIT_URL is empty', async () => {
+      // Regression guard: a blank URL with valid credentials must still be treated
+      // as "not configured" (the URL is required for the client to connect).
+      process.env.LIVEKIT_API_KEY = 'devkey';
+      process.env.LIVEKIT_API_SECRET = 'devsecret-at-least-32-bytes-long-padding';
+      delete process.env.LIVEKIT_URL;
+
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const res = await fetch(`${baseUrl}/api/realtime/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'voice not configured' });
+    });
+
     it('rate-limits repeated mints for one session (429 after the per-window cap)', async () => {
       setVoiceEnv();
       const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
