@@ -128,7 +128,7 @@ against the frozen interface.
   `docs/voice-cross-platform-smoke.md` scripted per ADR-006; confirmed token endpoint passes through
   Caddy (`/api/*` already routes to the agent). → criterion 4 (desktop Chromium only).
 - [x] **Review (Step 6)** — Wave 1 spec+security, Wave 2 robustness+efficiency; high/medium fixed.
-- [ ] **Smoke (Step 7)** — drive the web dev server (mocked boundary) end-to-end + regression.
+- [x] **Smoke (Step 7)** — drive the running app end-to-end against the live proxied agent + regression.
 
 **Deferred (unchecked, requires user keys/devices):** criteria 1/2/3/5 *live*, 8 *live refresh*,
 4 *device matrix*. Mocked-boundary tests cover the contract.
@@ -285,3 +285,52 @@ checklist. The endpoint already returns 503 "voice not configured" until those k
   abort), AskTutorButton (unmount stops client), voiceTurn (single-insert id triple-equality), bridge (no phantom turn
   after barge-in). Full suite **436 passed | 1 skipped** (the 1 skip pre-existing), typecheck clean, agent `docker build`
   boots + serves the new endpoint.
+
+### Smoke — Step 7 (whole-feature, coordinator-run on the corrected code)
+Booted the full stack — agent (`:8098`, against the test Postgres, voice configured) + Vite dev server (`:5173`,
+proxying `/api`+`/agent` to the agent) — and drove the **real** app in a headless Chromium against the **live proxied
+agent** (no route mocks). Observed:
+```
+LIVE_SMOKE { agentConn: "open",            // WS to the real agent connected (regression: lesson workspace healthy)
+             realtimeMintHit: 1,           // exactly one POST /api/realtime/session, only AFTER the click
+             voiceStateAfterClick: "error",// fake token can't complete a real WebRTC join — the documented live gap
+             api: ["POST /api/session", "POST /api/session", "POST /api/realtime/session"] }
+```
+- Regression check (neighbouring existing path): the text "Ask the tutor" form rendered (count 1) and the agent
+  WebSocket reached `open` — the existing lesson loop is unbroken.
+- Voice affordance: `data-voice-state="idle"` at load with **zero** token-endpoint calls before the click — **criterion 6
+  verified through the running UI**; the click then triggered exactly one live token mint.
+- The post-mint `error` state is the expected, documented deferred-live gap (no real LiveKit Cloud to join), not a defect.
+
+### Retro
+
+1. **Learned about the system, not in the architecture?** The voice channel turns the app-wide "anonymous `sessionId` is
+   the bearer capability" property into a **live-audio eavesdrop/inject escalation** if a `sessionId` leaks (it was
+   text-only before). ADR-004 flags FERPA sensitivity but doesn't name this consequence. → **Propagated to ROADMAP**
+   (the "Production-grade auth" deferred item now names the escalation + the fix: a `learnerId` owner check in the mint
+   route when auth lands). Not a new ADR — it's a known-deferred-auth consequence, not a new decision.
+2. **Learned that changes the roadmap?** The mocked-boundary approach means F-11/F-12 build on a **contract that is
+   proven but whose live transcript round-trip is unverified** until a human runs the smoke with keys. → **Propagated to
+   ROADMAP** (the wire-contract row's I2 update spells out the `RealtimeSession` seam F-11 extends + the live-unverified
+   caveat).
+3. **What contract changed?** Only additive + at the right source of truth: one append-only REST route
+   `POST /api/realtime/session` and one new `events.kind` string `voice_turn` (no migration; `events.payload` was already
+   JSONB). `packages/contract`'s wire union was **not** touched (voice is WebRTC, not the WebSocket) — confirmed by both
+   the spec-compliance and security reviewers. Dependents see the addition via the ROADMAP I2 contract note.
+4. **What should the next builder do differently?** (a) The `RealtimeSession` interface is the **frozen seam** — F-11
+   extends it (add transcript/rubric hooks), never reshapes it. (b) OTel **exporters** are F-20's job; F-10 only emits via
+   the API (no-op until then) — don't add an SDK exporter in F-11. (c) The live round-trip needs the user's
+   `LIVEKIT_*` keys + OpenAI Realtime access in `.env`; `docs/voice-cross-platform-smoke.md` is the script to tick.
+   (d) One Vite wart: the runtime-assembled `livekit-client` dynamic import emits a non-fatal "cannot be analyzed"
+   build warning — intended (optional peer dep), harmless; a `/* @vite-ignore */` would silence it if it bothers anyone.
+
+Nothing warranted a CLAUDE.md change — the existing invariants (server-never-trusts-client, append-only contracts,
+Docker-COPY-for-runtime-reads) already cover this feature's footguns.
+
+### Propagated to
+- **ROADMAP.md** — wire/REST contract row gets an I2 (F-10) update (new route + `voice_turn` kind + the mocked
+  `RealtimeSession` seam F-11 extends + live-unverified caveat); the "Production-grade auth" deferred item names the
+  voice-audio eavesdrop escalation + the owner-check fix for when auth lands.
+- **ARCHITECTURE.md / ADRs** — nothing; ADR-006 already locked the voice stack and the mocked boundary is a build
+  choice, not a design decision.
+- **CLAUDE.md** — nothing; existing invariants cover it.
