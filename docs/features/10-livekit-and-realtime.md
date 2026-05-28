@@ -333,4 +333,12 @@ Docker-COPY-for-runtime-reads) already cover this feature's footguns.
   voice-audio eavesdrop escalation + the owner-check fix for when auth lands.
 - **ARCHITECTURE.md / ADRs** — nothing; ADR-006 already locked the voice stack and the mocked boundary is a build
   choice, not a design decision.
-- **CLAUDE.md** — nothing; existing invariants cover it.
+- **CLAUDE.md** — see Review round 2 below (the config-fail-closed lesson warranted an addition).
+
+### Review round 2 — MR !5 automated review (Cursor bot: 4 high, 8 medium, 1 low)
+
+A second adversarial pass (the forge's review bot) caught real issues the in-build waves missed. **Fixed (11 threads):** mic track never published to the room (join ≠ heard); the bridge now builds + passes the persona `RealtimeSessionConfig` to `connect(config)` (the seam signature changed — `connect` now takes the config); `AskTutorButton` is a start/stop toggle (was no in-UI way to end a session); `TokenRefresher` rejects a non-finite `expiresAt` (NaN delay → tight loop) and gives up after N consecutive failures via `onGiveUp`, which `VoiceClient` surfaces as an error; `completeTurn` double-insert race closed via the synchronous swap + empty-turn guard; `POST /api/realtime/session` returns 503 when `LIVEKIT_URL` is empty (was 201 with `url:""`); `readJsonBody` enforces a request timeout (slowloris → 408); the token-TTL test asserts `exp` within the signed window, not the SDK-controlled `exp - nbf`. **Responded/deferred (2 threads):** the two HIGH "sessionId-as-bearer → audio eavesdrop" findings — a pre-existing app-wide property (the sessionId is the bearer capability across the whole WS protocol), already recorded + propagated to ROADMAP last round; the full fix needs app-wide auth, out of F-10 scope.
+
+**Compound — propagated:**
+- **ROADMAP.md** (I2 contract note) — the `RealtimeSession.connect(config)` signature change F-11 builds on; plus two voice-wiring lessons the bot caught: (1) `publishTrack` after `room.connect` (joining ≠ heard), (2) the non-finite-JSON-numeric-into-a-timer guard.
+- **CLAUDE.md** — a new "External-service config fails closed" invariant: an env-gated integration (LiveKit now; PostHog/LangSmith/OTel in F-20) must validate *every* field its response depends on and serve a clean 503 on partial config, never a half-valid 201. Sibling of the mastery fails-closed rule.

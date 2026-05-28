@@ -79,6 +79,10 @@ Contracts lock at the end of iteration 0 specifically so iterations 1–6 can fa
 - Adding a `ComponentSpec` `kind` is a **coordinated change across three places**: the union in `packages/contract/src/component.ts`, the `COMPONENT_KINDS` array, the web renderer switch in `apps/web/src/components/registry.tsx` (the `never` default makes a missing case a compile error), and the agent's prompt+validator. Removals require a deprecation window.
 - `@polymath/booleans` public signatures are locked; the gate alphabet may grow but the function shapes don't.
 
+## External-service config fails closed (env-gated integrations)
+
+A feature gated on external-service env (LiveKit, OpenAI, PostHog, LangSmith, …) must treat a **partial** configuration as *not configured* and fail closed, never emit a half-valid success. The `POST /api/realtime/session` route is the pattern: it requires `LIVEKIT_API_KEY` **and** `LIVEKIT_API_SECRET` **and** a non-empty `LIVEKIT_URL` before minting — a set key/secret with an empty URL returns `503 "voice not configured"`, not a `201` carrying `url:""` that the browser can't use. When you wire the next env-gated service, validate *every* field the response depends on, not just one, and serve a clean 503 otherwise. (Sibling of the mastery "fails closed" invariant above: a missing input is *block*, never a degraded *pass*.)
+
 ## Deploy
 
 Single DigitalOcean droplet (`ssh gauntlet`) behind a shared Caddy, live at **https://polymath.biograph.dev**. GitLab CI (`.gitlab-ci.yml`): `verify` (typecheck + non-agent tests + build) and `agent_test` (agent suite against a sibling Postgres) run on MRs; on a push to `main`, `deploy` runs `infra/deploy.sh` (release-symlink pattern, atomic swap, health-check with rollback, Drizzle migrations on agent boot). CI runs on a **shell executor** — jobs do real work inside `node:22` containers and must never write build artifacts back into the checkout dir (root-owned files there break the next pipeline's checkout). Postgres data lives at `/opt/polymath/postgres` on the host, outside the release tree.
