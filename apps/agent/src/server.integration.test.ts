@@ -259,9 +259,11 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
 
     // Submit a correct transfer answer (equivalent to the probed expression). The
     // rule + transfer conditions are now met, but L1 config requires explain-back
-    // (F-11) — so the agent does NOT declare mastery. F-11's deterministic server
-    // reflex now mounts an ExplainBackPrompt for the just-passed item (superseding
-    // the I1 no_action arm); F-12 still owns the eventual mastery transition.
+    // (F-11/F-12) — so the agent does NOT declare mastery. F-11's deterministic
+    // server reflex now mounts an ExplainBackPrompt for the just-passed item
+    // (superseding the I1 no_action arm); F-12 owns the eventual mastery transition
+    // and remains fail-closed: a passed transfer alone is never mastery while the
+    // explain-back condition is unmet.
     const [afterTransfer] = await driveSequence(sessionId, [
       { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
     ]);
@@ -286,6 +288,216 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       .filter((v): v is number => typeof v === 'number');
     expect(andTrajectory.length).toBeGreaterThanOrEqual(3);
     expect(andTrajectory.at(-1)!).toBeGreaterThanOrEqual(0.95); // reached mastery threshold
+  });
+
+  /**
+   * F-12 AC#1/#5/#6 — the REACHABILITY test: drive a RAW ClientEvent sequence
+   * through the real `handleClientFrame` fold to MASTERY. The single most important
+   * F-12 test — it fails if the gate wiring is inert (the I1 inert-refusal trap). It
+   * uses the dev `?testExplainBackVerdict=pass` seam to synthesize F-11's verdict
+   * (the Phase-2 serial join; F-11's real judge replaces the seam, the fold is
+   * unchanged), then asserts (i) the agent organically proposes mastery, (ii) the
+   * server earned-it gate accepts → a MasteryCelebration mounts, (iii) the replay
+   * shows the per-turn gate evaluation flipping from failing to passing.
+   */
+  it('drives a RAW event sequence through the real fold to mastery: celebration mounts + gate flips (AC#1,#5,#6)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // Get the learner past the rule gate and fire + pass a transfer probe (as above).
+    const ws1 = new WebSocket(wsUrl);
+    const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
+      const frames: Record<string, unknown>[] = [
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+      ];
+      const out: Action[] = [];
+      let sent = 0;
+      ws1.on('open', () => ws1.send(JSON.stringify(frames[sent++])));
+      ws1.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          out.push(Action.parse(msg.action));
+          if (sent < frames.length) ws1.send(JSON.stringify(frames[sent++]));
+          else resolve(out);
+        }
+      });
+      ws1.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    ws1.close();
+    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+    expect(probedItemId).toBeTruthy();
+
+    // Resolve the transfer probe (rule + transfer now satisfied; explain-back still unmet).
+    await driveSequence(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+    ]);
+
+    // Now drive the explain-back turn over a socket carrying the dev verdict seam.
+    // The server folds the synthetic PASS verdict, the FULL gate clears, the agent
+    // organically proposes mastery, and the earned-it gate accepts → the server
+    // reflexively mounts the MasteryCelebration listing the mastered concepts.
+    const wsEb = new WebSocket(`${wsUrl}?testExplainBackVerdict=pass`);
+    const mastery = await new Promise<Action>((resolve, reject) => {
+      wsEb.on('open', () =>
+        wsEb.send(
+          JSON.stringify({
+            kind: 'explain_back_recording_ended',
+            sessionId,
+            targetItemId: 'l1-and',
+            transcript: 'An AND gate outputs true only when both inputs are true.',
+            durationMs: 20000,
+          }),
+        ),
+      );
+      wsEb.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') resolve(Action.parse(msg.action));
+      });
+      wsEb.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    wsEb.close();
+
+    // AC#1 + AC#6: the gate accepted → a MasteryCelebration mounts listing mastered KCs.
+    expect(mastery.type).toBe('mount');
+    if (mastery.type === 'mount') {
+      expect(mastery.component.kind).toBe('MasteryCelebration');
+      if (mastery.component.kind === 'MasteryCelebration') {
+        expect(mastery.component.conceptsMastered).toContain('AND');
+      }
+    }
+
+    // AC#5: the replay shows the per-turn gate evaluation flipping failing → passing,
+    // and the accepted statechart decision on the mastery turn.
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: {
+        payload: {
+          gateEvaluation?: { passed: boolean; blockers: string[] };
+          statechartDecision?: string;
+          explainBackVerdict?: { passed: boolean };
+        };
+      }[];
+    };
+    const gateSeries = replay.events
+      .map((e) => e.payload.gateEvaluation)
+      .filter((g): g is { passed: boolean; blockers: string[] } => g !== undefined);
+    expect(gateSeries.some((g) => g.passed === false)).toBe(true); // failed earlier
+    expect(gateSeries.some((g) => g.passed === true)).toBe(true); // then passed
+    expect(replay.events.some((e) => e.payload.explainBackVerdict?.passed === true)).toBe(true);
+    expect(replay.events.some((e) => e.payload.statechartDecision === 'accept')).toBe(true);
+  });
+
+  /**
+   * F-12 AC#2 — the NEGATIVE path: a learner who clears rule + transfer + explain-back
+   * but has tripped the off-topic budget. Drive REAL off-topic `learner_question`
+   * turns (the agent's off_topic answers are counted by the real fold) past the
+   * budget of 3, then drive the explain-back PASS — and assert mastery is NOT
+   * proposed and the persisted gate evaluation carries `topic_guardrail_exceeded`.
+   */
+  it('blocks mastery when the off-topic budget is tripped, with topic_guardrail_exceeded logged (AC#2)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // Pass the rule gate.
+    const upToProbe = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+    ]);
+    const probe = upToProbe.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+    // Pass the transfer.
+    await driveSequence(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+    ]);
+    // Trip the off-topic budget (budget = 3 → 4 off-topic answers exceeds it). Each
+    // off-topic question is answered with an off_topic-tagged answer the fold counts.
+    await driveSequence(sessionId, [
+      { kind: 'learner_question', sessionId, question: 'can you book me a flight to Paris?' },
+      { kind: 'learner_question', sessionId, question: 'what is the weather tomorrow?' },
+      { kind: 'learner_question', sessionId, question: 'tell me a joke about cats' },
+      { kind: 'learner_question', sessionId, question: 'who won the game last night?' },
+    ]);
+    // Now the explain-back passes — but the guardrail is dirty, so mastery is blocked.
+    const wsEb = new WebSocket(`${wsUrl}?testExplainBackVerdict=pass`);
+    const after = await new Promise<Action>((resolve, reject) => {
+      wsEb.on('open', () =>
+        wsEb.send(
+          JSON.stringify({
+            kind: 'explain_back_recording_ended',
+            sessionId,
+            targetItemId: 'l1-and',
+            transcript: 'An AND gate outputs true only when both inputs are true.',
+            durationMs: 20000,
+          }),
+        ),
+      );
+      wsEb.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') resolve(Action.parse(msg.action));
+      });
+      wsEb.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    wsEb.close();
+    // The agent does NOT propose mastery (it waits) — no MasteryCelebration mounts.
+    expect(after.type === 'mount' && after.component.kind === 'MasteryCelebration').toBe(false);
+
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { gateEvaluation?: { passed: boolean; blockers: string[] } } }[];
+    };
+    const lastGate = replay.events
+      .map((e) => e.payload.gateEvaluation)
+      .filter((g): g is { passed: boolean; blockers: string[] } => g !== undefined)
+      .at(-1);
+    expect(lastGate?.passed).toBe(false);
+    expect(lastGate?.blockers).toContain('topic_guardrail_exceeded');
+  });
+
+  /**
+   * F-12 AC#3 — the DEMOABLE mastery-without-conditions refusal. The dev-only
+   * `?testForce=mastered` seam injects a real `transition→mastered` proposal at the
+   * very first turn (the gate cannot possibly be satisfied). The earned-it gate must
+   * REJECT it: the action is downgraded to `no_action` and the persisted statechart
+   * decision is `reject` with `mastery_gate_failed: <blockers>`.
+   */
+  it('rejects a forced mastery transition when the gate is unsatisfied (?testForce=mastered) — AC#3', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const ws = new WebSocket(`${wsUrl}?testForce=mastered`);
+    const action = await new Promise<Action>((resolve, reject) => {
+      ws.on('open', () =>
+        ws.send(
+          JSON.stringify({ kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true }),
+        ),
+      );
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') resolve(Action.parse(msg.action));
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    ws.close();
+    // The forced transition is REJECTED → downgraded to no_action (NOT a celebration).
+    expect(action.type).toBe('no_action');
+
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { statechartDecision?: string; statechartReason?: string } }[];
+    };
+    const rejection = replay.events.find((e) => e.payload.statechartDecision === 'reject');
+    expect(rejection, 'a reject statechart decision should be logged').toBeTruthy();
+    expect(rejection!.payload.statechartReason).toMatch(/^mastery_gate_failed:/);
   });
 
   it('refuses a transfer_submitted for an item the session never probed (forgery defense)', async () => {

@@ -9,8 +9,9 @@ describe('MasteryCelebration component (F-12)', () => {
   it('renders the mastered concepts (not a TBD stub) from spec.conceptsMastered', () => {
     const spec: ComponentSpec = { kind: 'MasteryCelebration', conceptsMastered: ['AND', 'OR'] };
     const { container, queryByRole, getByText } = render(renderComponent(spec));
-    // No longer the walking-skeleton TBD placeholder.
-    expect(queryByRole('note')?.getAttribute('data-tbd')).toBeNull();
+    // No longer the walking-skeleton TBD placeholder (the Tbd stub renders a
+    // `role="note"` with a `data-tbd` marker; the real component renders neither).
+    expect(queryByRole('note')).toBeNull();
     const section = container.querySelector('.mastery-celebration');
     expect(section).not.toBeNull();
     expect(getByText('AND')).toBeTruthy();

@@ -7,6 +7,7 @@ import {
   ClientEvent,
   noAction,
   type Action,
+  type ExplainBackVerdict,
   type ServerMessage,
 } from '@polymath/contract';
 import type { Db } from './db/client.js';
@@ -141,6 +142,7 @@ async function updateAndReadLearnerState(
   current: ClientEvent,
   lesson: Lesson,
   transferVerdict: { itemId: string; correct: boolean } | undefined,
+  explainBackVerdict: ExplainBackVerdict | undefined,
 ): Promise<{
   snapshot: LearnerSnapshot;
   masteryState: LearnerState;
@@ -164,8 +166,12 @@ async function updateAndReadLearnerState(
   const priorDerived = deriveState(priorLogged, lesson.content, lesson.masteryConfig);
 
   // Then fold in the current event (not yet persisted), threading the server-computed
-  // transfer verdict so a passing transfer counts toward the gate this turn.
-  const logged = [...priorLogged, toLoggedEvent(current.kind, { event: current, transferVerdict })];
+  // transfer verdict (so a passing transfer counts toward the gate this turn) AND the
+  // explain-back verdict (so a passing explain-back counts the same turn it lands).
+  const logged = [
+    ...priorLogged,
+    toLoggedEvent(current.kind, { event: current, transferVerdict, explainBackVerdict }),
+  ];
   const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
   const learnerState_ = toLearnerState(derived, lesson.masteryConfig);
   const gate = evaluateRuleGate(learnerState_, lesson.masteryConfig);
@@ -332,6 +338,26 @@ async function computeTransferVerdict(
     correct = false; // an unparseable submission is simply wrong, never a crash
   }
   return { itemId: event.itemId, correct };
+}
+
+/**
+ * F-12: resolve the `explainBackVerdict` for an `explain_back_recording_ended`
+ * turn, mirroring `computeTransferVerdict`. F-11 owns the real judge (5 deterministic
+ * preconditions + the LLM judge) and its server route; until that route lands (the
+ * Phase-2 serial join), F-12 reads a dev-only synthesized verdict so the full mastery
+ * path is drivable end-to-end.
+ *
+ * FAIL-CLOSED: only an `explain_back_recording_ended` turn carrying the dev seam
+ * yields a verdict; every other case returns `undefined` → no verdict is persisted →
+ * `explainBackPassed` stays false → mastery is blocked. The seam itself is gated to
+ * dev in the connection handler (inert in production).
+ */
+function computeExplainBackVerdict(
+  event: ClientEvent,
+  opts: FrameOptions,
+): ExplainBackVerdict | undefined {
+  if (event.kind !== 'explain_back_recording_ended') return undefined;
+  return opts.testExplainBackVerdict;
 }
 
 /** The itemId of the currently-UNRESOLVED transfer probe, or null. Scanning
@@ -601,6 +627,14 @@ export interface FrameOptions {
    *  itself). It does NOT grant mastery: the gate still rejects it when the predicate
    *  fails; it only forces the proposal so the rejection path runs. */
   testForceMastered?: boolean;
+  /** F-12 dev seam (`?testExplainBackVerdict=pass|fail`): synthesize the
+   *  `explain_back_recording_ended` turn's `explainBackVerdict` so the full mastery
+   *  path is drivable BEFORE F-11's real judge/route lands (the Phase-2 serial join).
+   *  Dev-only (`NODE_ENV!=='production'`). When F-11's route ships, it computes the
+   *  verdict and this seam is removed; the read/fold/persist sites are unchanged. It
+   *  is NOT a fail-open: absent the seam, no verdict is persisted → `explainBackPassed`
+   *  stays false → mastery blocked (the fail-closed default). */
+  testExplainBackVerdict?: ExplainBackVerdict;
 }
 
 /** Handle one inbound WebSocket frame: validate → run agent → validate output →
@@ -672,8 +706,12 @@ export async function handleClientFrame(
   // The transfer verdict (server-computed) must be known before deriving learner
   // state, so a passed transfer sets the gate's transfer condition this turn.
   const transferVerdict = await computeTransferVerdict(deps.db, event);
+  // F-12: the explain-back verdict for this turn (F-11's judge once it lands; a
+  // dev-only synthetic verdict until then). Fail-closed: undefined unless this is an
+  // explain_back turn carrying the seam → no verdict persisted → mastery blocked.
+  const explainBackVerdict = computeExplainBackVerdict(event, opts);
   const [learnerDerived, recentHistory, transferCandidates, inTransferProbe] = await Promise.all([
-    updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict),
+    updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict, explainBackVerdict),
     readRecentHistory(deps.db, event.sessionId),
     readTransferCandidates(deps.db, event.sessionId, lesson.content.lessonId),
     isInTransferProbe(deps.db, event.sessionId),
@@ -808,6 +846,11 @@ export async function handleClientFrame(
       // The transfer verdict (when this turn is a transfer_submitted) is recorded
       // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
       ...(transferVerdict ? { transferVerdict } : {}),
+      // F-12: the explain-back verdict (when this turn is explain_back_recording_ended)
+      // persisted at `payload.explainBackVerdict` — the F-11→F-12 seam. `toLoggedEvent`
+      // reads `.passed` on a later fold so the gate's explain-back condition clears.
+      // (F-11's route will produce this verdict; F-12 reads/persists the shared slot.)
+      ...(explainBackVerdict ? { explainBackVerdict } : {}),
       // F-12 AC#5: the per-turn mastery-gate evaluation, so the replay can show the
       // gate failing then passing across the session (the demo "show the gate").
       gateEvaluation: { passed: gateEvaluation.passed, blockers: gateEvaluation.blockers },
@@ -912,12 +955,24 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     // behind NODE_ENV!=='production' (fail-closed on the seam itself) — inert in prod,
     // and even in dev the earned-it gate still rejects it when the predicate fails.
     const reqUrl = new URL(req.url ?? '/agent', 'http://localhost');
-    const testForceMastered =
-      process.env['NODE_ENV'] !== 'production' && reqUrl.searchParams.get('testForce') === 'mastered';
+    const devSeams = process.env['NODE_ENV'] !== 'production';
+    const testForceMastered = devSeams && reqUrl.searchParams.get('testForce') === 'mastered';
+    // F-12 dev seam: `?testExplainBackVerdict=pass|fail` synthesizes the explain-back
+    // turn's verdict so the full mastery path is drivable before F-11's judge lands.
+    // Inert in production (devSeams gate); an unrecognised value yields no verdict
+    // (fail-closed). A `fail` verdict carries `judge_unavailable` (the F-11 fail-closed
+    // reason) so the demo can show an explicit explain-back block too.
+    const ebSeam = devSeams ? reqUrl.searchParams.get('testExplainBackVerdict') : null;
+    const testExplainBackVerdict: ExplainBackVerdict | undefined =
+      ebSeam === 'pass'
+        ? { passed: true, reasons: [] }
+        : ebSeam === 'fail'
+          ? { passed: false, reasons: ['judge_unavailable'] }
+          : undefined;
     ws.on('message', (data) => {
       // The frame handler must never reject unhandled — an unawaited rejection
       // (e.g. a DB error on a bad sessionId) would crash the process.
-      handleClientFrame(deps, ws, data.toString(), { testForceMastered }).catch((err) => {
+      handleClientFrame(deps, ws, data.toString(), { testForceMastered, testExplainBackVerdict }).catch((err) => {
         console.error('error handling client frame', err);
         try {
           send(ws, { kind: 'error', message: 'internal error' });
