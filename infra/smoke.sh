@@ -7,10 +7,13 @@ set -euo pipefail
 BASE="${1:-http://localhost:8080}"
 echo "smoke: target $BASE"
 
-# 1. Static frontend returns 200 and contains the lesson title.
+# 1. Static frontend returns 200. The SPA shell is served; the LessonIntro card
+#    ("Lesson 1 — Basic operators") is rendered client-side after the bundle +
+#    WS connect, so the static HTML only needs to be the app shell. The full
+#    "card visible" check is the browser/E2E assertion (see feature notes).
 echo -n "  [1] GET / ... "
 html="$(curl -fsS "$BASE/")"
-echo "$html" | grep -qi "polymath" && echo "ok"
+echo "$html" | grep -qi "polymath" && echo "ok (app shell served)"
 
 # 2. Health endpoint returns {"status":"ok"}.
 echo -n "  [2] GET /api/health ... "

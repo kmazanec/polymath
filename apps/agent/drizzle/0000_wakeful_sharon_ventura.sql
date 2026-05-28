@@ -11,7 +11,8 @@ CREATE TABLE "learner_state" (
 	"kc" text NOT NULL,
 	"bkt_probability" real,
 	"mastery_state" text,
-	"signals" jsonb
+	"signals" jsonb,
+	CONSTRAINT "learner_state_session_id_kc_pk" PRIMARY KEY("session_id","kc")
 );
 --> statement-breakpoint
 CREATE TABLE "sessions" (

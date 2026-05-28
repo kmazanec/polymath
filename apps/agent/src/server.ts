@@ -14,7 +14,15 @@ import { validateOutboundAction } from './agent/validateAction.js';
 export interface ServerDeps {
   db: Db;
   agent: AgentClient;
+  /** Browser origins allowed to open the WebSocket (CSWSH defense). A request
+   *  with no `Origin` header (non-browser clients: the smoke test, the
+   *  integration harness, `wscat`) is always allowed. Defaults to localhost. */
+  allowedOrigins?: string[];
 }
+
+/** Cap inbound WS frames — protocol messages are small JSON. Prevents a single
+ *  oversized frame from exhausting memory (ws default is 100 MB). */
+const MAX_WS_PAYLOAD_BYTES = 64 * 1024;
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -50,6 +58,19 @@ export async function handleClientFrame(
     return;
   }
   const event = parsed.data;
+
+  // The sessionId is a valid UUID (contract-enforced) but may not name a real
+  // session (sessions are minted via POST /api/session). Reject unknown sessions
+  // with a clean error rather than letting the events FK constraint throw.
+  const known = await deps.db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(eq(sessions.id, event.sessionId))
+    .limit(1);
+  if (known.length === 0) {
+    send(ws, { kind: 'error', sessionId: event.sessionId, message: 'unknown session' });
+    return;
+  }
 
   // Propose an action, then validate it server-side before it crosses the wire
   // (ADR-005 / acceptance criterion 5). A malformed proposal is downgraded.
@@ -104,10 +125,31 @@ export function createServer(deps: ServerDeps): http.Server {
     sendJson(res, 404, { error: 'not found' });
   });
 
-  const wss = new WebSocketServer({ server: httpServer, path: '/agent' });
+  const allowed = new Set(
+    deps.allowedOrigins ?? ['http://localhost:5173', 'http://localhost:8080'],
+  );
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: '/agent',
+    maxPayload: MAX_WS_PAYLOAD_BYTES,
+    verifyClient: (info: { origin?: string }) => {
+      // Non-browser clients send no Origin header — allow them. Browser clients
+      // must come from an allowed origin (CSWSH defense).
+      return info.origin === undefined || allowed.has(info.origin);
+    },
+  });
   wss.on('connection', (ws) => {
     ws.on('message', (data) => {
-      void handleClientFrame(deps, ws, data.toString());
+      // The frame handler must never reject unhandled — an unawaited rejection
+      // (e.g. a DB error on a bad sessionId) would crash the process.
+      handleClientFrame(deps, ws, data.toString()).catch((err) => {
+        console.error('error handling client frame', err);
+        try {
+          send(ws, { kind: 'error', message: 'internal error' });
+        } catch {
+          /* socket already closed */
+        }
+      });
     });
   });
 

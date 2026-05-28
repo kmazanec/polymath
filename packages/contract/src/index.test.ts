@@ -146,20 +146,21 @@ describe('Action', () => {
 });
 
 describe('wire protocol', () => {
+  const SID = '00000000-0000-4000-8000-000000000000'; // a valid UUID
   const clientEvents: ClientEvent[] = [
-    { kind: 'session_start', sessionId: 's', lessonId: 1 },
-    { kind: 'submit', sessionId: 's', itemId: 'i', submission: 'A AND B' },
-    { kind: 'request_hint', sessionId: 's', itemId: 'i' },
-    { kind: 'transfer_submitted', sessionId: 's', itemId: 'i', submission: 'A' },
+    { kind: 'session_start', sessionId: SID, lessonId: 1 },
+    { kind: 'submit', sessionId: SID, itemId: 'i', submission: 'A AND B' },
+    { kind: 'request_hint', sessionId: SID, itemId: 'i' },
+    { kind: 'transfer_submitted', sessionId: SID, itemId: 'i', submission: 'A' },
     {
       kind: 'explain_back_recording_ended',
-      sessionId: 's',
+      sessionId: SID,
       targetItemId: 'i',
       transcript: 't',
       durationMs: 5000,
     },
-    { kind: 'learner_question', sessionId: 's', question: 'q' },
-    { kind: 'session_end', sessionId: 's' },
+    { kind: 'learner_question', sessionId: SID, question: 'q' },
+    { kind: 'session_end', sessionId: SID },
   ];
 
   it('round-trips every client event', () => {
@@ -170,9 +171,9 @@ describe('wire protocol', () => {
 
   it('round-trips every server message', () => {
     const messages: ServerMessage[] = [
-      { kind: 'action', sessionId: 's', action: noAction('thinking', 'r') },
-      { kind: 'ack', sessionId: 's', event: 'submit' },
-      { kind: 'error', sessionId: 's', message: 'boom' },
+      { kind: 'action', sessionId: SID, action: noAction('thinking', 'r') },
+      { kind: 'ack', sessionId: SID, event: 'submit' },
+      { kind: 'error', sessionId: SID, message: 'boom' },
       { kind: 'error', message: 'no session' },
     ];
     for (const m of messages) {
@@ -181,7 +182,15 @@ describe('wire protocol', () => {
   });
 
   it('rejects an unknown client event kind', () => {
-    expect(() => ClientEvent.parse({ kind: 'nope', sessionId: 's' })).toThrow();
+    expect(() => ClientEvent.parse({ kind: 'nope', sessionId: SID })).toThrow();
+  });
+
+  it('rejects a non-UUID sessionId at the contract boundary', () => {
+    // Defends against the DB-error-on-bad-sessionId crash path: a malformed id
+    // never reaches the uuid-typed columns.
+    expect(() =>
+      ClientEvent.parse({ kind: 'submit', sessionId: 'not-a-uuid', itemId: 'i', submission: 'A' }),
+    ).toThrow();
   });
 });
 

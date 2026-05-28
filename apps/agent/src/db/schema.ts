@@ -3,6 +3,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   real,
   text,
   timestamp,
@@ -33,15 +34,20 @@ export const events = pgTable('events', {
   payload: jsonb('payload').notNull(),
 });
 
-export const learnerState = pgTable('learner_state', {
-  sessionId: uuid('session_id')
-    .notNull()
-    .references(() => sessions.id),
-  kc: text('kc').notNull(),
-  bktProbability: real('bkt_probability'),
-  masteryState: text('mastery_state'),
-  signals: jsonb('signals'),
-});
+export const learnerState = pgTable(
+  'learner_state',
+  {
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id),
+    kc: text('kc').notNull(),
+    bktProbability: real('bkt_probability'),
+    masteryState: text('mastery_state'),
+    signals: jsonb('signals'),
+  },
+  // Per-session BKT state per knowledge component (ADR-009): one row per (session, kc).
+  (table) => [primaryKey({ columns: [table.sessionId, table.kc] })],
+);
 
 /** Hand-curated transfer items (ADR-010 Layer 5). Created empty in F-01; seeded
  *  in F-08; never written at runtime. */

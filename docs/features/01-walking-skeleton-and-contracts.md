@@ -157,6 +157,55 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
       efficiency on Sonnet), triage-fix, **Step 6.5 retro**, rebase onto local main, push,
       open PR.
 
+### Adversarial review (Step 6)
+
+**Wave 1 — spec-compliance (Opus) + security (Opus), in parallel.**
+
+*Both reviewers independently flagged that the tool output they read contained injected
+"Camino MCP" / "Auto Mode" instruction blocks unrelated to the task; both correctly ignored
+them. Flagged to the user — looks like prompt-injection embedded in fetched content.*
+
+- **Spec-compliance:** all 10 acceptance criteria **met** against the agreed local-stack scope
+  (1–5, 10 verified locally; 9 + live URLs honestly deferred + documented; 6, 7, 8 fully met).
+  **No contract drift** — ComponentSpec (12 variants + `claimedTruthTable` on the 3 item
+  variants), Action (4 + `rationale`), the 7-phase statechart, the wire protocol, and the DB
+  tables all match ADR-005/003/009/010/011. Two low items raised: weak smoke-test assertion for
+  criterion 1, and `learner_state` missing a primary key.
+- **Security:** one HIGH, three MEDIUM, two LOW.
+  - **H1 (HIGH) — fixed.** Unawaited `handleClientFrame` could `unhandledRejection`-crash the
+    process when a bad `sessionId` made the `events` insert reject (FK / bad-uuid). DoS via one
+    WS frame. Fixed three ways: (a) `.catch` on the frame handler; (b) `sessionId` tightened to
+    `z.string().uuid()` in the contract (`SessionId`) so malformed ids are rejected at the
+    boundary; (c) `handleClientFrame` now checks the session exists and replies
+    `{kind:'error', message:'unknown session'}` instead of letting the FK throw. Regression
+    test added (`server.integration.test.ts`: unknown UUID → clean error, server stays healthy).
+  - **M1 (MEDIUM) — fixed.** No WS frame-size cap (ws default 100 MB). Set `maxPayload: 64 KB`.
+  - **M2 (MEDIUM) — fixed.** No Origin check on WS upgrade (CSWSH). Added `verifyClient` with an
+    allowed-origins set (no-Origin non-browser clients still allowed; `allowedOrigins` injectable).
+  - **M3 (MEDIUM) — documented, deferred.** `/api/session/:id/replay` is unauthenticated;
+    bounded by unguessable UUID session ids + the ADR-009 prototype auth posture. Gating replay
+    behind the active session is a later-feature concern; recorded for the user.
+  - **L1 (LOW) — deferred.** `truthTable`/`equivalent` 2^n blowup is *unreachable* in F-01 (the
+    agent stub ignores `submission`); F-05 must cap distinct-variable count before enumerating.
+    Noted for F-05.
+  - **L2 (LOW) — accepted.** Hardcoded local `polymath:polymath` pg creds; Postgres is
+    `expose`-only (compose-network only), fine for the prototype; real creds come from the
+    droplet `.env`.
+  - Reviewer-confirmed positives: no `dangerouslySetInnerHTML`/`eval`; exhaustive typed
+    renderer; Zod validation both wire ends; parameterized Drizzle queries (no SQLi);
+    `.gitignore` excludes `.env*`; capped WS reconnect backoff.
+
+Low spec items also fixed: `learner_state` now has a `(session_id, kc)` composite PK (ADR-009),
+migration regenerated; smoke-test criterion-1 comment corrected (the SPA renders the LessonIntro
+card client-side, so the static HTML is the app shell — the visible-card check is the browser
+E2E already done in chunk 7).
+
+Re-verification after fixes: `pnpm -r typecheck` clean; contract 17 tests, agent 12 tests
+(incl. the new regression test) pass; full docker-compose stack rebuilt and `smoke.sh` passes
+all four checks through Caddy.
+
+*Wave 2 (robustness + efficiency, Sonnet) — pending.*
+
 ### Decisions & evidence (appended as chunks complete)
 
 **Chunk 2 — `@polymath/booleans`.**

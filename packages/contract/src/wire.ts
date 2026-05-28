@@ -11,46 +11,53 @@ import { Action } from './action.js';
  * payload-bearing handlers, never new envelope shapes.
  */
 
+/** Session identifiers are server-minted UUIDs (ADR-009). Validating the shape
+ *  here means a malformed `sessionId` is rejected at the contract boundary,
+ *  before it can reach the `uuid`-typed `sessions.id` / `events.session_id`
+ *  columns (where a bad value would otherwise raise a DB error). */
+export const SessionId = z.string().uuid();
+export type SessionId = z.infer<typeof SessionId>;
+
 /** Inbound: client → agent. */
 export const ClientEvent = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('session_start'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     lessonId: z.number(),
   }),
   z.object({
     kind: z.literal('submit'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     itemId: z.string(),
     /** The learner's submission as a canonical Boolean expression string. */
     submission: z.string(),
   }),
   z.object({
     kind: z.literal('request_hint'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     itemId: z.string(),
   }),
   z.object({
     kind: z.literal('transfer_submitted'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     itemId: z.string(),
     submission: z.string(),
   }),
   z.object({
     kind: z.literal('explain_back_recording_ended'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     targetItemId: z.string(),
     transcript: z.string(),
     durationMs: z.number(),
   }),
   z.object({
     kind: z.literal('learner_question'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     question: z.string(),
   }),
   z.object({
     kind: z.literal('session_end'),
-    sessionId: z.string(),
+    sessionId: SessionId,
   }),
 ]);
 export type ClientEvent = z.infer<typeof ClientEvent>;
@@ -59,18 +66,18 @@ export type ClientEvent = z.infer<typeof ClientEvent>;
 export const ServerMessage = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('action'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     action: Action,
   }),
   z.object({
     kind: z.literal('ack'),
-    sessionId: z.string(),
+    sessionId: SessionId,
     /** Echoes the inbound event kind this acknowledges. */
     event: z.string(),
   }),
   z.object({
     kind: z.literal('error'),
-    sessionId: z.string().optional(),
+    sessionId: SessionId.optional(),
     message: z.string(),
   }),
 ]);

@@ -1,5 +1,5 @@
 {
-  "id": "0de896cb-7472-4974-81f8-f0f60f4fd9ea",
+  "id": "636b40ee-80ba-4348-9ef1-6a358994174a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -114,7 +114,15 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "learner_state_session_id_kc_pk": {
+          "name": "learner_state_session_id_kc_pk",
+          "columns": [
+            "session_id",
+            "kc"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

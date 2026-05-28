@@ -134,4 +134,33 @@ describe.skipIf(!HAVE_DOCKER)('agent server end-to-end', () => {
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows.some((r) => r.kind === 'submit')).toBe(true);
   });
+
+  it('replies with a clean error for an unknown session and keeps serving', async () => {
+    // A valid-but-unknown UUID must NOT crash the server (regression guard for
+    // the unhandled-rejection-on-FK-violation DoS). The server should send an
+    // "unknown session" error and remain healthy for the next request.
+    const ws = new WebSocket(wsUrl);
+    const msg: { kind: string; message: string } = await new Promise((resolve, reject) => {
+      ws.on('open', () =>
+        ws.send(
+          JSON.stringify({
+            kind: 'submit',
+            sessionId: '11111111-1111-4111-8111-111111111111',
+            itemId: 'l1-and',
+            submission: 'A AND B',
+          }),
+        ),
+      );
+      ws.on('message', (data) => resolve(JSON.parse(data.toString())));
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 5000);
+    });
+    ws.close();
+    expect(msg.kind).toBe('error');
+    expect(msg.message).toBe('unknown session');
+
+    // Server still serving:
+    const health = await fetch(`${baseUrl}/api/health`);
+    expect(health.status).toBe(200);
+  });
 });
