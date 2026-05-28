@@ -134,7 +134,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
 - [x] **Chunk 3 — `@polymath/contract`.** Zod `ComponentSpec` (12 ADR-005 variants, with
       `claimedTruthTable` on item variants), `Action` (4 variants), wire protocol events,
       shared `Rep`/`Gate`/`PhaseName`. Round-trip test every variant.
-- [ ] **Chunk 4 — `@polymath/statechart`.** XState v5 `lesson_1` spine with locked phases
+- [x] **Chunk 4 — `@polymath/statechart`.** XState v5 `lesson_1` spine with locked phases
       `introducing → practicing → {hint, transferring} → assessed → {mastered, remediating}`,
       stub (constant) guards. Transition tests (incl. `introducing→practicing`, criterion 7).
 - [ ] **Chunk 5 — `lessons/1/`.** `mastery_config.json` (full ADR-011 param set) +
@@ -198,3 +198,18 @@ inbound kinds + `ServerMessage` 3 outbound kinds), `lessonConfig.ts` (`MasteryCo
 - **Verification (criterion 5 prep):** `Action.parse({type:'mount', component:{kind:'bad'}})`
   throws — the recursive Zod validation that the agent's server-side guard relies on. Tests:
   16 passing; typecheck + build clean; test files excluded from `dist`.
+
+**Chunk 4 — `@polymath/statechart`.** XState v5 `setup().createMachine()` `lesson_1` spine.
+- **Decision — phase set is the 7 `PhaseName` contract values, 1:1 with state nodes.** A test
+  cross-checks `Object.keys(machine.states)` against `PhaseName.options` from
+  `@polymath/contract`, so spine/contract drift fails CI. (An earlier `satisfies
+  Record<PhaseName,…>` annotation broke XState's guard-name inference — removed in favour of
+  the runtime cross-check + exported `LESSON_PHASES`.)
+- **Decision — guards named but constant.** `canDeclareMastery` returns `context.masteryReady`
+  (false at F-01) and `canEndItem` returns `true`. These are the ADR-005 refusal #3 / #1 seams;
+  F-09/F-12 fill the bodies. A test asserts `mastery_ok` is *refused* from `assessed` when the
+  gate is unsatisfied (the refusal is real even though the predicate is a stub) and *allowed*
+  when `masteryReady` is seeded true. `mastered` is a `final` state.
+- **Decision — `LessonContext` is minimal** (`lessonId`, `masteryReady`); F-09 expands it with
+  BKT params + behavioral signals. `masteryReady` is seedable via machine `input` for testing.
+- **Tests:** 11 passing; typecheck + build clean.
