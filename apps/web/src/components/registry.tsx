@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import type { ComponentSpec } from '@polymath/contract';
 import { LessonIntro } from './LessonIntro.js';
+import { TruthTable } from './TruthTable.js';
 
 /**
  * The curated component registry renderer (ADR-005). A single exhaustive switch
@@ -25,8 +26,9 @@ export function renderComponent(spec: ComponentSpec): ReactElement {
   switch (spec.kind) {
     case 'LessonIntro':
       return <LessonIntro spec={spec} />;
-    case 'IntroExplanation':
     case 'TruthTablePractice':
+      return <TruthTable spec={spec} />;
+    case 'IntroExplanation':
     case 'CircuitBuilder':
     case 'PseudocodeChallenge':
     case 'WorkedExample':
