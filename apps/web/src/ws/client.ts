@@ -17,6 +17,7 @@ export class AgentSocket {
   private closedByUser = false;
   private reconnectDelayMs = 500;
   private readonly maxReconnectDelayMs = 8000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly url: string,
@@ -59,7 +60,8 @@ export class AgentSocket {
   private scheduleReconnect(): void {
     const delay = this.reconnectDelayMs;
     this.reconnectDelayMs = Math.min(delay * 2, this.maxReconnectDelayMs);
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       if (!this.closedByUser) this.connect();
     }, delay);
   }
@@ -72,6 +74,12 @@ export class AgentSocket {
 
   close(): void {
     this.closedByUser = true;
+    // Cancel any pending reconnect so close() during the backoff window keeps
+    // no dangling timer alive (matters under React StrictMode mount/unmount).
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.ws?.close();
   }
 }

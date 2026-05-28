@@ -13,14 +13,21 @@ async function main(): Promise<void> {
   const { db, pool } = createDb(POSTGRES_URL);
   const server = createServer({ db, agent: new StubAgentClient() });
 
-  server.listen(PORT, () => {
+  server.httpServer.listen(PORT, () => {
     console.log(`polymath agent listening on :${PORT}`);
   });
 
+  let shuttingDown = false;
   const shutdown = (): void => {
-    server.close(() => {
-      void pool.end().then(() => process.exit(0));
-    });
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // Drain WS + close HTTP first (server.close terminates open sockets so this
+    // resolves instead of hanging), then close the pool, then exit.
+    server
+      .close()
+      .then(() => pool.end())
+      .then(() => process.exit(0))
+      .catch(() => process.exit(1));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

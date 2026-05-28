@@ -224,10 +224,23 @@ function tableOver(ast: Ast, vars: string[]): boolean[] {
 export function truthTable(expr: string): TruthTable {
   const ast = parse(expr);
   const vars = variables(ast);
-  const out = tableOver(ast, vars);
-  const rows: boolean[][] = out.map((_, mask) =>
-    vars.map((_v, bit) => (mask & (1 << (vars.length - 1 - bit))) !== 0),
-  );
+  const n = vars.length;
+  const rows: boolean[][] = [];
+  const out: boolean[] = [];
+  // Single pass: build each input row and evaluate it together, rather than
+  // enumerating once for `out` and re-deriving `rows` from the mask afterwards.
+  for (let mask = 0; mask < 1 << n; mask++) {
+    const env: Record<string, boolean> = {};
+    const row: boolean[] = [];
+    for (let bit = 0; bit < n; bit++) {
+      // first variable is the MSB
+      const value = (mask & (1 << (n - 1 - bit))) !== 0;
+      env[vars[bit]!] = value;
+      row.push(value);
+    }
+    rows.push(row);
+    out.push(evaluate(ast, env));
+  }
   return { vars, rows, out };
 }
 

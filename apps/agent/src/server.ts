@@ -86,9 +86,18 @@ export async function handleClientFrame(
   send(ws, { kind: 'action', sessionId: event.sessionId, action });
 }
 
+export interface PolymathServer {
+  httpServer: http.Server;
+  wss: WebSocketServer;
+  /** Drain WS connections, close the HTTP server, then resolve. Without
+   *  terminating the WS clients first, `httpServer.close()` waits forever for
+   *  open sockets and a SIGTERM hangs (the container never exits). */
+  close(): Promise<void>;
+}
+
 /** Build the HTTP + WebSocket server. Dependencies are injected so tests can
  *  supply an in-memory/throwaway DB and a stub agent. */
-export function createServer(deps: ServerDeps): http.Server {
+export function createServer(deps: ServerDeps): PolymathServer {
   const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
 
@@ -153,7 +162,13 @@ export function createServer(deps: ServerDeps): http.Server {
     });
   });
 
-  return httpServer;
+  const close = (): Promise<void> =>
+    new Promise((resolve) => {
+      for (const client of wss.clients) client.terminate();
+      wss.close(() => httpServer.close(() => resolve()));
+    });
+
+  return { httpServer, wss, close };
 }
 
 /** Session-id helper used by the REST layer's callers/tests. */

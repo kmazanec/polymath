@@ -204,7 +204,30 @@ Re-verification after fixes: `pnpm -r typecheck` clean; contract 17 tests, agent
 (incl. the new regression test) pass; full docker-compose stack rebuilt and `smoke.sh` passes
 all four checks through Caddy.
 
-*Wave 2 (robustness + efficiency, Sonnet) — pending.*
+**Wave 2 — robustness (Sonnet) + efficiency (Sonnet), in parallel.** No HIGH findings.
+- **Robustness MEDIUM — fixed.** `server.close()` (in `index.ts` shutdown) waited forever on
+  open WS connections, so SIGTERM hung and the container never exited / `pool.end()` never ran.
+  `createServer` now returns a `PolymathServer` with a `close()` that terminates WS clients,
+  closes the `wss`, then the HTTP server; `index.ts` shutdown drains → `pool.end()` → exit
+  (idempotent via a `shuttingDown` flag). **Verified:** with a WS connection held open,
+  `docker compose stop agent` returned in **0s** (vs. the ~15s SIGKILL timeout it would have hit
+  before).
+- **Robustness MEDIUM — fixed.** `AgentSocket.scheduleReconnect` left an uncancellable timer;
+  `close()` during the backoff window kept a dangling timer alive (matters under StrictMode).
+  Now stores `reconnectTimer` and clears it in `close()`.
+- **Robustness LOW — deferred.** `agent.propose` has no timeout (safe with the sync stub;
+  F-05's LLM call should wrap a deadline). Noted for F-05.
+- **Efficiency MEDIUM — fixed.** `truthTable` enumerated 2^n once for `out` then re-derived
+  `rows` from the mask in a second pass. Merged into a single pass (API unchanged) so the
+  hot-path validator doesn't bake a double-enumeration pattern into the locked contract.
+  Booleans still 100% coverage.
+- **Efficiency LOW — accepted/deferred.** react-router for one route (deliberate shell seam;
+  lazy-load lesson routes when L2+ pages land), `tsx` re-transpile on boot (documented), origins
+  Set built once (confirmed clean), App.tsx renders fine.
+
+Re-verification after Wave 2: `pnpm -r typecheck` clean; **85 tests pass** (booleans 40,
+contract 17, statechart 11, agent 12, web 5); docker-compose stack rebuilt, `smoke.sh` passes
+all four checks, and graceful shutdown confirmed (0s drain with an open WS).
 
 ### Decisions & evidence (appended as chunks complete)
 

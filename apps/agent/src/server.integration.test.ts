@@ -7,7 +7,7 @@ import { createDb, type Db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { events, sessions } from './db/schema.js';
 import { StubAgentClient } from './agent/stubClient.js';
-import { createServer } from './server.js';
+import { createServer, type PolymathServer } from './server.js';
 import { eq } from 'drizzle-orm';
 
 /**
@@ -34,7 +34,7 @@ const POSTGRES_URL = `postgres://polymath:polymath@localhost:${PG_PORT}/polymath
 
 let db: Db;
 let pool: { end: () => Promise<void> };
-let server: import('node:http').Server;
+let server: PolymathServer;
 let baseUrl: string;
 let wsUrl: string;
 
@@ -69,14 +69,14 @@ describe.skipIf(!HAVE_DOCKER)('agent server end-to-end', () => {
 
     ({ db, pool } = createDb(POSTGRES_URL));
     server = createServer({ db, agent: new StubAgentClient() });
-    await new Promise<void>((resolve) => server.listen(0, resolve));
-    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => server.httpServer.listen(0, resolve));
+    const { port } = server.httpServer.address() as AddressInfo;
     baseUrl = `http://localhost:${port}`;
     wsUrl = `ws://localhost:${port}/agent`;
   }, 60000);
 
   afterAll(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await server.close();
     await pool.end().catch(() => {});
     spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
   });
