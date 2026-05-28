@@ -149,7 +149,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
       exhaustive `registry.ts` switch on `ComponentSpec.kind` (TS `never` check); `LessonIntro`
       "Lesson 1 — Basic operators" + `Submit`; `<AnimateOrNot>` reduced-motion stub. Verify
       `pnpm build` → `dist`; Submit round-trips `no_action`.
-- [ ] **Chunk 8 — `infra`.** `apps/agent/Dockerfile`, `docker-compose.yml` (web+agent+pg,
+- [x] **Chunk 8 — `infra`.** `apps/agent/Dockerfile`, `docker-compose.yml` (web+agent+pg,
       healthchecks), `infra/caddy/polymath.caddyfile` (WS upgrade on `/agent`),
       `infra/deploy.sh`, `infra/smoke.sh`, `.github/workflows/ci.yml`. Verify
       `docker compose up` healthy locally + `smoke.sh` against localhost + `caddy validate`.
@@ -287,3 +287,35 @@ Modules: `ws/client.ts` (typed `AgentSocket`, Zod-validates inbound, capped-back
 - **Note for infra (chunk 8):** the droplet/dev port 8080 may already be taken by a sibling
   project; the compose/Caddy wiring uses an internal agent port and Caddy routing, so this is a
   local-dev concern only, but worth flagging.
+
+**Chunk 8 — `infra`.** `apps/agent/Dockerfile` + `apps/web/Dockerfile` (multi-stage, build
+context = repo root), `docker-compose.yml` (postgres + agent + web + caddy, all healthchecked),
+`infra/caddy/polymath.caddyfile`, `infra/{deploy,smoke}.sh`, `.github/workflows/ci.yml`,
+`.dockerignore`.
+- **Decision — Caddy is the single compose entrypoint; web is nginx-static, agent is
+  internal.** Caddy routes `/api/*` + `/agent` → agent:8080 and everything else → web:80; it
+  upgrades `/agent` to WebSocket automatically (criterion 10). On the droplet the shared host
+  Caddy fronts this service (the file is hostname-agnostic `:80`, documented as the droplet
+  template). Postgres is `expose`-only (not host-published) per ADR-009.
+- **Decision — agent runs under `tsx` in-container** (packages export TS source); compiling to
+  JS is a later optimisation, not needed for the skeleton. Migrations run on boot.
+- **Bug found + fixed during verification:** the web Docker build initially failed with
+  `TS18028` (private identifiers / ES3 target) because the Dockerfiles didn't copy the root
+  `tsconfig.base.json`, so `extends: "../../tsconfig.base.json"` silently fell back to tsc
+  defaults. Fixed by copying `tsconfig.base.json` into both images.
+- **Decision — `CADDY_HOST_PORT` is parameterized** (`${CADDY_HOST_PORT:-8080}`) so the stack
+  can avoid the sibling-project 8080 collision (the `uvicorn` service found in chunk 7) without
+  editing the file.
+- **Verification (criteria 1,2,3,4,10 via the full Caddy stack):** `docker compose up --wait`
+  brought **all four services healthy**; `caddy validate` → "Valid configuration"; and
+  `infra/smoke.sh http://localhost:8081` passed all four checks through Caddy — `GET /` (SPA),
+  `GET /api/health` → `{status:ok}`, `POST /api/session` (row created), and a **WS `submit`
+  round-trip through Caddy's WebSocket upgrade → agent → `no_action`**. Stack + volumes torn
+  down clean afterward.
+- **`.github/workflows/ci.yml`** runs `pnpm -r typecheck`, `pnpm -r test` (incl. the
+  Docker-Postgres integration test), and `pnpm build` on PR/main (criterion 8).
+- **Deferred (per the agreed scope):** `infra/deploy.sh` is authored but **not run** — the live
+  deploy (DNS A-record, `/opt/polymath/.env` secrets, dropping the Caddyfile into the host's
+  `/etc/caddy/conf.d/`, the GitHub Actions deploy-on-green-main against the droplet) is the
+  documented manual follow-up. Acceptance criteria 1–4 + 10 are proven against the **local**
+  Caddy stack; criteria 9 (live `make deploy`) + the *live* URLs of 1–4/10 await that step.

@@ -1,0 +1,31 @@
+# Polymath reverse proxy (ADR-009).
+#
+# This Caddyfile fronts the compose stack: it routes /api/* and the WebSocket
+# at /agent to the agent service, and everything else to the web static server.
+# Caddy upgrades WebSocket connections on reverse_proxy automatically, so /agent
+# works without extra config (acceptance criterion 10).
+#
+# Local: this runs as the `caddy` compose service on :80 (host :8080), the single
+# entrypoint for the whole round-trip.
+#
+# Droplet: the shared host Caddy (per workspace CLAUDE.md, /etc/caddy/conf.d/)
+# terminates TLS for polymath.biograph.dev and proxies to this service. To deploy
+# on the droplet, wrap the contents below in a `polymath.biograph.dev { … }` site
+# block in the host Caddy's conf.d, pointing reverse_proxy at the compose
+# services' published ports. Kept hostname-agnostic here so the same file serves
+# both local (:80) and as the documented droplet template.
+
+:80 {
+	# Agent REST + WebSocket. The /agent path upgrades to WS automatically.
+	handle /api/* {
+		reverse_proxy agent:8080
+	}
+	handle /agent {
+		reverse_proxy agent:8080
+	}
+
+	# Everything else: the static SPA.
+	handle {
+		reverse_proxy web:80
+	}
+}

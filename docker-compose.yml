@@ -1,0 +1,73 @@
+# Polymath local + droplet stack (ADR-009). On the droplet, the host Caddy
+# (shared across sibling projects) reverse-proxies polymath.biograph.dev to the
+# `caddy` service here via infra/caddy/polymath.caddyfile. Locally, this `caddy`
+# service is the single entrypoint on :8080 so the whole round-trip is testable
+# without the droplet.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: polymath
+      POSTGRES_PASSWORD: polymath
+      POSTGRES_DB: polymath
+    volumes:
+      - polymath-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U polymath']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Not published on the host: only reachable on the compose network.
+    expose:
+      - '5432'
+
+  agent:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    environment:
+      PORT: '8080'
+      POSTGRES_URL: postgres://polymath:polymath@postgres:5432/polymath
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      INNER_AGENT_STRONG_MODEL: ${INNER_AGENT_STRONG_MODEL:-gpt-5}
+      INNER_AGENT_FAST_MODEL: ${INNER_AGENT_FAST_MODEL:-gpt-5-mini}
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ['CMD', 'node', '-e', "fetch('http://localhost:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    expose:
+      - '8080'
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    expose:
+      - '80'
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      agent:
+        condition: service_healthy
+      web:
+        condition: service_started
+    volumes:
+      - ./infra/caddy/polymath.caddyfile:/etc/caddy/Caddyfile:ro
+    # Local entrypoint. On the droplet the host Caddy fronts this instead.
+    # Host port is overridable (CADDY_HOST_PORT) to avoid colliding with sibling
+    # projects already bound to 8080 on a shared host.
+    ports:
+      - '${CADDY_HOST_PORT:-8080}:80'
+
+volumes:
+  polymath-pg-data:
