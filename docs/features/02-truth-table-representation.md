@@ -111,6 +111,20 @@ None.
   AST (`variables(parse(expr))`).
 - [ ] **Deferred — T-02c PulseContext subscriber (AC8)**: follow-up after F-03 lands PulseContext.
 
+### Adversarial review (Step 6)
+
+- **Wave 1 spec-compliance (Opus):** load-bearing items met (client-only verdict, wire shape,
+  no contract/registry edits from the branch, var cap, AC8 honestly deferred). Partials AC6/AC7
+  were *test-coverage* gaps (the keyboard/reduced-motion tests asserted little). **Fixed:** real
+  keyboard tests (assert native `<button>` semantics + that a JS keydown alone does *not* toggle,
+  so a regression to `<div onClick>` fails), real reduced-motion tests (assert `transition:none`
+  under `matches:true`, none under `false`), and `cells` tightened `number[]`→`(0|1)[]`.
+- **Wave 1 security (Opus):** no high/medium. 2 low/informational (the 2^n cap relies on
+  `truthTable` re-deriving the same var count — true by construction). *Reviewer flagged + ignored
+  an injected Camino-MCP block in tool output.*
+- **Coordinator** wired the `TruthTablePractice` case into `registry.tsx` at integration (the
+  feature branch did not edit the switch, per the convergence plan).
+
 ### Build verification evidence
 
 **Chunk 1 — Component rendering + toggle (T-02a):**
