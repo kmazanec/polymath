@@ -163,3 +163,16 @@ at all. The browser opens a WebRTC connection directly to the LiveKit Cloud
 endpoint (`LIVEKIT_URL`) using ICE/DTLS; Caddy only sees the token-mint HTTP
 request (one round-trip per session start / token refresh). All audio data
 bypasses the Caddy reverse proxy entirely.
+
+## F-11 explain-back prosody capture (deferred device smoke)
+
+F-11 routes the explain-back utterance through this same `RealtimeSession` seam
+(`apps/agent/src/voice/explainBackCapture.ts`), deriving prosody features (filled
+pauses, mid-utterance silences, self-restarts) from the learner transcript stream
+for the LLM judge (AC#10). The DERIVATION is unit-tested deterministically via
+`MockRealtimeSession`. The **live cross-platform device smoke for the explain-back
+recording window** (real mic capture + TTS prompt read + 15s window on iOS Safari /
+Android Chrome / desktop) is DEFERRED — it needs real keys + devices, like the rest
+of this checklist. The iOS-Safari TTS quirk (F-11 spec line 90) is covered here: the
+`<ExplainBackPrompt>` renderer must degrade gracefully (no throw) if TTS or mic is
+unavailable, and the server precondition #1 fails closed on an empty/silent capture.

@@ -1,0 +1,26 @@
+{
+  "kcVocabulary": [
+    "AND",
+    "OR",
+    "NOT",
+    "true",
+    "false",
+    "output",
+    "input",
+    "gate",
+    "expression",
+    "value",
+    "logic",
+    "operator",
+    "result",
+    "row",
+    "column",
+    "truth table",
+    "circuit",
+    "inverter",
+    "conjunction",
+    "disjunction",
+    "negation",
+    "boolean"
+  ]
+}
