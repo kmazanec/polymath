@@ -17,6 +17,7 @@
     "@langchain/core": "^0.3.30",
     "@langchain/langgraph": "^0.2.40",
     "@langchain/openai": "^0.3.17",
+    "@polymath/bkt": "workspace:*",
     "@polymath/booleans": "workspace:*",
     "@polymath/contract": "workspace:*",
     "drizzle-orm": "^0.38.3",

@@ -32,6 +32,9 @@ importers:
       '@langchain/openai':
         specifier: ^0.3.17
         version: 0.3.17(@langchain/core@0.3.80(openai@4.104.0(ws@8.21.0)(zod@3.25.76)))(ws@8.21.0)
+      '@polymath/bkt':
+        specifier: workspace:*
+        version: link:../../packages/bkt
       '@polymath/booleans':
         specifier: workspace:*
         version: link:../../packages/booleans
@@ -145,6 +148,15 @@ importers:
       vite:
         specifier: ^6.0.5
         version: 6.4.2(@types/node@22.19.19)(tsx@4.22.3)
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.19)(jsdom@25.0.1)(tsx@4.22.3)
+
+  packages/bkt:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.19)(jsdom@25.0.1)(tsx@4.22.3)
