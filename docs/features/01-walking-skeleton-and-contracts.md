@@ -131,7 +131,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
 - [x] **Chunk 2 — `@polymath/booleans`** (test-first, 100% cov). `parse`, `evaluate`,
       `truthTable`, `equivalent`; recursive-descent, AND/OR/NOT, precedence NOT>AND>OR.
       Verify acceptance criterion 6 expression equivalence + 8-assignment truth table.
-- [ ] **Chunk 3 — `@polymath/contract`.** Zod `ComponentSpec` (12 ADR-005 variants, with
+- [x] **Chunk 3 — `@polymath/contract`.** Zod `ComponentSpec` (12 ADR-005 variants, with
       `claimedTruthTable` on item variants), `Action` (4 variants), wire protocol events,
       shared `Rep`/`Gate`/`PhaseName`. Round-trip test every variant.
 - [ ] **Chunk 4 — `@polymath/statechart`.** XState v5 `lesson_1` spine with locked phases
@@ -176,3 +176,25 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
   `[true,false,true,false,true,false,true,true]` (matches hand-computed `!C | (A&B)`).
 - **Tests:** 40 tests, **100% coverage** (statements/branches/functions/lines), gated in the
   package `test` script via `vitest run --coverage` with a 100% threshold.
+
+**Chunk 3 — `@polymath/contract`.** Modules: `phase.ts` (`PhaseName` enum), `component.ts`
+(`ComponentSpec` 12-variant discriminated union + `Rep`/`Gate`/`Step` + `COMPONENT_KINDS`),
+`action.ts` (`Action` 4-variant union + `noAction()` helper), `wire.ts` (`ClientEvent` 7
+inbound kinds + `ServerMessage` 3 outbound kinds), `lessonConfig.ts` (`MasteryConfig`,
+`ContentItem`, `LessonContent`). Barrel `index.ts`.
+- **Decision — `Action` is the ADR-005 4-variant wire union, NOT the ADR-003 tactical menu.**
+  ADR-003's `rephrase`/`simpler_item`/etc. are the agent's *internal* decision vocabulary;
+  each resolves into a `mount`/`transition` wire Action. Documented inline so F-05 doesn't
+  mistakenly add menu verbs to the wire union. Append-only change protocol noted in code.
+- **Decision — `claimedTruthTable` is `(0|1)[]`** (ADR-010 Layer 2) on the three item-
+  generating variants (`TruthTablePractice`, `CircuitBuilder`, `PseudocodeChallenge`),
+  ordered MSB-first to match `@polymath/booleans` `truthTable().out`. The agent commits an
+  answer; the server recomputes and compares (wired in F-05/agent validation).
+- **Decision — `COMPONENT_KINDS` const array** mirrors the union and is cross-checked against
+  the union members by a test; it's the source for the web renderer-switch exhaustiveness
+  check (criterion / testing requirement) and the agent menu.
+- **Decision — lesson-config schemas live in `@polymath/contract`** (not `lessons/`) so both
+  the agent loader and any validator import one locked shape; lesson 2/3/4 reuse it.
+- **Verification (criterion 5 prep):** `Action.parse({type:'mount', component:{kind:'bad'}})`
+  throws — the recursive Zod validation that the agent's server-side guard relies on. Tests:
+  16 passing; typecheck + build clean; test files excluded from `dist`.
