@@ -1,15 +1,19 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import {
   ClientEvent,
+  noAction,
+  type Action,
   type ServerMessage,
 } from '@polymath/contract';
 import type { Db } from './db/client.js';
-import { events, sessions } from './db/schema.js';
-import type { AgentClient } from './agent/client.js';
+import { events, learnerState, sessions } from './db/schema.js';
+import type { AgentClient, AgentInput, LearnerSnapshot, TurnSummary } from './agent/client.js';
+import { validateLayer2 } from './agent/layer2.js';
 import { validateOutboundAction } from './agent/validateAction.js';
+import { loadLesson, type Lesson } from './lessons/loader.js';
 
 export interface ServerDeps {
   db: Db;
@@ -23,6 +27,90 @@ export interface ServerDeps {
 /** Cap inbound WS frames — protocol messages are small JSON. Prevents a single
  *  oversized frame from exhausting memory (ws default is 100 MB). */
 const MAX_WS_PAYLOAD_BYTES = 64 * 1024;
+
+/** The agent turn must not block the WS handler indefinitely (F-01 build note:
+ *  the LLM call has no deadline of its own). On timeout the server emits a safe
+ *  `no_action` rather than hanging the connection. */
+const AGENT_TURN_TIMEOUT_MS = 15_000;
+
+/** Lessons are immutable per process; load once and cache. */
+const lessonCache = new Map<number, Lesson>();
+function getLesson(lessonId: number): Lesson {
+  let lesson = lessonCache.get(lessonId);
+  if (!lesson) {
+    lesson = loadLesson(lessonId);
+    lessonCache.set(lessonId, lesson);
+  }
+  return lesson;
+}
+
+/** The lesson a session is working on. F-05 is L1-only; later features read
+ *  `sessions.lessonProgress`. Kept a single function so that grows in one place. */
+function lessonIdForEvent(event: ClientEvent): number {
+  return event.kind === 'session_start' ? event.lessonId : 1;
+}
+
+/** Read the learner snapshot the agent reasons over. F-09 populates
+ *  `learner_state`; until then this reads whatever rows exist and reports an
+ *  empty/zeroed snapshot with the rule gate closed. */
+async function readLearnerSnapshot(db: Db, sessionId: string): Promise<LearnerSnapshot> {
+  const rows = await db
+    .select({ kc: learnerState.kc, bkt: learnerState.bktProbability, signals: learnerState.signals })
+    .from(learnerState)
+    .where(eq(learnerState.sessionId, sessionId));
+  const bktByKc: Record<string, number> = {};
+  let hintsUsed = 0;
+  let consecutiveCorrect = 0;
+  let ruleGatePassed = false;
+  for (const row of rows) {
+    if (row.bkt !== null) bktByKc[row.kc] = row.bkt;
+    const s = (row.signals ?? {}) as {
+      hintsUsed?: number;
+      consecutiveCorrect?: number;
+      ruleGatePassed?: boolean;
+    };
+    hintsUsed += s.hintsUsed ?? 0;
+    consecutiveCorrect = Math.max(consecutiveCorrect, s.consecutiveCorrect ?? 0);
+    ruleGatePassed ||= s.ruleGatePassed ?? false;
+  }
+  return { bktByKc, hintsUsed, consecutiveCorrect, ruleGatePassed };
+}
+
+/** Recent turns (newest last) for short agent context. */
+async function readRecentHistory(db: Db, sessionId: string, limit = 5): Promise<TurnSummary[]> {
+  const rows = await db
+    .select({ kind: events.kind, payload: events.payload })
+    .from(events)
+    .where(eq(events.sessionId, sessionId))
+    .orderBy(desc(events.ts))
+    .limit(limit);
+  return rows
+    .reverse()
+    .map((r) => {
+      const p = (r.payload ?? {}) as { action?: { type?: string; rationale?: string } };
+      return {
+        eventKind: r.kind,
+        actionType: p.action?.type ?? 'unknown',
+        rationale: p.action?.rationale ?? '',
+      };
+    });
+}
+
+/** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
+async function proposeWithTimeout(agent: AgentClient, input: AgentInput): Promise<Action> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<Action>((resolve) => {
+    timer = setTimeout(
+      () => resolve(noAction('thinking', `agent turn exceeded ${AGENT_TURN_TIMEOUT_MS}ms; deferring`)),
+      AGENT_TURN_TIMEOUT_MS,
+    );
+  });
+  try {
+    return await Promise.race([agent.propose(input), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -72,15 +160,36 @@ export async function handleClientFrame(
     return;
   }
 
-  // Propose an action, then validate it server-side before it crosses the wire
-  // (ADR-005 / acceptance criterion 5). A malformed proposal is downgraded.
-  const proposed = await deps.agent.propose(event);
-  const { action } = validateOutboundAction(proposed);
+  // Assemble the turn input the agent reasons over: lesson content, the learner
+  // snapshot, and recent history (ADR-003: fresh-per-turn, structured state only).
+  const lesson = getLesson(lessonIdForEvent(event));
+  const [learner, recentHistory] = await Promise.all([
+    readLearnerSnapshot(deps.db, event.sessionId),
+    readRecentHistory(deps.db, event.sessionId),
+  ]);
+  const input: AgentInput = { event, lesson, learnerState: learner, recentHistory };
+
+  // Propose an action (under a timeout), then validate it server-side before it
+  // crosses the wire (ADR-005 / criterion 5). A malformed proposal is downgraded;
+  // the agent's own flow already ran Layer 2, but we re-record its status for the
+  // replay log (criterion 7) so every Action carries its validation provenance.
+  const proposed = await proposeWithTimeout(deps.agent, input);
+  const { action, downgraded } = validateOutboundAction(proposed);
+  const layer2 = validateLayer2(action);
 
   await deps.db.insert(events).values({
     sessionId: event.sessionId,
     kind: event.kind,
-    payload: { event, action },
+    payload: {
+      event,
+      action,
+      learnerSnapshot: learner,
+      validation: {
+        layer: action.type === 'mount' ? 2 : 1,
+        status: layer2.ok ? 'pass' : 'reject',
+        detail: layer2.ok ? (downgraded ? 'downgraded malformed proposal' : 'ok') : layer2.detail,
+      },
+    },
   });
 
   send(ws, { kind: 'action', sessionId: event.sessionId, action });

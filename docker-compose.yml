@@ -29,6 +29,10 @@ services:
     environment:
       PORT: '8080'
       POSTGRES_URL: postgres://polymath:polymath@postgres:5432/polymath
+      # Browser origins allowed to open the agent WebSocket (CSWSH). Set to the
+      # public origin in production (e.g. https://polymath.biograph.dev) and the
+      # local entrypoint origin for local runs (the host port Caddy publishes).
+      ALLOWED_WS_ORIGINS: ${ALLOWED_WS_ORIGINS:-http://localhost:8080,http://localhost:8091,https://polymath.biograph.dev}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       INNER_AGENT_STRONG_MODEL: ${INNER_AGENT_STRONG_MODEL:-gpt-5}
       INNER_AGENT_FAST_MODEL: ${INNER_AGENT_FAST_MODEL:-gpt-5-mini}

@@ -110,7 +110,7 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     expect(rows[0]!.startedAt).toBeTruthy();
   });
 
-  it('round-trips a submit to a valid no_action and writes an events row', async () => {
+  it('round-trips a submit to a valid mount Action (the inner loop) and writes an events row', async () => {
     // First create a session so the events FK is satisfiable.
     const res = await fetch(`${baseUrl}/api/session`, { method: 'POST' });
     const { sessionId } = (await res.json()) as { sessionId: string };
@@ -138,7 +138,14 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     });
     ws.close();
 
-    expect(action.type).toBe('no_action');
+    // F-05: a correct submit now drives the inner loop to mount the next item
+    // (the key-free heuristic provider), not the F-01 `no_action` stub.
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount') {
+      expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge', 'WorkedExample']).toContain(
+        action.component.kind,
+      );
+    }
 
     // Give the async insert a beat to land, then assert the events row exists.
     await new Promise((r) => setTimeout(r, 300));
@@ -174,5 +181,77 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     // Server still serving:
     const health = await fetch(`${baseUrl}/api/health`);
     expect(health.status).toBe(200);
+  });
+
+  /** Drive a sequence of events through one socket, collecting each Action. */
+  async function driveSequence(
+    sessionId: string,
+    frames: Record<string, unknown>[],
+  ): Promise<Action[]> {
+    const ws = new WebSocket(wsUrl);
+    const actions: Action[] = [];
+    await new Promise<void>((resolve, reject) => {
+      let sent = 0;
+      ws.on('open', () => ws.send(JSON.stringify(frames[sent++])));
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          actions.push(Action.parse(msg.action));
+          if (sent < frames.length) ws.send(JSON.stringify(frames[sent++]));
+          else resolve();
+        }
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('sequence timed out')), 8000);
+    });
+    ws.close();
+    return actions;
+  }
+
+  it('drives a submit sequence through the inner loop and advances items (criteria 1,3)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const actions = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B' },
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B' },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A' },
+    ]);
+    // Every turn mounts a valid next item (pattern, not exact strings).
+    expect(actions).toHaveLength(3);
+    for (const a of actions) {
+      expect(a.type).toBe('mount');
+      if (a.type === 'mount') {
+        expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge', 'WorkedExample']).toContain(
+          a.component.kind,
+        );
+      }
+    }
+
+    // Replay endpoint returns the per-Action log including rationale (criterion 10).
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { action?: { rationale?: string }; validation?: { status?: string } } }[];
+    };
+    const submitTurns = replay.events.filter((e) => e.payload.action);
+    expect(submitTurns.length).toBeGreaterThanOrEqual(3);
+    expect(submitTurns.every((e) => typeof e.payload.action!.rationale === 'string')).toBe(true);
+    expect(submitTurns.every((e) => e.payload.validation?.status === 'pass')).toBe(true);
+  });
+
+  it('answers an on-topic question and deflects an off-topic one (criteria 4,5)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const [onTopic] = await driveSequence(sessionId, [
+      { kind: 'learner_question', sessionId, question: 'what does an AND gate output?' },
+    ]);
+    expect(onTopic!.type).toBe('answer_question');
+    expect(onTopic!.type === 'answer_question' && onTopic!.topicClassification).toBe('on_topic');
+
+    const [offTopic] = await driveSequence(sessionId, [
+      { kind: 'learner_question', sessionId, question: 'can you book me a flight to Paris?' },
+    ]);
+    expect(offTopic!.type === 'answer_question' && offTopic!.topicClassification).toBe('off_topic');
   });
 });
