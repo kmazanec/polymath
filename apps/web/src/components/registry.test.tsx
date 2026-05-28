@@ -104,6 +104,48 @@ describe('renderComponent', () => {
     ).toBeNull();
   });
 
+  it('renders AgentAnswer for real, flagging the topic classification (criteria 4,5)', () => {
+    const onTopic: ComponentSpec = {
+      kind: 'AgentAnswer',
+      question: 'what does AND do?',
+      answer: 'true only when both inputs are true',
+      topicClassification: 'on_topic',
+    };
+    const { container, queryByRole } = render(renderComponent(onTopic));
+    expect(queryByRole('note')).toBeNull();
+    const section = container.querySelector('.agent-answer');
+    expect(section?.getAttribute('data-topic')).toBe('on_topic');
+    expect(section?.textContent).toContain('true only when both inputs are true');
+
+    cleanup();
+    const offTopic: ComponentSpec = {
+      kind: 'AgentAnswer',
+      question: 'book me a flight',
+      answer: 'I can help with Boolean logic — Nerdy has other tutors for that.',
+      topicClassification: 'off_topic',
+    };
+    expect(
+      render(renderComponent(offTopic)).container.querySelector('.agent-answer')?.getAttribute('data-topic'),
+    ).toBe('off_topic');
+  });
+
+  it('threads onSubmit to a rep so a learner submission is dispatchable', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const calls: { submission: string; correct: boolean }[] = [];
+    const spec: ComponentSpec = {
+      kind: 'TruthTablePractice',
+      expression: 'NOT A',
+      claimedTruthTable: [1, 0],
+      visibleReps: ['truth_table'],
+    };
+    const { getByRole } = render(
+      renderComponent(spec, { onSubmit: (p) => calls.push({ submission: p.submission, correct: p.correct }) }),
+    );
+    fireEvent.click(getByRole('button', { name: /submit/i }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.submission).toBe('NOT A');
+  });
+
   it('renders a TBD placeholder for an unimplemented variant', () => {
     const spec: ComponentSpec = { kind: 'HintCard', level: 1, body: 'b' };
     const { getByRole } = render(renderComponent(spec));
