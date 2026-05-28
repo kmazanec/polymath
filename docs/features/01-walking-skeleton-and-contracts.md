@@ -1,6 +1,7 @@
 # Feature: Walking skeleton + locked contracts
 
-**ID:** F-01 · **Iteration:** I0 — Skeleton + contracts · **Status:** Not started
+**ID:** F-01 · **Iteration:** I0 — Skeleton + contracts · **Status:** In review
+**MR:** https://labs.gauntletai.com/keithmazanec/polymath/-/merge_requests/1
 
 ## What this delivers (before → after)
 
