@@ -87,11 +87,16 @@ async function readRecentHistory(db: Db, sessionId: string, limit = 5): Promise<
   return rows
     .reverse()
     .map((r) => {
-      const p = (r.payload ?? {}) as { action?: { type?: string; rationale?: string } };
+      const p = (r.payload ?? {}) as {
+        action?: { type?: string; rationale?: string };
+        event?: { itemId?: string; submission?: string; correct?: boolean };
+      };
       return {
         eventKind: r.kind,
         actionType: p.action?.type ?? 'unknown',
         rationale: p.action?.rationale ?? '',
+        correct: p.event?.correct,
+        itemId: p.event?.itemId ?? p.event?.submission,
       };
     });
 }
@@ -170,12 +175,17 @@ export async function handleClientFrame(
   const input: AgentInput = { event, lesson, learnerState: learner, recentHistory };
 
   // Propose an action (under a timeout), then validate it server-side before it
-  // crosses the wire (ADR-005 / criterion 5). A malformed proposal is downgraded;
-  // the agent's own flow already ran Layer 2, but we re-record its status for the
-  // replay log (criterion 7) so every Action carries its validation provenance.
+  // crosses the wire (ADR-005 / criterion 5). The agent's own flow already ran
+  // Layer 2, but the wire boundary re-validates and *enforces*: a Zod-malformed
+  // proposal OR an item whose claimedTruthTable fails the recompute is downgraded
+  // to `no_action` rather than forwarded. The server never trusts the agent, even
+  // its own — defense in depth (CLAUDE.md invariant).
   const proposed = await proposeWithTimeout(deps.agent, input);
-  const { action, downgraded } = validateOutboundAction(proposed);
-  const layer2 = validateLayer2(action);
+  const { action: shaped, downgraded } = validateOutboundAction(proposed);
+  const layer2 = validateLayer2(shaped);
+  const action: Action = layer2.ok
+    ? shaped
+    : noAction('agent_unsure', `outbound Layer-2 rejection: ${layer2.detail}`);
 
   await deps.db.insert(events).values({
     sessionId: event.sessionId,
@@ -185,7 +195,7 @@ export async function handleClientFrame(
       action,
       learnerSnapshot: learner,
       validation: {
-        layer: action.type === 'mount' ? 2 : 1,
+        layer: shaped.type === 'mount' ? 2 : 1,
         status: layer2.ok ? 'pass' : 'reject',
         detail: layer2.ok ? (downgraded ? 'downgraded malformed proposal' : 'ok') : layer2.detail,
       },

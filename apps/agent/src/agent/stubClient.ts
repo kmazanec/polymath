@@ -1,5 +1,5 @@
 import type { AgentInput, MoveProvider } from './client.js';
-import type { TacticalMove } from './menu.js';
+import type { ProposedItem, TacticalMove } from './menu.js';
 import { FlowAgentClient } from './flowClient.js';
 
 /**
@@ -33,6 +33,24 @@ export class HeuristicMoveProvider implements MoveProvider {
     }
 
     if (ev.kind === 'submit') {
+      // A wrong submit must NOT advance: re-present the same item (rephrase), and
+      // on a *repeated* wrong attempt at the same item, drop to a simpler item
+      // (ADR-003 menu; F-05 criterion 3). Correctness is the client-computed
+      // verdict on the submit; the server still treats `submission` as canonical.
+      if (ev.correct === false) {
+        const priorWrong = input.recentHistory.some(
+          (t) => t.eventKind === 'submit' && t.correct === false && t.itemId === ev.itemId,
+        );
+        const same = currentItem(input);
+        if (same) {
+          return Promise.resolve(
+            priorWrong
+              ? { move: 'simpler_item', item: simplerVariant(same, input), rationale: 'repeated miss on this item — dropping to a simpler one (heuristic provider)' }
+              : { move: 'rephrase', item: same, rationale: 're-presenting the item after a miss (heuristic provider)' },
+          );
+        }
+      }
+
       if (input.learnerState.ruleGatePassed) {
         return Promise.resolve({
           move: 'propose_mastery_transition',
@@ -83,6 +101,38 @@ function firstLessonItem(input: AgentInput): TacticalMove | null {
       claimedTruthTable: first.truthTable,
       visibleReps: ['truth_table'],
     },
+  };
+}
+
+/** The lesson item the current submit concerns, as a `ProposedItem` (matched by
+ *  itemId or canonical expression). Null if the submit names no known item. */
+function currentItem(input: AgentInput): ProposedItem | null {
+  const ev = input.event;
+  if (ev.kind !== 'submit') return null;
+  const item = input.lesson.content.items.find(
+    (i) => i.itemId === ev.itemId || i.targetExpression === ev.submission,
+  );
+  if (!item) return null;
+  const rep = ev.repSubmission ? ev.repSubmission.rep : 'truth_table';
+  return {
+    rep,
+    targetExpression: item.targetExpression,
+    claimedTruthTable: item.truthTable,
+    visibleReps: [rep],
+  };
+}
+
+/** A simpler item than the given one: the lesson's lowest-tier item that differs
+ *  from it; falls back to the same item if none is strictly simpler. */
+function simplerVariant(current: ProposedItem, input: AgentInput): ProposedItem {
+  const items = [...input.lesson.content.items].sort((a, b) => a.difficultyTier - b.difficultyTier);
+  const simpler = items.find((i) => i.targetExpression !== current.targetExpression);
+  if (!simpler) return current;
+  return {
+    rep: current.rep,
+    targetExpression: simpler.targetExpression,
+    claimedTruthTable: simpler.truthTable,
+    visibleReps: current.visibleReps,
   };
 }
 

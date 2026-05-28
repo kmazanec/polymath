@@ -81,10 +81,17 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     sessionId: SessionId,
     itemId: z.string(),
     /** The learner's submission as a canonical Boolean expression string. */
-    submission: z.string(),
+    submission: z.string().max(MAX_EXPRESSION_LEN),
     /** Optional rep-native submission for replay/agent context (append-only
      *  extension; absent for callers that don't supply it). */
     repSubmission: RepSubmission.optional(),
+    /** The client-computed correctness verdict (ADR-008: the truth-table compare
+     *  runs client-side in <5ms and the learner sees it before the agent decides
+     *  what to mount). Optional + append-only: the server still treats the
+     *  canonical `submission` as authoritative and never trusts this flag for
+     *  correctness, but the agent reads it to choose its next move (e.g. a second
+     *  wrong attempt on an item → `simpler_item`, not `next_practice_item`). */
+    correct: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal('request_hint'),
@@ -95,7 +102,7 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     kind: z.literal('transfer_submitted'),
     sessionId: SessionId,
     itemId: z.string(),
-    submission: z.string(),
+    submission: z.string().max(MAX_EXPRESSION_LEN),
   }),
   z.object({
     kind: z.literal('explain_back_recording_ended'),
@@ -107,7 +114,7 @@ export const ClientEvent = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('learner_question'),
     sessionId: SessionId,
-    question: z.string(),
+    question: z.string().max(MAX_SOURCE_LEN),
   }),
   z.object({
     kind: z.literal('session_end'),

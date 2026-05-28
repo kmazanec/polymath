@@ -11,13 +11,18 @@ import { createServer, type PolymathServer } from './server.js';
 import { eq } from 'drizzle-orm';
 
 /**
- * End-to-end integration test (F-01 testing requirements + acceptance criteria
- * 3,4,5). Boots a throwaway Postgres in Docker, runs migrations, starts the real
- * HTTP+WS server with the stub agent, then:
- *   - POST /api/session writes a `sessions` row (criterion 4)
- *   - a WS `submit` round-trips a valid `no_action` Action (criterion 3, 5)
- *   - an `events` row is written (criterion 3)
- *   - GET /api/health returns {status:"ok"} (criterion 2)
+ * End-to-end integration test. Boots a throwaway Postgres in Docker, runs
+ * migrations, starts the real HTTP+WS server with the key-free heuristic agent,
+ * then exercises:
+ *   - GET /api/health, POST /api/session (F-01 health + session round-trip)
+ *   - a WS `submit` round-trips a valid `mount` Action + writes an `events` row
+ *     (F-05 the inner loop exists)
+ *   - a submit sequence advances items, and the replay endpoint returns each
+ *     turn's rationale + Layer-2 status (F-05 criteria 1, 10)
+ *   - a *wrong* submit re-presents the same item rather than advancing
+ *     (F-05 criterion 3)
+ *   - on/off-topic questions route to answer/deflection (F-05 criteria 4, 5)
+ *   - an unknown sessionId is rejected without crashing the server
  *
  * Skips cleanly if Docker is unavailable so the rest of the suite still runs.
  */
@@ -213,9 +218,9 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
       sessionId: string;
     };
     const actions = await driveSequence(sessionId, [
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B' },
-      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B' },
-      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A' },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true },
     ]);
     // Every turn mounts a valid next item (pattern, not exact strings).
     expect(actions).toHaveLength(3);
@@ -237,6 +242,19 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     expect(submitTurns.length).toBeGreaterThanOrEqual(3);
     expect(submitTurns.every((e) => typeof e.payload.action!.rationale === 'string')).toBe(true);
     expect(submitTurns.every((e) => e.payload.validation?.status === 'pass')).toBe(true);
+  });
+
+  it('a wrong submit re-presents the same item rather than advancing (criterion 3)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const [action] = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: false },
+    ]);
+    expect(action!.type).toBe('mount');
+    if (action!.type === 'mount' && action!.component.kind === 'TruthTablePractice') {
+      expect(action!.component.expression).toBe('A AND B'); // same item, not advanced
+    }
   });
 
   it('answers an on-topic question and deflects an off-topic one (criteria 4,5)', async () => {

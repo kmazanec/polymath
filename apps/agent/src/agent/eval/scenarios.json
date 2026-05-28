@@ -8,6 +8,12 @@
       "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
     },
     {
+      "id": "wrong-submit-does-not-advance",
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B", "correct": false },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["rephrase", "simpler_item", "worked_example"]
+    },
+    {
       "id": "rule-gate-ready-proposes-mastery",
       "event": { "kind": "submit", "itemId": "l1-not", "submission": "NOT A" },
       "learnerState": { "consecutiveCorrect": 3, "hintsUsed": 0, "ruleGatePassed": true },

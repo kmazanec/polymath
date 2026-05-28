@@ -94,6 +94,7 @@ export function App(): ReactElement {
         itemId: currentItemId.current,
         submission: payload.submission,
         repSubmission: payload.repSubmission,
+        correct: payload.correct,
       });
     },
     [sessionId],

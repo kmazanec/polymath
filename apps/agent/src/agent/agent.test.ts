@@ -47,6 +47,29 @@ describe('inner-agent flow (heuristic, key-free)', () => {
     }
   });
 
+  it('a wrong submit re-presents the same item (rephrase), not the next one (criterion 3)', async () => {
+    const action = await new StubAgentClient().propose(
+      input({ kind: 'submit', sessionId: SID, itemId: 'l1-and', submission: 'A AND B', correct: false }),
+    );
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
+      expect(action.component.expression).toBe('A AND B'); // same item, not advanced
+    }
+  });
+
+  it('a second wrong submit on the same item drops to a simpler item (criterion 3)', async () => {
+    const inp = input({ kind: 'submit', sessionId: SID, itemId: 'l1-or', submission: 'A OR B', correct: false });
+    inp.recentHistory = [
+      { eventKind: 'submit', actionType: 'mount', rationale: 'rephrase', correct: false, itemId: 'l1-or' },
+    ];
+    const action = await new StubAgentClient().propose(inp);
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
+      // The simpler item is the lowest-tier item that differs from A OR B.
+      expect(action.component.expression).not.toBe('A OR B');
+    }
+  });
+
   it('on a ready learner, it proposes the mastery transition', async () => {
     const action = await new StubAgentClient().propose(
       input({ kind: 'submit', sessionId: SID, itemId: 'l1-not', submission: 'NOT A' }, true),

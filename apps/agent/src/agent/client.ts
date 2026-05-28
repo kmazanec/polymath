@@ -46,6 +46,12 @@ export interface TurnSummary {
   eventKind: string;
   actionType: string;
   rationale: string;
+  /** For a `submit` turn: the client-computed correctness verdict, if it was
+   *  supplied. Lets the agent see a run of wrong attempts on an item. */
+  correct?: boolean;
+  /** For an item-bearing turn: the item the turn concerned (canonical
+   *  expression), so the agent can tell "wrong twice on the SAME item". */
+  itemId?: string;
 }
 
 /** The raw model call. Returns one tactical move; may throw or return a value the
