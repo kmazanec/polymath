@@ -181,6 +181,52 @@ describe('wire protocol', () => {
     }
   });
 
+  it('accepts a submit with each repSubmission branch (append-only extension)', () => {
+    const variants: ClientEvent[] = [
+      {
+        kind: 'submit',
+        sessionId: SID,
+        itemId: 'i',
+        submission: 'A AND B',
+        repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] },
+      },
+      {
+        kind: 'submit',
+        sessionId: SID,
+        itemId: 'i',
+        submission: 'A AND B',
+        repSubmission: { rep: 'circuit', expression: 'A AND B', nodes: [], edges: [] },
+      },
+      {
+        kind: 'submit',
+        sessionId: SID,
+        itemId: 'i',
+        submission: 'A AND B',
+        repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' },
+      },
+    ];
+    for (const ev of variants) {
+      expect(ClientEvent.parse(ev)).toEqual(ev);
+    }
+  });
+
+  it('still accepts a submit with no repSubmission (the field is optional)', () => {
+    const ev: ClientEvent = { kind: 'submit', sessionId: SID, itemId: 'i', submission: 'A' };
+    expect(ClientEvent.parse(ev)).toEqual(ev);
+  });
+
+  it('rejects an unknown repSubmission rep', () => {
+    expect(() =>
+      ClientEvent.parse({
+        kind: 'submit',
+        sessionId: SID,
+        itemId: 'i',
+        submission: 'A',
+        repSubmission: { rep: 'nope', cells: [] },
+      }),
+    ).toThrow();
+  });
+
   it('rejects an unknown client event kind', () => {
     expect(() => ClientEvent.parse({ kind: 'nope', sessionId: SID })).toThrow();
   });

@@ -18,6 +18,43 @@ import { Action } from './action.js';
 export const SessionId = z.string().uuid();
 export type SessionId = z.infer<typeof SessionId>;
 
+/**
+ * The learner's raw, representation-specific submission, carried alongside the
+ * canonical `submission` expression string on a `submit` event. Optional and
+ * append-only: a `submit` frame without it is still valid (the canonical
+ * `submission` string remains the contract's required channel). The server only
+ * logs this for replay/agent context — the correctness verdict is computed
+ * client-side via @polymath/booleans (ADR-008: high-frequency interaction never
+ * touches the network), never re-derived from this payload.
+ *
+ * Each rep populates exactly one branch:
+ *  - truth_table: the learner-filled output column, 0/1 ints, MSB-first (matches
+ *    @polymath/booleans truth-table order). The item's target expression travels
+ *    in the required `submission` field (truth-table has no learner-authored
+ *    expression).
+ *  - circuit / pseudocode: the learner *builds* an expression, so its canonical
+ *    form is in `submission`; `expression` here echoes it for self-containment,
+ *    plus the rep-native source (topology / pseudocode text) for replay.
+ */
+export const RepSubmission = z.discriminatedUnion('rep', [
+  z.object({
+    rep: z.literal('truth_table'),
+    cells: z.array(z.union([z.literal(0), z.literal(1)])),
+  }),
+  z.object({
+    rep: z.literal('circuit'),
+    expression: z.string(),
+    nodes: z.array(z.record(z.string(), z.unknown())),
+    edges: z.array(z.record(z.string(), z.unknown())),
+  }),
+  z.object({
+    rep: z.literal('pseudocode'),
+    expression: z.string(),
+    source: z.string(),
+  }),
+]);
+export type RepSubmission = z.infer<typeof RepSubmission>;
+
 /** Inbound: client → agent. */
 export const ClientEvent = z.discriminatedUnion('kind', [
   z.object({
@@ -31,6 +68,9 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     itemId: z.string(),
     /** The learner's submission as a canonical Boolean expression string. */
     submission: z.string(),
+    /** Optional rep-native submission for replay/agent context (append-only
+     *  extension; absent for callers that don't supply it). */
+    repSubmission: RepSubmission.optional(),
   }),
   z.object({
     kind: z.literal('request_hint'),

@@ -100,4 +100,49 @@ None. The react-flow library installation is part of F-01's dependency wiring; i
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### Shared-contract decisions (this feature OWNS the producer side)
+
+- **PulseContext — F-03 introduces and locks it.** Shape:
+  `{ activeStep: number | null, schedule: PulseStep[] }` in
+  `apps/web/src/canvas/PulseContext.tsx`. Lock the shape in an early commit *before* the
+  animation behavior, so F-02/F-04 subscribers pin to a frozen producer. Later F-03 commits add
+  behavior, never reshape.
+- **Submit wire**: populate the `{ rep:'circuit', expression, nodes, edges }` branch of
+  `repSubmission` (locked Step 0); `submission` = canonical expression built from the topology.
+  Verdict client-side via `equivalent`.
+- **Renderer switch**: deliver `apps/web/src/components/CircuitBuilder.tsx`; coordinator wires
+  the `case` (no `registry.tsx` edit from the feature branch).
+- **`hiddenReps` from props (AC9, F-07 contract)**: `CircuitBuilder` reads `hiddenReps?: Rep[]`
+  and renders null when `circuit` is hidden. F-07 supplies the prop later; F-03 just honors it.
+- Built on **Opus** (critical path + novel pulse scheduler + contract producer).
+
+### Implementation plan (checklist)
+
+- [ ] **Chunk 1 — react-flow canvas + custom nodes (T-03a).** Tests first. `@xyflow/react`
+  canvas; custom node types for AND/OR/NOT with typed input/output `Handle`s; draggable gate
+  palette; fixed input-source nodes (from `variables(targetExpression)`) + output sink. Drag
+  latency target <50ms (AC1/AC2).
+- [ ] **Chunk 2 — circuit topology → Boolean AST → `equivalent` (T-03b, T-03e).** Tests first.
+  Walk nodes+edges from inputs through gates to output, build an `Ast`, call
+  `equivalent(circuitExpr, targetExpression)`. Stock errors (not exceptions) for: disconnected
+  output ("Output not wired"), wiring cycle, unused gates (warning) (AC7). Submit dispatches the
+  `submit` event + `repSubmission`; verdict UI green/red (AC5/AC6). Var-count guard (≤10).
+- [ ] **Chunk 3 — `PulseContext` producer + `PulseRenderer` (T-03c).** Tests first — **lock the
+  context shape in this chunk's first commit.** Topological-sort the topology into a
+  deterministic `schedule: PulseStep[]`; publish `{ activeStep, schedule }`. Pulse-determinism
+  snapshot test (AC4); pulse-correctness test: each step's output matches
+  `evaluate(circuitExpr, inputs)` for every input combination. Total propagation 600–1200ms
+  (ADR-004). Color-blind-safe blue(active)/gray(inactive), not red/green (AC10).
+- [ ] **Chunk 4 — `Test it` + reduced-motion + SR announcements (T-03d).** Tests first. Learner-
+  triggered, one pulse per click. `prefers-reduced-motion: reduce` → `Next gate →` step-through
+  (AC8); each gate-activation step emits a live-region update e.g. "AND gate evaluates: true and
+  false equals false" (AC11). Suppress during transfer (reuse `AnimateOrNot`/`shouldAnimate`).
+- [ ] **Chunk 5 — Tests + visual regression + a11y (T-03g).** Component/wiring/Test-it/Submit;
+  axe-core; Playwright visual at 3 stages (initial, mid-pulse, post-submit-correct) for the L1
+  hardest item `(A AND B) OR (NOT C)`.
+- [ ] **AC9 hiddenReps**: renders null when its rep is hidden (testable standalone; full
+  behavior observable once F-07 lands).
+
+### Build verification evidence
+
+> Filled in per-chunk during the build.

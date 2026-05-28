@@ -82,4 +82,61 @@ None expected — pure additive, single-file `seed_data` + single migration. No 
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### Shared-contract reality (read the CODE, not just this spec)
+
+- **The shipped `transfer_bank` schema** (`apps/agent/src/db/schema.ts`, `transferBank`) has
+  columns: `item_id` (PK, text), `lesson_id` (int), `target_expression` (text), `truth_table`
+  (jsonb, 0/1 ints MSB-first), `target_rep` (text), `hidden_reps` (jsonb). **It does NOT have
+  the `difficulty_tier` or `created_at` columns this spec's "Contracts touched" section
+  mentions.** Trust the code: seed against the shipped columns. Record `difficultyTier` in the
+  JSON seed file for authoring/coverage purposes, but **do not add a DB column** for it — the
+  divergence is flagged to Keith for a later schema decision. Do not edit `schema.ts`.
+- **Booleans is consumed read-only** to verify each item's truth table; do not modify it.
+- **Zero file overlap** with the rep features — touches only `seed_data/`, a new seed runner,
+  and the agent's boot sequence. No `registry.tsx`, no wire, no contract edits.
+
+### Scope (files you may touch)
+
+- `seed_data/transfer_items.json` (new) — the 32-item data file.
+- `apps/agent/src/lessons/transferBankSchema.ts` (or similar, new) — Zod schema for the file.
+- `apps/agent/src/db/seed.ts` (new) — idempotent seed runner.
+- `apps/agent/src/db/migrate.ts` — call the seed after `migrate()` on boot (small additive edit).
+- Test files alongside the above.
+
+### Implementation plan (checklist)
+
+- [ ] **Chunk 1 — Zod schema for the seed file.** Tests first. A `TransferItem` schema:
+  `{ itemId: string, lessonId: 1|2|3|4, targetExpression: string, truthTable: (0|1)[],
+  targetRep: Rep, hiddenReps: Rep[], difficultyTier: 'intro'|'basic'|'harder'|'hardest' }`
+  (reuse `Rep` from `@polymath/contract`). The file is `TransferItem[]`. CI gates on this (AC6).
+- [ ] **Chunk 2 — Author L1 items (T-08a, 8 items).** 2 per tier × 4 tiers. Cover the matrix:
+  3× `targetRep:'circuit', hiddenReps:['truth_table']`; 3× `targetRep:'pseudocode',
+  hiddenReps:['circuit']`; 2× `targetRep:'truth_table', hiddenReps:['pseudocode']` (AC4).
+  L1 = AND/OR/NOT only. Within-lesson `targetExpression` uniqueness (AC3).
+- [ ] **Chunk 3 — Author L2/L3/L4 items (T-08b/c/d, 24 items).** L2: composition + XOR-as-
+  composition (express XOR via AND/OR/NOT — no XOR gate in L1 booleans). L3: NAND-universality
+  forms (NOTE: `@polymath/booleans` L1 grammar is AND/OR/NOT only — express the *target* in
+  AND/OR/NOT and note the NAND framing in a comment/field; the validator can't parse NAND yet,
+  that's F-22). L4: De Morgan's, incl. **≥2 items engineered for the "halfway application"
+  misconception** — flipping the negation but not the operator yields a different-by-one-cell
+  table (AC5). **Flag L3/L4 content for Keith's correctness review** (stretch content authored
+  early per ADR-002).
+- [ ] **Chunk 4 — Verification test (T-08e, the merge gate).** For every item: `parse` succeeds,
+  `truthTable(targetExpression).out` (mapped to 0/1) **exactly equals** the stored `truthTable`
+  (AC2); within-lesson uniqueness (AC3); exactly 32 rows, 8/lesson (AC1). PR cannot merge if any
+  item fails.
+- [ ] **Chunk 5 — Idempotent seed runner (T-08f).** A `seedTransferBank(db)` that loads the JSON,
+  validates via the Zod schema, and inserts — **skip if rows already exist** (idempotent, AC7).
+  Wire it into agent boot after `runMigrations` (and expose for the test). Idempotency test:
+  run twice → still exactly 32 rows.
+
+### Test command
+
+`pnpm --filter @polymath/agent exec vitest run` (the agent suite needs Postgres; the seed
+verification/uniqueness/schema tests are pure and run without a DB — keep the truth-table
+verification test DB-free by loading the JSON directly). Build test-first; return diff + output.
+**Do not commit or open a PR** — the coordinator finalizes.
+
+### Build verification evidence
+
+> Filled in per-chunk during the build.

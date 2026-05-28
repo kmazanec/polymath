@@ -79,4 +79,38 @@ None.
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### Shared-contract decisions consumed (locked in I1 Step 0, on `main`)
+
+- **Submit wire**: `submit` event gained an optional `repSubmission` discriminated union
+  (`packages/contract/src/wire.ts`). F-02 populates the `{ rep: 'truth_table', cells: number[] }`
+  branch with the learner's output column (0/1, MSB-first). The required `submission` string
+  carries the item's **target expression** (truth-table has no learner-authored expression).
+  Verdict is computed **client-side** via `@polymath/booleans` (<5ms) — `repSubmission` is for
+  agent/replay logging only. F-02 does **not** edit the wire schema; it only consumes it.
+- **Renderer switch**: F-02 delivers `apps/web/src/components/TruthTable.tsx` and does **not**
+  edit `registry.tsx` — the coordinator (Opus) wires the `TruthTablePractice` case at integration.
+- **PulseContext subscriber (T-02c / AC8)**: deferred to a post-F-03 follow-up commit; the
+  truth-table works fully without it.
+
+### Implementation plan (checklist)
+
+- [ ] **Chunk 1 — `<TruthTable>` component (T-02a, T-02d).** Tests first: render 2^n rows from
+  `truthTable(expression).vars/rows`; input columns read-only; output column cells toggle 0↔1
+  on click in <50ms (no network); auto-extract variables from `expression` via the parser (AC5).
+  Cap distinct-variable count (≤10) before calling `truthTable` and surface a stock error (F-01
+  build note: 2^n blowup guard). Component renders for `kind: 'TruthTablePractice'`.
+- [ ] **Chunk 2 — Submit handler + verdict (T-02b).** Tests first: on Submit, compare learner
+  cells cell-for-cell to `truthTable(expression).out`; mark correct cells green, incorrect red
+  (AC3/AC4); dispatch a `submit` `ClientEvent` with `submission = expression` and
+  `repSubmission = { rep:'truth_table', cells }`. Assert the dispatched event shape.
+- [ ] **Chunk 3 — Keyboard + reduced-motion (AC6, AC7).** Tab moves between output cells, Space
+  toggles focused cell, Enter submits; under `prefers-reduced-motion` the flip is an instant
+  color change (no transition). Tests assert keyboard reachability + submit-via-Enter.
+- [ ] **Chunk 4 — Tests (T-02e).** Component tests (toggle, submit shape, correct/incorrect
+  render, keyboard); property test: random ≤4-var expressions → extracted vars match the parser
+  AST (`variables(parse(expr))`).
+- [ ] **Deferred — T-02c PulseContext subscriber (AC8)**: follow-up after F-03 lands PulseContext.
+
+### Build verification evidence
+
+> Filled in per-chunk during the build.

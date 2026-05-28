@@ -81,4 +81,65 @@ None.
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### Shared-contract decisions consumed (locked in I1 Step 0, on `main`)
+
+- **Submit wire**: `submit` event has an optional `repSubmission` discriminated union
+  (`packages/contract/src/wire.ts`, already on `main`). F-04 populates the
+  `{ rep: 'pseudocode', expression: string, source: string }` branch — `source` is the raw
+  editor text, `expression` is the canonical Boolean expression `parsePseudocode` produced.
+  The required `submission` string also carries that canonical expression. **Do not edit the
+  wire schema** — consume it as-is.
+- **`packages/booleans` extension (the ONE contract this feature extends)**: add a strictly
+  **additive** export `parsePseudocode(src: string): Ast | BooleanParseError`. The existing
+  exports (`parse`, `evaluate`, `variables`, `truthTable`, `equivalent`) and the `Ast` type
+  **must not change** in shape. The pseudocode AST maps onto the existing `Ast` union
+  (`var | not | and | or`). If you believe you must change an existing export or the `Ast`
+  shape, **STOP and report back to the coordinator** — do not improvise a contract change.
+- **Renderer switch**: deliver `apps/web/src/components/PseudocodeChallenge.tsx`; do **not**
+  edit `registry.tsx` (coordinator wires the case).
+- **PulseContext subscriber (T-04d / AC8)**: deferred to a post-F-03 follow-up commit.
+
+### Scope (files you may touch)
+
+- `packages/booleans/src/index.ts` (+ its test file) — add `parsePseudocode` only.
+- `apps/web/src/components/PseudocodeChallenge.tsx` (+ test) — the editor component.
+- `apps/web/src/pseudocode/` — CM6 language extension / grammar + highlight style (new dir ok).
+- `apps/web/package.json` — the codemirror deps are added by Step 0; if missing, report back.
+
+### Implementation plan (checklist)
+
+- [ ] **Chunk 1 — `parsePseudocode` in `@polymath/booleans` (T-04b).** Tests first. Grammar:
+  identifiers (single uppercase letters, case-insensitive in), `and`/`or`/`not`, parentheses,
+  optional `if <expr> then <expr>` sugar mapping to the existing AST, `true`/`false` literals.
+  Returns the existing `Ast` or a `BooleanParseError` (do not throw across the boundary if the
+  spec's `ParseError` return is cleaner — match the existing `parse` which throws; mirror it).
+  Cap distinct-variable count (≤10) to respect the 2^n guard. Round-trip tests: each L1 target
+  expression has ≥2 equivalent pseudocode forms (`a and b`, `(a) and (b)`) that parse to ASTs
+  `equivalent` to the original. Property test: any successfully-parsed source `evaluate`s to the
+  same truth table as its canonical form.
+- [ ] **Chunk 2 — CM6 editor + language extension (T-04a).** Tests first (jsdom + RTL). Mount a
+  vanilla CodeMirror 6 editor in React for `kind: 'PseudocodeChallenge'`; placeholder
+  `// write your expression here`; `@codemirror/language` HighlightStyle so `and`/`or`/`not`
+  render as keywords distinct from identifiers (AC2). Hand-written tokenizer is fine if Lezer is
+  overkill (AC, ADR Q7). Preserve CM6 default keymap (AC6).
+- [ ] **Chunk 3 — Submit handler + verdict (T-04c).** Tests first. On Submit: `parsePseudocode`
+  → on parse error, show a CM6 diagnostic at the error position (AC5) and dispatch nothing OR
+  dispatch with the error noted (coordinate: the agent's hint/rephrase is driven by the
+  `correct:false`/verdict, but the wire has no `correct` field — send the canonical `submission`
+  + `repSubmission`, compute correctness client-side via `equivalent(parsed, targetExpression)`).
+  On success: `equivalent` check, render verdict; dispatch `submit` with `submission` = canonical
+  expression and `repSubmission = { rep:'pseudocode', expression, source }` (AC3/AC4).
+- [ ] **Chunk 4 — Tests + a11y (T-04f).** Component (mount, highlight fires, submit captures
+  source), `parsePseudocode` unit + property tests, axe-core on the editor, keyboard-only flow
+  reaches Submit via Tab/Enter.
+- [ ] **Deferred — T-04d PulseContext subscriber (AC8)**: follow-up after F-03.
+
+### Test command
+
+`pnpm --filter @polymath/booleans test` and `pnpm --filter @polymath/web test`. Build test-first;
+return your diff + test output. **Do not commit, rebase, or open a PR** — the coordinator does
+integration and finalization.
+
+### Build verification evidence
+
+> Filled in per-chunk during the build.
