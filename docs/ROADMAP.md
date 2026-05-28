@@ -103,7 +103,7 @@ A contract is shared shape that multiple features must agree on. Every contract 
 | **`packages/booleans` validator** | `packages/booleans/src/` (parser, AST, truth-table compare, equivalence) | F-01 (minimum: parse + compare AND/OR/NOT) | F-02, F-03, F-04, F-13, F-16, F-22 | New gate support (NAND in F-22) extends parser + evaluator. The API surface (`parse`, `truthTable`, `equivalent`) does not change after I0. | None expected — additions are pure (new gates), not changes. The contract is "shape preserved, alphabet grows." |
 | **Statechart spine** | `packages/statechart/src/lesson.ts` (XState) | F-01 (lesson_1 sub-statechart with phases) | F-09 (guards), F-12 (mastery guard), F-13 (lesson_2), F-15 (macro lesson_1→lesson_2), F-22, F-23, F-26 | The intra-lesson phase shape (`introducing → practicing → {hint, transferring} → assessed → {mastered, remediating}`) is locked in F-01. New lessons reuse via parameterisation. New phases require a new ADR. | ⚠ F-15 introduces the macro transition; depends on F-12's mastery guard being merged. F-22/F-23/F-26 each add a lesson_N sub-statechart; sequential by lesson order. |
 | **`transfer_bank` Postgres table + seed** | `db.transfer_bank` (table) + `seed_data/transfer_items.json` | F-08 (32 hand-curated items, all 4 MVP+stretch lessons covered) | F-07 (consumes), F-16 (consumes for baseline pre/post), F-22 (L3 items pre-authored), F-23 (L4 items pre-authored) | The bank is **never written to at runtime**. Adding items is a code change committed to git + a migration. Removals require justification in the limitations memo. | None expected — the table is read-only at runtime. Convergence between F-07 (probe consumer) and F-16 (baseline pre/post) is a *use* convergence, not a *modify* convergence. |
-| **WebSocket message protocol** | `packages/contract/src/wire.ts` (event types + Action wrapping) | F-01 | F-05, F-09, F-11, F-12, F-14, F-17 | Adds new event kinds (e.g., `transfer_submitted`, `explain_back_recording_ended`). Existing event kinds are append-only — never re-shape an existing event's payload. **New optional fields on an existing event are allowed** (they don't break existing senders) — see `submit.repSubmission`, added in I1. | Moderate. Two features extending the wire format in the same iteration must coordinate. **I1 update:** the `submit` event gained an optional `repSubmission` discriminated union (truth_table/circuit/pseudocode), locked in I1 Step 0 before the rep features fanned out — this removed the predicted per-rep submit-union convergence (one shared field instead of three competing edits). The required `submission` string is unchanged. |
+| **WebSocket message protocol** | `packages/contract/src/wire.ts` (event types + Action wrapping) | F-01 | F-05, F-09, F-11, F-12, F-14, F-17 | Adds new event kinds (e.g., `transfer_submitted`, `explain_back_recording_ended`). Existing event kinds are append-only — never re-shape an existing event's payload. **New optional fields on an existing event are allowed** (they don't break existing senders) — see `submit.repSubmission`, added in I1. | Moderate. Two features extending the wire format in the same iteration must coordinate. **I1 update:** the `submit` event gained an optional `repSubmission` discriminated union (truth_table/circuit/pseudocode), locked in I1 Step 0 before the rep features fanned out — this removed the predicted per-rep submit-union convergence (one shared field instead of three competing edits). The required `submission` string is unchanged. **I1 inner-loop update:** `submit` further gained two optional append-only fields — `correct` (the client's verdict, read only for the agent's tactical move choice; the server recomputes correctness server-side for the integrity-critical BKT/streak) and `responseTimeMs` (for F-09's rule-gate response-time band). The new `transfer_submitted` event kind is live (F-07). |
 | **Mastery gate predicate** | `apps/agent/src/mastery/gate.ts` | F-09 (rule-gate + BKT only) | F-12 (adds transfer + explain-back conditions), F-22/F-23 (lesson-specific tuning) | The predicate's *inputs* (`LearnerState`, `MasteryConfig`) are locked in F-09. F-12 extends the *implementation*, not the signature. Lesson-specific configs live in `lessons/<id>/mastery_config.json` and are loaded by the existing predicate. | ⚠ F-12 is the only feature that meaningfully changes gate behavior. F-22/F-23 only ship new lesson configs; the predicate is unchanged. |
 | **Lesson config JSON** | `lessons/<id>/mastery_config.json` + `lessons/<id>/content.json` | F-01 (lesson_1 stub: thresholds + 3 items) | F-09 (full mastery params), F-13 (lesson_2), F-22, F-23, F-26 | Adding a lesson = new directory + new JSON. Existing lesson configs are not edited cross-feature (only by the feature that owns that lesson). | None expected — directory-scoped ownership. |
 | **Curated component registry (rendering)** | `apps/web/src/components/registry.ts` (switch on `ComponentSpec.kind`) | F-01 (stub components) | F-02..F-04, F-06, F-07, F-11, F-14, F-18, F-22..F-26 | Every new `ComponentSpec.kind` adds a `case` to the switch. The switch must remain exhaustive (TS enforced via discriminated union). | ⚠ I1: F-02/F-03/F-04 all add a `case` to the same switch file. Sub-agents must coordinate at the file-edit level (claim a case alphabetically; merge order matters). |
@@ -217,6 +217,35 @@ graph TB
 >   probe hiding a rep would still expose it, voiding the assessment. All rep components now render `null` when
 >   their rep isn't in `visibleReps`. This is a **cross-cutting concern F-07 (transfer probe) depends on** —
 >   any new rep/workspace `ComponentSpec` variant must honor it. Codified in CLAUDE.md → invariants.
+>
+> **Build notes from the I1 inner-loop batch (F-05/F-06/F-07/F-09, carried forward):**
+> - **The inner agent has TWO menu surfaces that must stay in lockstep: the internal
+>   `TacticalMove` union (`apps/agent/src/agent/menu.ts`) AND the LLM provider's structured-output
+>   schema + `toTacticalMove` mapper (`apps/agent/src/agent/openaiClient.ts`).** F-06 (`propose_hint`)
+>   and F-07 (`propose_transfer_probe`) each added a move to the union but only learned each other's
+>   move (and the provider's arm) at integration — the provider's switch went non-exhaustive and the
+>   keyed LLM path couldn't emit the new move. **Any future feature adding a tactical move (F-11
+>   `propose_mastery_transition` voice variant, F-14 `recall_lesson1_kc`) must extend BOTH surfaces.**
+>   The `F06_MENU`-style `[...PREV_MENU, 'new_move']` pattern keeps the provider enum in lockstep.
+> - **Adding a workspace package needs the agent Dockerfile updated** — `@polymath/bkt` (new in F-09)
+>   broke the deployed image: the Dockerfile COPYs a *curated* `packages/*` set, so the in-image
+>   `pnpm install` failed `WORKSPACE_PKG_NOT_FOUND` and the agent crashed at boot. This is the F-08
+>   deploy-packaging blind spot generalized from *data files* to *workspace packages*. Only an image
+>   build catches it. Codified in CLAUDE.md → Deploy.
+> - **The wire `submit` event grew two optional append-only fields** (locked, additive): `correct`
+>   (client verdict, for the agent's tactical choice only) and `responseTimeMs` (for the rule gate's
+>   2–60s band). **The server NEVER trusts `correct` for the integrity-critical BKT/streak — it
+>   recomputes via `booleans.equivalent` server-side.** F-11/F-12 consuming submit should follow suit.
+> - **`learner_state` has a single writer** (`apps/agent/src/mastery/eventConsumer.ts` via the server's
+>   `updateAndReadLearnerState`). It folds the whole session's event log each turn — the three
+>   per-session event scans are now `.limit(500)`-bounded (a client can append a row per frame). F-12
+>   extends the gate; it must route any `learner_state` write through the same consumer, not add a
+>   second writer.
+> - **Unit tests that hard-code phase context can mask a real wiring gap.** F-07's hidden-rep refusal
+>   passed in unit tests that set `phase:'transferring'` explicitly, but the probe mount never actually
+>   drove the spine into `transferring` in the running app (the refusal was inert). The fix + the
+>   lesson: **for statechart-gated behavior, include an end-to-end test that drives the real spine
+>   through the adapter**, not just the guard in isolation.
 
 ### I2 — Voice + full mastery gate (3 features, mostly serial)
 
