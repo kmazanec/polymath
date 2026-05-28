@@ -1,0 +1,62 @@
+{
+  "lessonId": 1,
+  "note": "ADR-010 Layer 2 fallback bank. Hand-curated L1 items used when the agent fails twice in a row. Every claimedTruthTable is hand-verified and asserted against @polymath/booleans in fallbackBank.test.ts. Tiers: 1 = single operator, 2 = two operators, 3 = three+ / nested.",
+  "items": [
+    {
+      "itemId": "fb-l1-and",
+      "kc": "AND",
+      "tier": 1,
+      "targetExpression": "A AND B",
+      "claimedTruthTable": [0, 0, 0, 1]
+    },
+    {
+      "itemId": "fb-l1-or",
+      "kc": "OR",
+      "tier": 1,
+      "targetExpression": "A OR B",
+      "claimedTruthTable": [0, 1, 1, 1]
+    },
+    {
+      "itemId": "fb-l1-not",
+      "kc": "NOT",
+      "tier": 1,
+      "targetExpression": "NOT A",
+      "claimedTruthTable": [1, 0]
+    },
+    {
+      "itemId": "fb-l1-and-or",
+      "kc": "OR",
+      "tier": 2,
+      "targetExpression": "(A AND B) OR C",
+      "claimedTruthTable": [0, 1, 0, 1, 0, 1, 1, 1]
+    },
+    {
+      "itemId": "fb-l1-not-and",
+      "kc": "AND",
+      "tier": 2,
+      "targetExpression": "(NOT A) AND B",
+      "claimedTruthTable": [0, 1, 0, 0]
+    },
+    {
+      "itemId": "fb-l1-or-not",
+      "kc": "OR",
+      "tier": 2,
+      "targetExpression": "A OR (NOT B)",
+      "claimedTruthTable": [1, 0, 1, 1]
+    },
+    {
+      "itemId": "fb-l1-nested",
+      "kc": "AND",
+      "tier": 3,
+      "targetExpression": "(A OR B) AND (NOT C)",
+      "claimedTruthTable": [0, 0, 1, 0, 1, 0, 1, 0]
+    },
+    {
+      "itemId": "fb-l1-three-and",
+      "kc": "AND",
+      "tier": 3,
+      "targetExpression": "A AND B AND C",
+      "claimedTruthTable": [0, 0, 0, 0, 0, 0, 0, 1]
+    }
+  ]
+}
