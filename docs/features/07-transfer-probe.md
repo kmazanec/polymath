@@ -182,3 +182,25 @@ I1, **on the critical path**. Concurrent with F-06 after F-05 lands. Blocks F-09
   allowed.
 - Browser smoke is the coordinator's job at integration (the refusal "ask for the truth table
   back" demo moment will be exercised on the assembled batch).
+
+### Adversarial review (Step 6) — Wave 1
+
+- **Spec (CRITICAL, fixed):** a `propose_transfer_probe` compiled to a TransferProbe *mount*
+  but never drove the spine into `transferring`, so the hidden-rep refusal + pulse suppression
+  (which gate on the phase) were inert in the running app — unit tests passed `phase:'transferring'`
+  explicitly and masked it. **Fix:** the adapter now emits `enter_transfer` on a TransferProbe
+  mount, and a practice-item mount arriving *during* `transferring` (a remediation) walks the
+  spine `assess → remediate → resume_practice` back to `practicing`. New end-to-end adapter
+  tests drive the *real* spine through probe→pass→mastered and probe→fail→remediate→practicing,
+  plus a test that the spine still refuses mastery when the gate flag is closed (refusal #3).
+- **Security (HIGH, fixed):** `computeTransferVerdict` ran `equivalent` on learner-controlled
+  `submission` with no distinct-variable cap — a 2000-char 26-var expression would force a
+  2^26 enumeration on the event loop. **Fix:** cap at 10 distinct vars before enumerating
+  (over-wide → `correct:false`).
+- **Security (MEDIUM, fixed):** `transfer_submitted.itemId` wasn't bound to the probe actually
+  mounted for the session — a client could submit against an easier held-out item or burn a
+  different item from the unseen set. **Fix:** `computeTransferVerdict` confirms the itemId
+  matches the most-recently-mounted `TransferProbe` for the session; a mismatch (or no probe
+  mounted) scores `correct:false`. New integration test covers the forgery case.
+- The `transferring` readiness guard remains permissive for F-09 to tighten (recorded as a
+  convergence flag).

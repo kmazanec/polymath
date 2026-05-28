@@ -81,7 +81,7 @@ export function App(): ReactElement {
             // A mount refused by the transfer-probe guard is simply dropped — the
             // held-out rep is never revealed (ADR-005 refusal #2).
             if (r.refused) return;
-            if (r.lessonEvent) send(r.lessonEvent);
+            if (r.lessonEvents) for (const e of r.lessonEvents) send(e);
             if (r.mount) {
               setMounted(r.mount);
               if (r.mount.kind === 'TransferProbe') {

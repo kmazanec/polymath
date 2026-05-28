@@ -307,4 +307,22 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     };
     expect(replay.events.some((e) => e.payload.transferVerdict?.correct === true)).toBe(true);
   });
+
+  it('refuses a transfer_submitted for an item the session never probed (forgery defense)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // No probe was ever mounted for this session. A client that forges a
+    // transfer_submitted for a real bank item must NOT get a pass.
+    await driveSequence(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: 'L1-01-and', submission: 'A AND B' },
+    ]);
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { transferVerdict?: { correct: boolean } } }[];
+    };
+    const verdicts = replay.events.map((e) => e.payload.transferVerdict).filter(Boolean);
+    expect(verdicts.length).toBeGreaterThanOrEqual(1);
+    expect(verdicts.every((v) => v!.correct === false)).toBe(true);
+  });
 });

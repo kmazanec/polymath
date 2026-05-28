@@ -2,7 +2,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { desc, eq } from 'drizzle-orm';
-import { equivalent } from '@polymath/booleans';
+import { equivalent, parse, variables } from '@polymath/booleans';
 import {
   ClientEvent,
   noAction,
@@ -142,14 +142,32 @@ async function readTransferCandidates(
     }));
 }
 
+/** Distinct-variable cap before the 2^n truth-table enumeration in `equivalent`.
+ *  The L1 `parse` grammar permits 26 single-letter vars; a 2000-char learner
+ *  submission could otherwise force a 2^26-row enumeration on the event loop. */
+const MAX_TRANSFER_VARS = 10;
+
 /** Validate a `transfer_submitted` event against the probed bank item's canonical
  *  expression via `@polymath/booleans.equivalent` (ADR-010: the validator is the
- *  source of truth; the server decides the transfer verdict, not the agent). */
+ *  source of truth; the server decides the transfer verdict, not the agent).
+ *
+ *  Integrity: the submission is only honored against the item the agent *actually
+ *  probed* for this session — a `transfer_submitted` naming a different bank item
+ *  (a forged/substituted id) is scored `correct: false`, so a client can't pick an
+ *  easier held-out item or burn a different item from the unseen set. */
 async function computeTransferVerdict(
   db: Db,
   event: ClientEvent,
 ): Promise<{ itemId: string; correct: boolean } | undefined> {
   if (event.kind !== 'transfer_submitted') return undefined;
+
+  // The probe must have been mounted for this session, and the submitted itemId
+  // must match it (probe-substitution defense).
+  const probedItemId = await mostRecentProbeItemId(db, event.sessionId);
+  if (probedItemId === null || probedItemId !== event.itemId) {
+    return { itemId: event.itemId, correct: false };
+  }
+
   const rows = await db
     .select({ expr: transferBank.targetExpression })
     .from(transferBank)
@@ -157,13 +175,34 @@ async function computeTransferVerdict(
     .limit(1);
   const canonical = rows[0]?.expr;
   if (!canonical) return { itemId: event.itemId, correct: false };
+
   let correct = false;
   try {
-    correct = equivalent(event.submission, canonical);
+    // Cap distinct vars before enumerating (DoS guard): an over-wide submission is
+    // simply wrong, never an event-loop-blocking 2^n enumeration.
+    if (variables(parse(event.submission)).length <= MAX_TRANSFER_VARS) {
+      correct = equivalent(event.submission, canonical);
+    }
   } catch {
     correct = false; // an unparseable submission is simply wrong, never a crash
   }
   return { itemId: event.itemId, correct };
+}
+
+/** The itemId of the most-recently-mounted `TransferProbe` for the session, or
+ *  null if none has been mounted. */
+async function mostRecentProbeItemId(db: Db, sessionId: string): Promise<string | null> {
+  const rows = await db
+    .select({ payload: events.payload })
+    .from(events)
+    .where(eq(events.sessionId, sessionId))
+    .orderBy(desc(events.ts));
+  for (const row of rows) {
+    const c = (row.payload as { action?: { component?: { kind?: string; itemId?: string } } })?.action
+      ?.component;
+    if (c?.kind === 'TransferProbe' && typeof c.itemId === 'string') return c.itemId;
+  }
+  return null;
 }
 
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */

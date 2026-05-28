@@ -17,8 +17,11 @@ import { type LessonEvent, isHiddenRepMountRefused } from '@polymath/statechart'
  */
 
 export interface AdapterResult {
-  /** A statechart event to `send`, if this Action drives a phase transition. */
-  lessonEvent?: LessonEvent;
+  /** Statechart events to `send` in order, if this Action drives a phase change.
+   *  A list because some transitions need an intermediate step (e.g. from
+   *  `transferring`, reaching `mastered`/`remediating` goes via `assess` →
+   *  `assessed` first; the spine has no direct edge). */
+  lessonEvents?: LessonEvent[];
   /** A new component to mount, if this Action mounts one. */
   mount?: ComponentSpec;
   /** An answer to surface to the learner, if this Action is a Q&A response. */
@@ -58,20 +61,23 @@ function repOf(spec: ComponentSpec): Rep | undefined {
   }
 }
 
-/** Map a contract `PhaseName` transition target to the `LessonEvent` that reaches
- *  it from the current spine. Only the transitions the agent can drive in F-05. */
-function transitionEvent(to: PhaseName): LessonEvent | undefined {
+/** Map a contract `PhaseName` transition target to the `LessonEvent` sequence that
+ *  reaches it from the current phase. The spine accepts `mastery_ok`/`remediate`
+ *  only from `assessed`, so a transition out of `transferring` (after a probe) is
+ *  expanded to `assess` (→ assessed) then the terminal event. */
+function transitionEvents(to: PhaseName, fromPhase: string | undefined): LessonEvent[] {
+  const viaAssessed = fromPhase === 'transferring';
   switch (to) {
     case 'mastered':
-      return { type: 'mastery_ok' };
+      return viaAssessed ? [{ type: 'assess' }, { type: 'mastery_ok' }] : [{ type: 'mastery_ok' }];
     case 'transferring':
-      return { type: 'enter_transfer' };
+      return [{ type: 'enter_transfer' }];
     case 'remediating':
-      return { type: 'remediate' };
+      return viaAssessed ? [{ type: 'assess' }, { type: 'remediate' }] : [{ type: 'remediate' }];
     case 'practicing':
-      return { type: 'resume_practice' };
+      return [{ type: 'resume_practice' }];
     default:
-      return undefined;
+      return [];
   }
 }
 
@@ -84,14 +90,25 @@ export function adaptAction(action: Action, ctx?: AdapterContext): AdapterResult
         return { refused: true };
       }
       const result: AdapterResult = { mount: action.component };
-      if (PRACTICE_KINDS.has(action.component.kind)) {
-        result.lessonEvent = { type: 'start_practice' };
+      // A TransferProbe mount drives the spine into `transferring` — this is what
+      // makes the hidden-rep refusal + pulse suppression active (they gate on the
+      // phase). Without it the probe would render but the refusals stay inert.
+      if (action.component.kind === 'TransferProbe') {
+        result.lessonEvents = [{ type: 'enter_transfer' }];
+      } else if (PRACTICE_KINDS.has(action.component.kind)) {
+        // A practice item arriving *during* a transfer probe is the agent
+        // remediating a failed transfer: walk the spine transferring → assessed →
+        // remediating → practicing so the simpler item lands in `practicing`.
+        result.lessonEvents =
+          ctx?.phase === 'transferring'
+            ? [{ type: 'assess' }, { type: 'remediate' }, { type: 'resume_practice' }]
+            : [{ type: 'start_practice' }];
       }
       return result;
     }
     case 'transition': {
-      const lessonEvent = transitionEvent(action.to);
-      return lessonEvent ? { lessonEvent } : {};
+      const lessonEvents = transitionEvents(action.to, ctx?.phase);
+      return lessonEvents.length ? { lessonEvents } : {};
     }
     case 'answer_question':
       return {
