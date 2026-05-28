@@ -3,3 +3,5 @@ packages:
   - 'apps/*'
 allowBuilds:
   esbuild: true
+minimumReleaseAgeExclude:
+  - livekit-server-sdk@2.15.4
