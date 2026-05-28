@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import type { ComponentSpec } from '@polymath/contract';
 import { LessonIntro } from './LessonIntro.js';
+import { CircuitBuilder } from './CircuitBuilder.js';
 import { TruthTable } from './TruthTable.js';
 
 /**
@@ -26,10 +27,11 @@ export function renderComponent(spec: ComponentSpec): ReactElement {
   switch (spec.kind) {
     case 'LessonIntro':
       return <LessonIntro spec={spec} />;
+    case 'CircuitBuilder':
+      return <CircuitBuilder spec={spec} hiddenReps={[]} />;
     case 'TruthTablePractice':
       return <TruthTable spec={spec} />;
     case 'IntroExplanation':
-    case 'CircuitBuilder':
     case 'PseudocodeChallenge':
     case 'WorkedExample':
     case 'HintCard':

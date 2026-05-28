@@ -1,8 +1,31 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import type { ComponentSpec } from '@polymath/contract';
 import { renderComponent } from './registry.js';
 import { LESSON_1_INTRO } from '../lessonIntroContent.js';
+
+// react-flow (used by the CircuitBuilder case) needs ResizeObserver + matchMedia.
+beforeAll(() => {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+  if (!window.matchMedia) {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: (q: string) => ({
+        matches: false,
+        media: q,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent: () => false,
+      }),
+    });
+  }
+});
 
 afterEach(cleanup);
 
@@ -22,6 +45,20 @@ describe('renderComponent', () => {
     const { container, queryByRole } = render(renderComponent(spec));
     expect(queryByRole('note')).toBeNull();
     expect(container.querySelector('.truth-table')).not.toBeNull();
+  });
+
+  it('renders the CircuitBuilder for real (no longer a TBD stub)', () => {
+    const spec: ComponentSpec = {
+      kind: 'CircuitBuilder',
+      targetExpression: 'A AND B',
+      claimedTruthTable: [0, 0, 0, 1],
+      allowedGates: ['AND', 'OR', 'NOT'],
+      visibleReps: ['circuit'],
+    };
+    const { container, queryByRole } = render(renderComponent(spec));
+    // The real component renders a palette, not the TBD note.
+    expect(queryByRole('note')).toBeNull();
+    expect(container.querySelector('.circuit-builder')).not.toBeNull();
   });
 
   it('renders a TBD placeholder for an unimplemented variant', () => {
