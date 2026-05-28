@@ -205,6 +205,18 @@ graph TB
 >   split into pure, DOM-free modules (circuit model, pulse scheduler, submission, parser) that ARE unit-
 >   testable; axe-core + Playwright visual-regression are deferred to a real-browser pass at F-05 mount.
 >   Future canvas/editor features should expect the same split + deferral.
+>
+> **Lessons from MR !3 review (caught by the AI reviewer, missed by the adversarial subagents):**
+> - **Docker-packaging is a review blind spot.** F-08's boot-time seed reads `seed_data/transfer_items.json`,
+>   but the agent Dockerfile copies a curated dir set, not the whole repo — the file was `ENOENT` in the
+>   deployed image and would have failed the deploy health-check. Diff/unit review can't see this (the file
+>   exists on disk); only an image build can. **Future adversarial-review runs on any feature that reads a
+>   file at runtime should include a "deployment-packaging" lens** (is it COPYed into the image? is boot-time
+>   I/O non-fatal?). Now codified in CLAUDE.md → Deploy.
+> - **Probe integrity = rep components gate on `visibleReps`.** The reps initially always rendered; a transfer
+>   probe hiding a rep would still expose it, voiding the assessment. All rep components now render `null` when
+>   their rep isn't in `visibleReps`. This is a **cross-cutting concern F-07 (transfer probe) depends on** —
+>   any new rep/workspace `ComponentSpec` variant must honor it. Codified in CLAUDE.md → invariants.
 
 ### I2 — Voice + full mastery gate (3 features, mostly serial)
 
