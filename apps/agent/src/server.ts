@@ -32,6 +32,10 @@ import { validateOutboundAction } from './agent/validateAction.js';
 import { loadLesson, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
 import { createRateLimiter } from './voice/rateLimiter.js';
+import { handleExplainBack, type ExplainBackRouteDeps } from './explainback/route.js';
+import type { TransferBankItemRef } from './explainback/itemTokens.js';
+import type { ExplainBackJudge, ProsodyFeatures } from '@polymath/graph';
+import { makeExplainBackJudge } from '@polymath/graph';
 
 export interface ServerDeps {
   db: Db;
@@ -40,6 +44,13 @@ export interface ServerDeps {
    *  with no `Origin` header (non-browser clients: the smoke test, the
    *  integration harness, `wscat`) is always allowed. Defaults to localhost. */
   allowedOrigins?: string[];
+  /** F-11 explain-back LLM judge (Stage 4b). Injectable for tests; defaults to the
+   *  key-gated `@langchain/openai` judge when `OPENAI_API_KEY` is set, else
+   *  `undefined` → the rubric fails closed with `judge_unavailable`. */
+  explainBackJudge?: ExplainBackJudge;
+  /** F-11 prosody provider (AC#10): the WebRTC bridge's captured prosody for a
+   *  session's explain-back utterance. Absent → the judge sees no prosody. */
+  explainBackProsodyFor?: (sessionId: string, targetItemId: string) => ProsodyFeatures | undefined;
 }
 
 /** Cap inbound WS frames — protocol messages are small JSON. Prevents a single
@@ -574,6 +585,32 @@ export async function handleClientFrame(
   // Assemble the turn input the agent reasons over: lesson content, the learner
   // snapshot, and recent history (ADR-003: fresh-per-turn, structured state only).
   const lesson = getLesson(lessonIdForEvent(event));
+
+  // F-11: the explain-back rubric is a deterministic SERVER REFLEX — it does NOT go
+  // through proposeMove (off the forgeable/jailbroken-LLM path, out of the menu
+  // lockstep). Handle it BEFORE the generic agent turn: run the rubric (preconditions
+  // → judge, fail closed), persist the verdict (AC#7), re-mount on fail (AC#8), and
+  // reply. The verdict drives F-12's mastery gate via the derived state.
+  if (event.kind === 'explain_back_recording_ended') {
+    // Resolve a probed transfer item's tokens (#5) from the bank too (read-only).
+    const bankRows = await deps.db
+      .select({ itemId: transferBank.itemId, targetExpression: transferBank.targetExpression })
+      .from(transferBank)
+      .where(eq(transferBank.lessonId, lesson.content.lessonId));
+    const transferItems: TransferBankItemRef[] = bankRows.map((b) => ({
+      itemId: b.itemId,
+      targetExpression: b.targetExpression,
+    }));
+    const routeDeps: ExplainBackRouteDeps = {
+      db: deps.db,
+      ...(deps.explainBackJudge ? { judge: deps.explainBackJudge } : {}),
+      ...(deps.explainBackProsodyFor ? { prosodyFor: deps.explainBackProsodyFor } : {}),
+      transferItems,
+    };
+    const ebAction = await handleExplainBack(routeDeps, event, lesson);
+    send(ws, { kind: 'action', sessionId: event.sessionId, action: ebAction });
+    return;
+  }
   // The transfer verdict (server-computed) must be known before deriving learner
   // state, so a passed transfer sets the gate's transfer condition this turn.
   const transferVerdict = await computeTransferVerdict(deps.db, event);
