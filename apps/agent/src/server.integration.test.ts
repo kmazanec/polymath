@@ -1050,8 +1050,16 @@ describe.skipIf(!canRunPg)('F-11 explain-back PASS path through the real fold', 
     const [verdictAction] = await drive(sessionId, [
       { kind: 'explain_back_recording_ended', sessionId, targetItemId: probedItemId, transcript: '', durationMs: 9000 },
     ]);
-    // F-11 stops at the verdict on a pass → no_action (F-12 owns the transition).
-    expect(verdictAction!.type).toBe('no_action');
+    // F-11/F-12 SERIAL JOIN (Option A — same-turn celebration): the rule gate +
+    // transfer + a real passing-judge explain-back all clear on THIS turn, so the full
+    // mastery gate clears and the server mints the MasteryCelebration SAME TURN (the
+    // old behavior — F-11 stopping at `no_action`, deferring the transition a turn — is
+    // exactly what Option A replaces). The persisted PASS verdict + derived-state
+    // assertions below remain the load-bearing reachability checks.
+    expect(verdictAction!.type).toBe('mount');
+    if (verdictAction!.type === 'mount') {
+      expect(verdictAction!.component.kind).toBe('MasteryCelebration');
+    }
 
     await new Promise((r) => setTimeout(r, 300));
     const replay = (await (await fetch(`${pBaseUrl}/api/session/${sessionId}/replay`)).json()) as {

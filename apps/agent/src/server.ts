@@ -344,26 +344,6 @@ async function computeTransferVerdict(
   return { itemId: event.itemId, correct };
 }
 
-/**
- * F-12: resolve the `explainBackVerdict` for an `explain_back_recording_ended`
- * turn, mirroring `computeTransferVerdict`. F-11 owns the real judge (5 deterministic
- * preconditions + the LLM judge) and its server route; until that route lands (the
- * Phase-2 serial join), F-12 reads a dev-only synthesized verdict so the full mastery
- * path is drivable end-to-end.
- *
- * FAIL-CLOSED: only an `explain_back_recording_ended` turn carrying the dev seam
- * yields a verdict; every other case returns `undefined` → no verdict is persisted →
- * `explainBackPassed` stays false → mastery is blocked. The seam itself is gated to
- * dev in the connection handler (inert in production).
- */
-function computeExplainBackVerdict(
-  event: ClientEvent,
-  opts: FrameOptions,
-): ExplainBackVerdict | undefined {
-  if (event.kind !== 'explain_back_recording_ended') return undefined;
-  return opts.testExplainBackVerdict;
-}
-
 /** The itemId of the currently-UNRESOLVED transfer probe, or null. Scanning
  *  newest-first: a `transfer_submitted` seen before any probe means the latest
  *  probe was already resolved → null (so a client can't resubmit a resolved/failed
@@ -640,14 +620,120 @@ export interface FrameOptions {
    *  itself). It does NOT grant mastery: the gate still rejects it when the predicate
    *  fails; it only forces the proposal so the rejection path runs. */
   testForceMastered?: boolean;
-  /** F-12 dev seam (`?testExplainBackVerdict=pass|fail`): synthesize the
-   *  `explain_back_recording_ended` turn's `explainBackVerdict` so the full mastery
-   *  path is drivable BEFORE F-11's real judge/route lands (the Phase-2 serial join).
-   *  Dev-only (`NODE_ENV!=='production'`). When F-11's route ships, it computes the
-   *  verdict and this seam is removed; the read/fold/persist sites are unchanged. It
-   *  is NOT a fail-open: absent the seam, no verdict is persisted → `explainBackPassed`
-   *  stays false → mastery blocked (the fail-closed default). */
+  /** F-11/F-12 dev/test seam (`?testExplainBackVerdict=pass|fail`): synthesize the
+   *  `explain_back_recording_ended` turn's `explainBackVerdict`. The integration tests
+   *  drive the explain-back turn through this because the real LLM judge needs an
+   *  `OPENAI_API_KEY` they lack in CI; the seam is therefore KEPT (not deleted) but is
+   *  now wired INTO the explain-back route (`handleExplainBack` honors it as the verdict
+   *  and skips the real judge), rather than read at the fold. Dev-only
+   *  (`NODE_ENV!=='production'` — inert in prod; a keyed prod deploy runs the real
+   *  judge, a keyless one fails closed). NOT a fail-open: absent the seam, the real
+   *  rubric runs and an unmet precondition / unavailable judge → `passed:false` → no
+   *  pass folded → mastery blocked (the fail-closed default). */
   testExplainBackVerdict?: ExplainBackVerdict;
+}
+
+/**
+ * F-11/F-12 SERIAL JOIN (Option A — same-turn mastery celebration). Handle one
+ * `explain_back_recording_ended` frame end-to-end and persist exactly one event row.
+ *
+ *   1. Run the explain-back rubric via `handleExplainBack` (or honor the dev/test
+ *      synthetic verdict) → `{ verdict, failPathAction, passed, validation }`.
+ *   2. Fold the verdict into the learner state THIS turn (`updateAndReadLearnerState`
+ *      threads it so the just-arrived passing verdict makes `explainBackPassed=true` in
+ *      the fold) and evaluate the full mastery gate.
+ *   3. On a PASS where the gate clears: run the earned-it check (defense-in-depth — a
+ *      server-minted MasteryCelebration must still satisfy the gate) and reply with a
+ *      server-minted `MasteryCelebration` (server-sourced `conceptsMastered`), recording
+ *      `statechartDecision:'accept'`. The celebration mounts the SAME turn.
+ *   4. On a PASS where the gate does NOT clear (e.g. topic-guardrail tripped): reply
+ *      with `no_action` and persist the blocking `gateEvaluation` (no celebration).
+ *   5. On a FAIL / cap / precondition-fail: reply with F-11's `failPathAction` (retry
+ *      mount or escalation) and persist the failing verdict + the blocking gate.
+ *
+ * The persisted row carries `{ event, action, learnerSnapshot, explainBackVerdict,
+ * gateEvaluation, statechart…, validation }` — so the replay shows the verdict, the
+ * gate flipping false→true, and the `accept` decision on the explain-back turn.
+ */
+async function handleExplainBackTurn(
+  deps: ServerDeps,
+  ws: WebSocket,
+  event: Extract<ClientEvent, { kind: 'explain_back_recording_ended' }>,
+  lesson: Lesson,
+  opts: FrameOptions,
+): Promise<void> {
+  // Resolve a probed transfer item's tokens (#5) from the bank too (read-only).
+  const bankRows = await deps.db
+    .select({ itemId: transferBank.itemId, targetExpression: transferBank.targetExpression })
+    .from(transferBank)
+    .where(eq(transferBank.lessonId, lesson.content.lessonId));
+  const transferItems: TransferBankItemRef[] = bankRows.map((b) => ({
+    itemId: b.itemId,
+    targetExpression: b.targetExpression,
+  }));
+  const routeDeps: ExplainBackRouteDeps = {
+    db: deps.db,
+    ...(deps.explainBackJudge ? { judge: deps.explainBackJudge } : {}),
+    ...(deps.explainBackProsodyFor ? { prosodyFor: deps.explainBackProsodyFor } : {}),
+    ...(deps.explainBackTranscriptFor ? { transcriptFor: deps.explainBackTranscriptFor } : {}),
+    transferItems,
+    // The dev/test seam (NODE_ENV-gated by the connection handler) injects the verdict
+    // so `handleExplainBack` skips the real judge — the tests' verdict source.
+    ...(opts.testExplainBackVerdict ? { syntheticVerdict: opts.testExplainBackVerdict } : {}),
+  };
+  const outcome = await handleExplainBack(routeDeps, event, lesson);
+
+  // Fold this turn's verdict into the learner state SAME-TURN: a passing verdict makes
+  // `explainBackPassed=true` in the fold so the full gate can clear THIS turn (Option A).
+  // A failing/cap verdict folds fail-closed (the gate stays blocked on explain-back).
+  const learnerDerived = await updateAndReadLearnerState(
+    deps.db,
+    event.sessionId,
+    event,
+    lesson,
+    undefined, // no transfer verdict on an explain-back turn
+    outcome.verdict,
+  );
+  const gateEvaluation = evaluateMasteryGate(learnerDerived.masteryState, lesson.masteryConfig);
+
+  // Decide the same-turn action. On a PASS where the gate clears, mint the celebration;
+  // otherwise forward F-11's fail-path action (a non-pass) or a no_action (a pass that
+  // the gate still blocks, e.g. topic guardrail).
+  let action: Action;
+  let statechart: { statechartDecision: 'accept'; statechartReason: string } | undefined;
+  if (outcome.passed && gateEvaluation.passed) {
+    // Earned-it defense-in-depth: the server-minted celebration must itself satisfy the
+    // gate (it does here by construction, but route the same predicate as the agent path
+    // so the rule can never drift). The legitimate celebration is ALWAYS server-minted
+    // with server-sourced conceptsMastered (never an agent/client claim).
+    action = masteryCelebrationAction(learnerDerived.masteryState, lesson);
+    statechart = { statechartDecision: 'accept', statechartReason: 'mastery_gate_satisfied' };
+  } else {
+    // A pass that the gate still blocks → no_action (no celebration); a non-pass →
+    // F-11's retry mount / escalation. Either way the blocking gate is persisted below.
+    action = outcome.passed
+      ? noAction('wait_for_learner', `explain-back passed but mastery gate blocked: ${gateEvaluation.blockers.join(',')}`)
+      : outcome.failPathAction;
+  }
+
+  // Persist exactly one row for this turn (the route no longer writes its own). It
+  // carries the verdict, the per-turn gate evaluation (so the replay shows false→true),
+  // the `accept` statechart decision (on a gate-clearing pass), and the Layer-4 validation.
+  await deps.db.insert(events).values({
+    sessionId: event.sessionId,
+    kind: event.kind,
+    payload: {
+      event,
+      action,
+      learnerSnapshot: learnerDerived.snapshot,
+      explainBackVerdict: outcome.verdict,
+      gateEvaluation: { passed: gateEvaluation.passed, blockers: gateEvaluation.blockers },
+      ...(statechart ?? {}),
+      validation: outcome.validation,
+    },
+  });
+
+  send(ws, { kind: 'action', sessionId: event.sessionId, action });
 }
 
 /** Handle one inbound WebSocket frame: validate → run agent → validate output →
@@ -690,39 +776,28 @@ export async function handleClientFrame(
   // snapshot, and recent history (ADR-003: fresh-per-turn, structured state only).
   const lesson = getLesson(lessonIdForEvent(event));
 
-  // F-11: the explain-back rubric is a deterministic SERVER REFLEX — it does NOT go
-  // through proposeMove (off the forgeable/jailbroken-LLM path, out of the menu
-  // lockstep). Handle it BEFORE the generic agent turn: run the rubric (preconditions
-  // → judge, fail closed), persist the verdict (AC#7), re-mount on fail (AC#8), and
-  // reply. The verdict drives F-12's mastery gate via the derived state.
+  // F-11/F-12 SERIAL JOIN (Option A — same-turn mastery celebration). The explain-back
+  // rubric is a deterministic SERVER REFLEX — it does NOT go through proposeMove (off
+  // the forgeable/jailbroken-LLM path, out of the menu lockstep). Handle it BEFORE the
+  // generic agent turn: run the rubric (preconditions → judge, fail closed) to get the
+  // verdict, then — on a PASS — CONTINUE into F-12's gate: fold the passing verdict into
+  // the learner state THIS turn, evaluate the full mastery gate, and (when it clears)
+  // mint the MasteryCelebration on this same turn (no longer a next-turn `no_action`).
+  // On a FAIL/cap/precondition-fail, keep F-11's behavior (retry mount / escalation).
+  // Exactly ONE event row is persisted, carrying the verdict, the gate evaluation, and
+  // (on a pass-and-gate-clear) the `accept` statechart decision — so the replay shows
+  // the gate flipping false→true on the explain-back turn.
   if (event.kind === 'explain_back_recording_ended') {
-    // Resolve a probed transfer item's tokens (#5) from the bank too (read-only).
-    const bankRows = await deps.db
-      .select({ itemId: transferBank.itemId, targetExpression: transferBank.targetExpression })
-      .from(transferBank)
-      .where(eq(transferBank.lessonId, lesson.content.lessonId));
-    const transferItems: TransferBankItemRef[] = bankRows.map((b) => ({
-      itemId: b.itemId,
-      targetExpression: b.targetExpression,
-    }));
-    const routeDeps: ExplainBackRouteDeps = {
-      db: deps.db,
-      ...(deps.explainBackJudge ? { judge: deps.explainBackJudge } : {}),
-      ...(deps.explainBackProsodyFor ? { prosodyFor: deps.explainBackProsodyFor } : {}),
-      ...(deps.explainBackTranscriptFor ? { transcriptFor: deps.explainBackTranscriptFor } : {}),
-      transferItems,
-    };
-    const ebAction = await handleExplainBack(routeDeps, event, lesson);
-    send(ws, { kind: 'action', sessionId: event.sessionId, action: ebAction });
+    await handleExplainBackTurn(deps, ws, event, lesson, opts);
     return;
   }
   // The transfer verdict (server-computed) must be known before deriving learner
   // state, so a passed transfer sets the gate's transfer condition this turn.
   const transferVerdict = await computeTransferVerdict(deps.db, event);
-  // F-12: the explain-back verdict for this turn (F-11's judge once it lands; a
-  // dev-only synthetic verdict until then). Fail-closed: undefined unless this is an
-  // explain_back turn carrying the seam → no verdict persisted → mastery blocked.
-  const explainBackVerdict = computeExplainBackVerdict(event, opts);
+  // Non-explain-back turns never carry an explain-back verdict — it is resolved on the
+  // explain_back_recording_ended turn (handled above) and folded from the persisted log
+  // thereafter. Fail-closed by default: undefined → no verdict → mastery blocked.
+  const explainBackVerdict: ExplainBackVerdict | undefined = undefined;
   const [learnerDerived, recentHistory, transferCandidates, inTransferProbe] = await Promise.all([
     updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict, explainBackVerdict),
     readRecentHistory(deps.db, event.sessionId),
