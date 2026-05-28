@@ -31,6 +31,7 @@ import {
 import { validateOutboundAction } from './agent/validateAction.js';
 import { loadLesson, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
+import { createRateLimiter } from './voice/rateLimiter.js';
 
 export interface ServerDeps {
   db: Db;
@@ -440,6 +441,13 @@ function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
  *  rather than taking a contract dependency for one field. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Throttle token minting per session. Each mint signs a JWT + provisions a room
+ *  slot, so an unthrottled caller holding a session id could amplify into
+ *  unbounded LiveKit/realtime cost. The legitimate client mints once on join and
+ *  once per ~4-minute refresh, so 6/min is far above real use yet caps abuse.
+ *  Per-process is fine — this is a safety backstop, not a billing quota. */
+const realtimeMintLimiter = createRateLimiter({ limit: 6, windowMs: 60_000 });
+
 /** Mint a LiveKit join token for an existing session. The browser calls this to
  *  join the session's room directly, so the long-lived API secret never reaches
  *  the client — only a 5-minute, single-room token does. Read the env credentials
@@ -472,6 +480,13 @@ async function handleRealtimeSession(
   const sessionId = (body as { sessionId?: unknown } | null)?.sessionId;
   if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) {
     sendJson(res, 400, { error: 'sessionId must be a UUID' });
+    return;
+  }
+
+  // Cap mints per session before the DB hit — the amplification vector is
+  // repeated minting for a held session id, not the lookup itself.
+  if (!realtimeMintLimiter.take(sessionId)) {
+    sendJson(res, 429, { error: 'too many token requests' });
     return;
   }
 

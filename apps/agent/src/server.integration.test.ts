@@ -384,5 +384,23 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(res.status).toBe(503);
       expect(await res.json()).toEqual({ error: 'voice not configured' });
     });
+
+    it('rate-limits repeated mints for one session (429 after the per-window cap)', async () => {
+      setVoiceEnv();
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const mint = (): Promise<Response> =>
+        fetch(`${baseUrl}/api/realtime/session`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        });
+      // The limiter allows 6 mints per minute per session; the 7th is throttled.
+      const statuses: number[] = [];
+      for (let i = 0; i < 7; i++) statuses.push((await mint()).status);
+      expect(statuses.slice(0, 6).every((s) => s === 201)).toBe(true);
+      expect(statuses[6]).toBe(429);
+    });
   });
 });

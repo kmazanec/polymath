@@ -127,7 +127,7 @@ against the frozen interface.
   Playwright (fake media device) asserts the permission-defer + token-mint contract;
   `docs/voice-cross-platform-smoke.md` scripted per ADR-006; confirmed token endpoint passes through
   Caddy (`/api/*` already routes to the agent). → criterion 4 (desktop Chromium only).
-- [ ] **Review (Step 6)** — Wave 1 spec+security, Wave 2 robustness+efficiency; high/medium fixed.
+- [x] **Review (Step 6)** — Wave 1 spec+security, Wave 2 robustness+efficiency; high/medium fixed.
 - [ ] **Smoke (Step 7)** — drive the web dev server (mocked boundary) end-to-end + regression.
 
 **Deferred (unchecked, requires user keys/devices):** criteria 1/2/3/5 *live*, 8 *live refresh*,
@@ -241,3 +241,28 @@ The mocked-boundary tests cover the *contract*; these need real credentials/devi
   `docs/voice-cross-platform-smoke.md` is the script; run it with keys + devices and tick its table.
 Set `LIVEKIT_URL`/`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET` + confirm OpenAI Realtime access in `.env`, then run the
 checklist. The endpoint already returns 503 "voice not configured" until those keys are set.
+
+### Review — Step 6
+
+**Wave 1 (both Opus):**
+- *Spec-compliance:* fully compliant. Per-criterion: 6 (mic-on-click) MET + proven (`client.test.ts`, `AskTutorButton.test.tsx`,
+  e2e); 7 (9 OTel attrs) MET + asserted (`otel.test.ts`); 8-TTL (300s) MET + asserted (`token.test.ts`); 1/2/3/5 MET at
+  the contract level via the mocked boundary with honest live deferrals; 4 desktop-Chromium MET, device matrix scripted+
+  deferred. No missed/faked items, **no contract drift** (`packages/contract` untouched; wire union unchanged; the only
+  API addition is `POST /api/realtime/session`), no feature-ID-in-source, mastery-gate untouched.
+- *Security:* no HIGH. Two MEDIUM + one LOW.
+  - **MED-1 — no rate limiting on the mint endpoint (amplification/cost abuse): FIXED.** Added `voice/rateLimiter.ts`
+    (fixed-window, per-process) and a 6/min-per-session cap on the route → 429 over the cap. Proven by `rateLimiter.test.ts`
+    (4) + an integration 429 test. The legitimate client mints ~once/4min, so the cap is far above real use.
+  - **MED-2 — sessionId is the only capability; no owner binding (audio-eavesdrop escalation if a sessionId leaks):
+    RECORDED, not fixed here.** This is a *pre-existing app-wide property* (the whole WS protocol treats the sessionId as
+    the bearer capability) — fixing it means adding auth + a `learnerId` across the app, which is out of F-10's scope and
+    would be contract drift. F-10 does not weaken it; it does *raise the stakes* (a leaked sessionId now also exposes live
+    audio). Captured in the Retro + propagated to ROADMAP for the auth iteration. Until auth lands: sessionIds over TLS only,
+    never logged.
+  - **LOW — refresh-skew margin:** clean, no action (refresh at T−60s uses the still-valid old token; bounded retry).
+  Confirmed clean: secret stays server-side, least-privilege room-scoped token, session-existence check (not an open oracle),
+  16KB body cap + UUID validation, Zod-validated parameterized `voice_turn` insert, mic only on gesture + tracks stopped on
+  teardown, CSWSH/CORS posture unchanged.
+
+**Wave 2 (both Sonnet):** _pending below._
