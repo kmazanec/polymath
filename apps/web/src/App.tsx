@@ -174,6 +174,15 @@ export function App(): ReactElement {
     setQuestion('');
   }, [question, sessionId]);
 
+  const onRequestHint = useCallback((): void => {
+    if (!sessionId) return;
+    socketRef.current?.send({
+      kind: 'request_hint',
+      sessionId,
+      itemId: currentItemId.current,
+    });
+  }, [sessionId]);
+
   const phase = currentPhase(snapshot.value);
 
   // Mirror the phase into a ref for the WS closure, and clear the active probe's
@@ -191,6 +200,19 @@ export function App(): ReactElement {
       <AnimateOrNot phase={phase}>{renderComponent(mounted, { onSubmit })}</AnimateOrNot>
 
       {answer && <div className="agent-answer-slot">{renderComponent(answer)}</div>}
+
+      {(phase === 'practicing' || phase === 'transferring') && (
+        <button
+          type="button"
+          className="hint-button"
+          onClick={onRequestHint}
+          disabled={conn !== 'open' || phase === 'transferring'}
+          aria-label="Request a hint"
+          data-phase={phase}
+        >
+          Hint
+        </button>
+      )}
 
       <form
         className="ask-agent"

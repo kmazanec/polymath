@@ -390,6 +390,21 @@ export async function handleClientFrame(
     ? shaped
     : noAction('agent_unsure', `outbound Layer-2 rejection: ${layer2.detail}`);
 
+  // ADR-010 Layer 3: a HintCard level-3 mount is logged as unverified_prose.
+  // All other mounts go through the Layer-2 validator (layer 2); non-mounts
+  // are layer 1. This is set on the pre-rejection `shaped` action so the log
+  // reflects the original proposal even when it was downgraded.
+  const isL3Hint =
+    shaped.type === 'mount' &&
+    shaped.component.kind === 'HintCard' &&
+    shaped.component.level === 3;
+  const validationLayer = isL3Hint ? 3 : shaped.type === 'mount' ? 2 : 1;
+  const validationStatus = isL3Hint
+    ? 'unverified_prose'
+    : layer2.ok
+      ? 'pass'
+      : 'reject';
+
   await deps.db.insert(events).values({
     sessionId: event.sessionId,
     kind: event.kind,
@@ -401,8 +416,8 @@ export async function handleClientFrame(
       // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
       ...(transferVerdict ? { transferVerdict } : {}),
       validation: {
-        layer: shaped.type === 'mount' ? 2 : 1,
-        status: layer2.ok ? 'pass' : 'reject',
+        layer: validationLayer,
+        status: validationStatus,
         detail: layer2.ok ? (downgraded ? 'downgraded malformed proposal' : 'ok') : layer2.detail,
       },
     },

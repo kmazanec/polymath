@@ -146,9 +146,12 @@ describe('renderComponent', () => {
     expect(calls[0]!.submission).toBe('NOT A');
   });
 
-  it('renders a TBD placeholder for an unimplemented variant', () => {
-    const spec: ComponentSpec = { kind: 'HintCard', level: 1, body: 'b' };
-    const { getByRole } = render(renderComponent(spec));
-    expect(getByRole('note').getAttribute('data-tbd')).toBe('HintCard');
+  it('renders HintCard for real (no longer a TBD stub)', () => {
+    const spec: ComponentSpec = { kind: 'HintCard', level: 1, body: 'Look at the AND gate.' };
+    const { container, queryByRole } = render(renderComponent(spec));
+    // Must no longer have the data-tbd marker
+    expect(queryByRole('note')?.getAttribute('data-tbd')).toBeNull();
+    expect(container.querySelector('.hint-card')).not.toBeNull();
+    expect(container.querySelector('.hint-card--level-1')).not.toBeNull();
   });
 });

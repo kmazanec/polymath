@@ -38,6 +38,12 @@
       "event": { "kind": "session_start", "lessonId": 1 },
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
       "expectMoveOneOf": ["next_practice_item", "worked_example"]
+    },
+    {
+      "id": "request-hint-fresh-item-gives-l1",
+      "event": { "kind": "request_hint", "itemId": "l1-and" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "propose_hint"
     }
   ]
 }

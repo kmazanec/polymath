@@ -1,6 +1,7 @@
 import type { AgentInput, MoveProvider } from './client.js';
 import type { ProposedItem, TacticalMove } from './menu.js';
 import { FlowAgentClient } from './flowClient.js';
+import { generateL1, generateL2, generateL3Canned } from '../hints/templates.js';
 
 /**
  * A deterministic, key-free `MoveProvider` (no LLM). It implements a small
@@ -14,7 +15,9 @@ import { FlowAgentClient } from './flowClient.js';
  *                          so the learner reaches a workspace from the intro).
  *  - `submit`            → next practice item from the lesson (or propose the mastery
  *                          transition if the rule-gate says the learner is ready).
- *  - `request_hint`      → no_action here (F-06 owns the hint arm).
+ *  - `request_hint`      → propose_hint at the appropriate level (0 prior→L1,
+ *                          1→L2, 2→L3, 3+→no_action/disabled). During the
+ *                          `transferring` phase → no_action.
  *  - `learner_question`  → answer on-topic Boolean-logic questions, deflect others.
  *  - anything else       → no_action (wait for the learner).
  */
@@ -84,8 +87,8 @@ export class HeuristicMoveProvider implements MoveProvider {
     if (ev.kind === 'transfer_submitted') {
       // The transfer probe's verdict gates the next move: a pass → propose mastery
       // (the rule gate already held); a fail → drop back into practice with a
-      // simpler item (remediate). Correctness is computed by the server's
-      // transfer_submitted handler (booleans.equivalent) and threaded via `correct`.
+      // simpler item (remediate). Correctness is computed server-side
+      // (booleans.equivalent) and threaded via `transferVerdict`.
       const passed = input.transferVerdict?.correct ?? false;
       if (passed) {
         return Promise.resolve({
@@ -110,6 +113,10 @@ export class HeuristicMoveProvider implements MoveProvider {
       return Promise.resolve({ move: 'no_action', reason: 'wait_for_learner', rationale: 'transfer failed, no item to remediate' });
     }
 
+    if (ev.kind === 'request_hint') {
+      return Promise.resolve(proposeHint(ev.itemId, input));
+    }
+
     if (ev.kind === 'learner_question') {
       const onTopic = isBooleanTopic(ev.question);
       return Promise.resolve({
@@ -129,6 +136,63 @@ export class HeuristicMoveProvider implements MoveProvider {
       rationale: `heuristic provider: nothing to do for "${ev.kind}"`,
     });
   }
+}
+
+/**
+ * Propose the appropriate hint level for the given item, based on how many
+ * prior hints have been used on THIS item in the recent history.
+ *
+ * Level selection (ADR-010 Layer 3):
+ *   0 prior request_hint turns for item → L1
+ *   1 prior                             → L2
+ *   2 prior                             → L3
+ *   3+                                  → no_action (affordance is disabled)
+ */
+function proposeHint(itemId: string, input: AgentInput): TacticalMove {
+  // Count request_hint turns for this specific item in the recent history
+  const priorHints = input.recentHistory.filter(
+    (t) => t.eventKind === 'request_hint' && t.itemId === itemId,
+  ).length;
+
+  if (priorHints >= 3) {
+    return {
+      move: 'no_action',
+      reason: 'wait_for_learner',
+      rationale: 'all hint levels exhausted for this item (heuristic provider)',
+    };
+  }
+
+  // Find the item in the lesson to get its targetExpression
+  const lessonItem = input.lesson.content.items.find(
+    (i) => i.itemId === itemId || i.targetExpression === itemId,
+  );
+  const targetExpression = lessonItem?.targetExpression ?? itemId;
+
+  const level = (priorHints + 1) as 1 | 2 | 3;
+
+  let body: string | null = null;
+  if (level === 1) {
+    body = generateL1(targetExpression);
+  } else if (level === 2) {
+    body = generateL2(targetExpression);
+  } else {
+    body = generateL3Canned(targetExpression);
+  }
+
+  if (!body) {
+    return {
+      move: 'no_action',
+      reason: 'agent_unsure',
+      rationale: `could not generate L${level.toString()} hint for expression "${targetExpression}" (heuristic provider)`,
+    };
+  }
+
+  return {
+    move: 'propose_hint',
+    level,
+    body,
+    rationale: `L${level.toString()} hint for item "${itemId}" (${priorHints.toString()} prior hints; heuristic provider)`,
+  };
 }
 
 /** Mount the lesson's first item to start the loop from the intro. */

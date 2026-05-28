@@ -56,6 +56,7 @@ export type TacticalMove =
       itemId: string;
       rationale: string;
     }
+  | { move: 'propose_hint'; level: 1 | 2 | 3; body: string; rationale: string }
   | {
       move: 'no_action';
       reason: 'wait_for_learner' | 'thinking' | 'agent_unsure';
@@ -75,6 +76,9 @@ export const F05_MENU = [
   'propose_transfer_probe',
   'no_action',
 ] as const;
+
+/** Extended menu including the F-06 hint ladder. */
+export const F06_MENU = [...F05_MENU, 'propose_hint'] as const;
 
 const DEFAULT_GATES: Gate[] = ['AND', 'OR', 'NOT'];
 
@@ -156,6 +160,12 @@ export function compileMove(move: TacticalMove): Action {
           hiddenReps: move.hiddenReps,
           itemId: move.itemId,
         },
+        rationale: move.rationale,
+      };
+    case 'propose_hint':
+      return {
+        type: 'mount',
+        component: { kind: 'HintCard', level: move.level, body: move.body },
         rationale: move.rationale,
       };
     case 'no_action':

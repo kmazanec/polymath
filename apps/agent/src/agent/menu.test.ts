@@ -130,4 +130,45 @@ describe('compileMove', () => {
     expect(a.type).toBe('no_action');
     expect(a.type === 'no_action' && a.reason).toBe('wait_for_learner');
   });
+
+  it('propose_hint L1 → mount of a HintCard at level 1', () => {
+    const a = assertValidAction({
+      move: 'propose_hint',
+      level: 1,
+      body: 'Look at the AND gate first.',
+      rationale: 'first hint for this item',
+    });
+    expect(a.type).toBe('mount');
+    if (a.type !== 'mount') throw new Error('unreachable');
+    expect(a.component.kind).toBe('HintCard');
+    if (a.component.kind !== 'HintCard') throw new Error('unreachable');
+    expect(a.component.level).toBe(1);
+    expect(a.component.body).toBe('Look at the AND gate first.');
+  });
+
+  it('propose_hint L2 → mount of a HintCard at level 2', () => {
+    const a = compileMove({
+      move: 'propose_hint',
+      level: 2,
+      body: 'Try setting A to true and B to false.',
+      rationale: 'second hint',
+    });
+    expect(a.type === 'mount' && a.component.kind).toBe('HintCard');
+    if (a.type !== 'mount' || a.component.kind !== 'HintCard') throw new Error('unreachable');
+    expect(a.component.level).toBe(2);
+    Action.parse(a);
+  });
+
+  it('propose_hint L3 → mount of a HintCard at level 3', () => {
+    const a = compileMove({
+      move: 'propose_hint',
+      level: 3,
+      body: 'The AND gate outputs true only when BOTH inputs are true.',
+      rationale: 'deep hint',
+    });
+    expect(a.type === 'mount' && a.component.kind).toBe('HintCard');
+    if (a.type !== 'mount' || a.component.kind !== 'HintCard') throw new Error('unreachable');
+    expect(a.component.level).toBe(3);
+    Action.parse(a);
+  });
 });

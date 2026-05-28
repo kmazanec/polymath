@@ -76,6 +76,23 @@ I1, concurrent with F-07 after F-05 lands the inner agent loop. **Off the critic
 
 ⚠ **Renderer switch convergence** with F-07. Same alphabetical-case-merge strategy as I1 reps.
 
+## Build plan
+
+- [x] **C1** — Hint templates (`apps/agent/src/hints/templates.ts`) + unit test (20 tests)
+- [x] **C2** — `propose_hint` TacticalMove in `menu.ts` + `compileMove` arm + test (3 new tests)
+- [x] **C3** — Hint arm in `stubClient.ts` (HeuristicMoveProvider) + integration test (8 tests)
+- [x] **C4** — L3 logging in `server.ts` (set `{layer:3, status:'unverified_prose'}` for HintCard level 3) + unit test (6 tests)
+- [x] **C5** — `HintCard` React component (`apps/web/src/components/HintCard.tsx`) + registry wire-up + component test (5 tests)
+- [x] **C6** — Hint button in `App.tsx` (visible in `practicing`, disabled in `transferring`) + `actionAdapter.ts` check that HintCard is not in `PRACTICE_KINDS`
+- [x] **C7** — Run all tests + typecheck pass (agent: 90 pass / 5 skip; web: 98 pass)
+
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### Integration point for F-09 (hintsUsed counter)
+
+F-09 owns `learner_state` as the single writer. Per spec criterion 9, `hintsUsed` must be queryable by F-09's rule-gate. Each `request_hint` event is logged as an `events` row by `handleClientFrame` (like every other event). F-09 should COUNT `events` rows where `kind = 'request_hint'` for the session to derive `hintsUsed`. No `learner_state` writes in this feature.
+
+### Guardrailed files not touched
+- `packages/contract/src/action.ts` — HintCard is a `mount` of the existing `mount` variant; no new wire variant needed.
+- `packages/statechart/src/lesson.ts` — the `hint` phase already exists; no spine changes needed.
+- `learner_state` — not written; F-09 reads hint count from the event log.
