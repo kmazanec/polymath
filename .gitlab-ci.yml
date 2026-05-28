@@ -1,0 +1,118 @@
+# Polymath CI, on the shared `gauntlet` droplet (see workspace INFRA.md §5 and
+# .infra/NEW_APP.md §5).
+#
+# EXECUTOR NOTE: the `gauntlet-droplet` runner is a *shell* executor, so the
+# GitLab `image:` keyword is IGNORED — jobs run directly on the host shell, which
+# has Docker + git but no Node/pnpm toolchain. We therefore run the real test work
+# inside a `node:22` container via `docker run`. The host only needs Docker.
+#
+# OWNERSHIP RULE (the bug that breaks sibling pipelines): the shell executor reuses
+# a PERSISTENT checkout dir ($CI_PROJECT_DIR) across runs, and `get_sources` cleans
+# it as the gitlab-runner host user. If a job writes into that dir from a container
+# running as ROOT (node_modules, dist, .pnpm-store), those root-owned files become
+# un-deletable and the next pipeline's checkout fails with "Permission denied". So:
+# jobs MUST NOT write build artifacts back into $CI_PROJECT_DIR. We bind-mount the
+# checkout READ-ONLY at /src, copy it to a throwaway /work INSIDE the (--rm)
+# container, and do all writes there. Nothing persists to the host workspace.
+
+stages:
+  - verify
+  - deploy
+
+default:
+  tags:
+    - gauntlet-droplet
+
+# Automated code + security review on merge requests, via the shared
+# gitlab-cursor-review template (Cursor CLI). Runs on the dedicated cursor-review
+# runner — the job's own tags/image/before_script override our default block.
+# Requires repo CI/CD variables CURSOR_API_KEY and GITLAB_REVIEW_BOT_TOKEN.
+include:
+  - project: 'keithmazanec/gitlab-cursor-review'
+    ref: main
+    file: '/templates/cursor-review.yml'
+
+# Pipelines on MRs (full verify) and on pushes to main (verify + deploy).
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+
+# Typecheck + unit tests + the package suites + the build. Pure-node work, no DB.
+# pnpm via corepack; everything written under the throwaway /work copy.
+verify:
+  stage: verify
+  needs: []
+  resource_group: heavy-droplet # serialize w/ other heavy jobs (7.8G droplet)
+  script:
+    - >
+      docker run --rm
+      -v "$CI_PROJECT_DIR":/src:ro
+      node:22-bookworm-slim
+      bash -c "set -e &&
+        cp -a /src /work && cd /work &&
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm -r typecheck &&
+        pnpm -r --filter '!@polymath/agent' test &&
+        pnpm build"
+
+# The agent suite incl. the WS+Postgres integration test. The integration test
+# connects to TEST_POSTGRES_URL (a sibling container) instead of spawning its own
+# Docker pg — the shell-executor test container has no Docker socket. Sibling pg
+# is on a throwaway $CI_JOB_ID-scoped network, cleaned in after_script.
+agent_test:
+  stage: verify
+  needs: []
+  resource_group: heavy-droplet
+  script:
+    - NET="polymath-ci-$CI_JOB_ID"
+    - PG="polymath-ci-pg-$CI_JOB_ID"
+    - docker network create "$NET"
+    - >
+      docker run -d --name "$PG" --network "$NET" --network-alias postgres
+      -e POSTGRES_USER=polymath -e POSTGRES_PASSWORD=polymath -e POSTGRES_DB=polymath
+      postgres:16-alpine
+    - for i in $(seq 1 30); do docker exec "$PG" pg_isready -U polymath && break; sleep 1; done
+    - >
+      docker run --rm --network "$NET"
+      -v "$CI_PROJECT_DIR":/src:ro
+      -e TEST_POSTGRES_URL=postgres://polymath:polymath@postgres:5432/polymath
+      node:22-bookworm-slim
+      bash -c "set -e &&
+        cp -a /src /work && cd /work &&
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm --filter @polymath/agent test"
+  after_script:
+    - docker rm -f "polymath-ci-pg-$CI_JOB_ID" 2>/dev/null || true
+    - docker network rm "polymath-ci-$CI_JOB_ID" 2>/dev/null || true
+
+# Cursor code + security review (see the `include:` above). Inherits the
+# template's cursor-review runner tag, cursor-ci image, rules (manual on MRs),
+# and before_script — none of our default applies here. Shares the `verify`
+# stage so it runs in parallel with the test jobs on an MR.
+cursor_code_review:
+  extends: .cursor_review
+  stage: verify
+  needs: []
+
+# Deploy the default branch to the droplet behind Caddy (release-symlink pattern).
+# Native shell (rsync, symlink swap, docker compose) — NOT wrapped in docker run.
+# Runs only on a push to main and only after the verify jobs are green.
+deploy:
+  stage: deploy
+  needs:
+    - verify
+    - agent_test
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+  variables:
+    # Pin the deploy to THIS pipeline's commit so deploy.sh ships exactly what was
+    # verified — not whatever the branch head is at deploy time (defends needs:).
+    DEPLOY_SHA: $CI_COMMIT_SHA
+  script:
+    - bash ./infra/deploy.sh
+  environment:
+    name: production
+    url: https://polymath.biograph.dev

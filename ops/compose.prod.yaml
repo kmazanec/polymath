@@ -1,0 +1,82 @@
+# Polymath production compose for the gauntlet droplet (see workspace INFRA.md +
+# .infra/NEW_APP.md). This is the DEPLOYED stack — distinct from the repo-root
+# docker-compose.yml, which is the LOCAL-dev stack that also runs its own Caddy.
+#
+# Differences from local dev (deliberate, to match the droplet conventions):
+#   * No `caddy` service — the shared `openemr-caddy-1` fronts every app; this
+#     stack joins `openemr_default` so Caddy reaches `web`/`agent` by name.
+#   * No host port mappings — Caddy is the only thing on 80/443.
+#   * Build contexts are the absolute `/srv/polymath/current` symlink (the
+#     release deploy.sh swaps), so images always match the deployed SHA.
+#   * Secrets come from the operator-placed /etc/polymath/.env (env_file).
+#   * Postgres data is a host bind-mount at /opt/polymath/postgres — OUTSIDE the
+#     release tree, so it survives every release swap.
+#
+# Project name pinned so named resources stay stable across path changes.
+name: polymath
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: polymath-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-polymath}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in /etc/polymath/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-polymath}
+    volumes:
+      # Persistent data, outside the release tree (survives release swaps).
+      - /opt/polymath/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-polymath}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Internal-only: reachable on the private network, never on a host port.
+    networks:
+      - internal
+
+  agent:
+    build:
+      context: /srv/polymath/current
+      dockerfile: apps/agent/Dockerfile
+    image: polymath-agent:${GIT_SHA:-latest}
+    container_name: polymath-agent
+    restart: unless-stopped
+    env_file:
+      - /etc/polymath/.env
+    environment:
+      PORT: '8080'
+      # Compose-network DNS; password comes from the env_file above.
+      POSTGRES_URL: postgres://${POSTGRES_USER:-polymath}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-polymath}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ['CMD', 'node', '-e', "fetch('http://localhost:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks:
+      - internal
+      - openemr_default
+
+  web:
+    build:
+      context: /srv/polymath/current
+      dockerfile: apps/web/Dockerfile
+    image: polymath-web:${GIT_SHA:-latest}
+    container_name: polymath-web
+    restart: unless-stopped
+    networks:
+      - openemr_default
+
+networks:
+  # Private network for agent <-> postgres; no host exposure.
+  internal:
+    driver: bridge
+  # Shared network the host Caddy lives on. `external: true` — the openemr stack
+  # creates it; compose fails loudly if it's missing.
+  openemr_default:
+    external: true

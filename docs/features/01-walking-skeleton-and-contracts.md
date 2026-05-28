@@ -3,6 +3,33 @@
 **ID:** F-01 · **Iteration:** I0 — Skeleton + contracts · **Status:** In review
 **MR:** https://labs.gauntletai.com/keithmazanec/polymath/-/merge_requests/1
 
+### Deploy wiring (follow-up to the initial F-01 MR)
+
+The live deploy that F-01 deferred is now wired to the `gauntlet` droplet's
+conventions (workspace `INFRA.md` / `.infra/NEW_APP.md`), on a follow-up branch
+`feat/f-01-droplet-deploy`:
+- **GitLab CI** (`.gitlab-ci.yml`) — the GHA workflow was removed (the runner +
+  MR are GitLab). `verify` stage runs typecheck + package tests + build in a
+  `node:22` `docker run` (RO-mount → copy to `/work`, never writing the host
+  checkout), the agent WS+Postgres integration test against a sibling pg
+  container (`TEST_POSTGRES_URL`), and the Cursor **code+security review** via the
+  shared `gitlab-cursor-review` template. `deploy` stage runs the release-symlink
+  `infra/deploy.sh` on pushes to `main`, gated on the verify jobs.
+- **Droplet wiring** — `ops/compose.prod.yaml` (no local Caddy; joins
+  `openemr_default`; pg data bind-mounted at `/opt/polymath/postgres` outside the
+  release tree; build contexts from `/srv/polymath/current`), `ops/polymath.caddyfile`
+  (routes `/api/*` + WS `/agent` → `polymath-agent:8080`, else → `polymath-web:80`),
+  and `infra/deploy.sh` (rsync release → atomic symlink swap → build+recreate →
+  public `/api/health` check with in-network fallback → rollback → prune to 2).
+- **One-time droplet setup done:** `/srv/polymath/{releases}`, `/etc/polymath`,
+  `/opt/polymath/postgres` created + chowned `gitlab-runner`; `/etc/polymath/.env`
+  placed `640 root:gitlab-runner` (passes `audit-secrets.sh`). DNS:
+  `polymath.biograph.dev` already resolves to the droplet (wildcard `*.biograph.dev`).
+- **Still pending the first real deploy:** the CI variables `CURSOR_API_KEY` +
+  `GITLAB_REVIEW_BOT_TOKEN` (for the review job) must be set on the project, and
+  real `OPENAI_API_KEY` etc. go in `/etc/polymath/.env` when F-05 needs them
+  (F-01 reads only `POSTGRES_*`). First push to `main` triggers the deploy.
+
 ## What this delivers (before → after)
 
 **Before:** There is no Polymath app. `polymath.biograph.dev` does not exist. Nothing is deployed. There is no shared schema between any future browser and any future agent service. No team member can start work because there are no contracts to build against.

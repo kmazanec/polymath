@@ -1,0 +1,32 @@
+# Caddy route for Polymath, deployed onto the OpenEMR project's caddy container
+# via /etc/caddy/conf.d/ on the host (included by `import /etc/caddy/conf.d/*.caddyfile`
+# at the bottom of OpenEMR's Caddyfile). Mirrors the sibling cats / context-shield
+# / rooftrace caddyfile conventions exactly.
+#
+# Polymath is a two-container app: the SPA (`polymath-web:80`) and the agent
+# (`polymath-agent:8080`, REST + WebSocket). Both resolve over the shared
+# `openemr_default` docker network that Polymath's compose joins. Caddy upgrades
+# the WebSocket on /agent automatically (no extra directive needed).
+#
+# Caddy auto-fetches the Let's Encrypt cert for polymath.biograph.dev on first
+# request; the domain's A record must point at this droplet.
+#
+# `import security_headers` reuses the snippet defined in OpenEMR's Caddyfile so
+# HSTS / X-Frame-Options etc. stay consistent across sibling apps.
+
+polymath.biograph.dev {
+	import security_headers
+
+	# Agent: REST API and the WebSocket endpoint (auto-upgraded on /agent).
+	handle /api/* {
+		reverse_proxy polymath-agent:8080
+	}
+	handle /agent {
+		reverse_proxy polymath-agent:8080
+	}
+
+	# Everything else: the static SPA.
+	handle {
+		reverse_proxy polymath-web:80
+	}
+}

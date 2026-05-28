@@ -27,10 +27,18 @@ function dockerAvailable(): boolean {
   return r.status === 0;
 }
 
+// Prefer an externally-provided Postgres (CI provides a sibling container via
+// TEST_POSTGRES_URL). Otherwise spin up a throwaway Docker container locally.
+// The suite is skipped entirely if neither is available (no Docker, no URL).
+const EXTERNAL_PG_URL = process.env.TEST_POSTGRES_URL;
 const HAVE_DOCKER = dockerAvailable();
+const CAN_RUN = Boolean(EXTERNAL_PG_URL) || HAVE_DOCKER;
+const MANAGE_OWN_PG = !EXTERNAL_PG_URL && HAVE_DOCKER;
+
 const CONTAINER = 'polymath-test-pg';
 const PG_PORT = 55432;
-const POSTGRES_URL = `postgres://polymath:polymath@localhost:${PG_PORT}/polymath`;
+const POSTGRES_URL =
+  EXTERNAL_PG_URL ?? `postgres://polymath:polymath@localhost:${PG_PORT}/polymath`;
 
 let db: Db;
 let pool: { end: () => Promise<void> };
@@ -53,17 +61,19 @@ async function waitForPg(url: string, attempts = 30): Promise<void> {
   throw new Error('Postgres did not become ready');
 }
 
-describe.skipIf(!HAVE_DOCKER)('agent server end-to-end', () => {
+describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
   beforeAll(async () => {
-    spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
-    execFileSync('docker', [
-      'run', '-d', '--name', CONTAINER,
-      '-e', 'POSTGRES_USER=polymath',
-      '-e', 'POSTGRES_PASSWORD=polymath',
-      '-e', 'POSTGRES_DB=polymath',
-      '-p', `${PG_PORT}:5432`,
-      'postgres:16-alpine',
-    ]);
+    if (MANAGE_OWN_PG) {
+      spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
+      execFileSync('docker', [
+        'run', '-d', '--name', CONTAINER,
+        '-e', 'POSTGRES_USER=polymath',
+        '-e', 'POSTGRES_PASSWORD=polymath',
+        '-e', 'POSTGRES_DB=polymath',
+        '-p', `${PG_PORT}:5432`,
+        'postgres:16-alpine',
+      ]);
+    }
     await waitForPg(POSTGRES_URL);
     await runMigrations(POSTGRES_URL);
 
@@ -78,7 +88,9 @@ describe.skipIf(!HAVE_DOCKER)('agent server end-to-end', () => {
   afterAll(async () => {
     await server.close();
     await pool.end().catch(() => {});
-    spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
+    if (MANAGE_OWN_PG) {
+      spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' });
+    }
   });
 
   it('GET /api/health returns {status:"ok"}', async () => {
