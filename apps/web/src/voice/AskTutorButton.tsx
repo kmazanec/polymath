@@ -52,6 +52,12 @@ export function AskTutorButton({ sessionId, client: injectedClient }: AskTutorBu
       maybeSubscribable.onStateChange(() => setVoiceState(client.state));
     }
     setVoiceState(client.state);
+    // Tear the session down on unmount: stop the mic and the token refresher so
+    // navigating away from the lesson can't leave a hot mic or a minting loop
+    // running. stop() is idle-safe (a no-op if voice was never started).
+    return () => {
+      void client.stop();
+    };
   }, [client]);
 
   const handleClick = useCallback(() => {

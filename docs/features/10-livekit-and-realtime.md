@@ -265,4 +265,23 @@ checklist. The endpoint already returns 503 "voice not configured" until those k
   16KB body cap + UUID validation, Zod-validated parameterized `voice_turn` insert, mic only on gesture + tracks stopped on
   teardown, CSWSH/CORS posture unchanged.
 
-**Wave 2 (both Sonnet):** _pending below._
+**Wave 2 (both Sonnet); triage on Opus:**
+- *Robustness:* no HIGH. **Fixed:** **M-1** bridge `handleTranscript`/`handleAudio` now guard on `stopped` (a real
+  provider's WS drains async — no post-close DB insert); **M-2** a late final tutor transcript after a barge-in no longer
+  logs a phantom empty turn (`turnHasContent()` guard); **M-3** `VoiceClient.stop()` during an in-flight `start()` now
+  aborts at checkpoints (`_abortStart()`) so it ends `idle`, not `connected`; **M-4** a throwing `applyToken` in the
+  refresher is caught + retried like a mint failure (no unhandled rejection, refresh survives); **L-1** `AskTutorButton`
+  stops the client on unmount (no hot mic / minting loop); **L-2** `TokenRefresher.stop()` is now permanent (a late
+  `start()` can't re-arm). Clean: VoiceClient failure paths, refresher stop-while-mint-in-flight, ttft guards.
+- *Efficiency:* **HIGH (also flagged by robustness L-3) FIXED** — `logVoiceTurn` was doing two DB writes/turn
+  (insert + reconcile-update) and the update could silently fail leaving `transcriptLogId:''`; now it generates the row
+  uuid app-side (`randomUUID`) and embeds it pre-insert → **one write**, no reconcile, no orphan. **Fixed:** removed the
+  dead `void buildVoiceSystemPrompt/voiceCacheKey` calls in the bridge. **Recorded (no change):** rate-limiter map is
+  bounded across windows but not within one (acceptable at single-process scale — comment tightened); `getTracer`-per-turn
+  and `process.env`-per-request are deliberately **not** hoisted — both are cold-path (per-turn / rate-limited) and
+  hoisting would break test isolation (the OTel in-memory provider registers after import; the integration test toggles
+  voice env per-case and relies on the route reading it live).
+- *Regression tests added* for every fix: tokenRefresh (applyToken-throw retry, permanent stop), client (stop-during-start
+  abort), AskTutorButton (unmount stops client), voiceTurn (single-insert id triple-equality), bridge (no phantom turn
+  after barge-in). Full suite **436 passed | 1 skipped** (the 1 skip pre-existing), typecheck clean, agent `docker build`
+  boots + serves the new endpoint.

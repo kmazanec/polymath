@@ -182,6 +182,71 @@ describe('TokenRefresher — already within skew window at start', () => {
   });
 });
 
+describe('TokenRefresher — applyToken rejection', () => {
+  it('treats applyToken rejection like a mint failure: calls onError and schedules a retry', async () => {
+    const sched = makeFakeScheduler();
+    const onError = vi.fn();
+    const applyErr = new Error('room reconnect rejected');
+    // mint always succeeds; applyToken rejects once, then succeeds.
+    const applyToken = vi
+      .fn()
+      .mockRejectedValueOnce(applyErr)
+      .mockResolvedValue(undefined);
+    const mint = vi
+      .fn()
+      .mockImplementation(async () => ({ token: 'fresh', expiresAt: sched.now() + TTL }));
+
+    const r = new TokenRefresher(makeOpts(sched, { mint, applyToken, onError }));
+    r.start(TTL); // refresh at t=240_000
+
+    // Cross the boundary -> mint succeeds, applyToken rejects.
+    // refresh() awaits mint() then awaits applyToken(); we need two microtask
+    // flushes to drain both awaits before asserting on onError.
+    sched.advance(TTL - SKEW); // t = 240_000
+    await sched.flush(); // resolves mint()
+    await sched.flush(); // resolves applyToken() rejection -> catch -> onError + retry
+    expect(mint).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(applyErr);
+
+    // The rejection must not escape (test completes cleanly — if it did escape,
+    // vitest would report an unhandled rejection and the suite would fail).
+
+    // A retry must be scheduled. Backoff = min(skew, 10_000) = 10_000.
+    // Just before deadline: no second mint.
+    sched.advance(10_000 - 1);
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(1);
+
+    // At the backoff deadline: mint fires again (refresher did NOT die).
+    sched.advance(1);
+    await sched.flush();
+    expect(mint).toHaveBeenCalledTimes(2);
+    // applyToken succeeds on the retry, so no second error.
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TokenRefresher — stop() is permanent', () => {
+  it('start() after stop() does NOT re-arm — the refresher stays stopped', async () => {
+    const sched = makeFakeScheduler();
+    const mint = vi.fn().mockResolvedValue({ token: 'fresh', expiresAt: TTL + TTL });
+    const r = new TokenRefresher(makeOpts(sched, { mint }));
+
+    r.start(TTL); // arms a timer for t=240_000
+    r.stop();     // permanent teardown
+
+    // A subsequent start() must be a no-op (stopped is permanent).
+    r.start(TTL);
+
+    // Advance well past any refresh point; mint must never be called.
+    sched.advance(TTL * 2);
+    await sched.flush();
+    expect(mint).not.toHaveBeenCalled();
+    expect(sched.pendingCount()).toBe(0);
+  });
+});
+
 describe('TokenRefresher — stop()', () => {
   it('cancels the pending refresh; no mint after stop', async () => {
     const sched = makeFakeScheduler();

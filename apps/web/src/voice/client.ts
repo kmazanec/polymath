@@ -128,6 +128,10 @@ export class VoiceClient {
   private readonly fetchFn: typeof fetch;
   private readonly connector: RoomConnector;
   private refresher: TokenRefresher | null = null;
+  // Set when stop() lands while an async start() is still in flight, so start()
+  // bails at its next checkpoint instead of finishing into a 'connected' session
+  // the caller already tore down.
+  private _stopping = false;
 
   constructor(opts: VoiceClientOptions) {
     this.sessionId = opts.sessionId;
@@ -150,6 +154,7 @@ export class VoiceClient {
    */
   async start(): Promise<void> {
     if (this._state !== 'idle') return;
+    this._stopping = false;
 
     // Phase 1: request microphone permission.
     this._state = 'requesting-permission';
@@ -161,6 +166,8 @@ export class VoiceClient {
       return;
     }
     this._stream = stream;
+    // stop() may have been called while the permission prompt was open.
+    if (this._abortStart()) return;
 
     // Phase 2: mint a token from the server.
     this._state = 'connecting';
@@ -191,6 +198,7 @@ export class VoiceClient {
       this._stopTracks();
       return;
     }
+    if (this._abortStart()) return;
 
     // Phase 3: join the LiveKit room.
     try {
@@ -205,6 +213,12 @@ export class VoiceClient {
     } catch {
       this._state = 'error';
       this._stopTracks();
+      return;
+    }
+    // stop() may have landed during the room join — don't start a refresher or
+    // mark connected on a session the caller already tore down.
+    if (this._abortStart()) {
+      void this.connector.disconnect();
       return;
     }
 
@@ -239,11 +253,22 @@ export class VoiceClient {
    */
   async stop(): Promise<void> {
     if (this._state === 'idle') return;
+    // Signal any in-flight start() to abort at its next checkpoint.
+    this._stopping = true;
     this.refresher?.stop();
     this.refresher = null;
     this._stopTracks();
     await this.connector.disconnect();
     this._state = 'idle';
+  }
+
+  /** True if stop() landed mid-start(); if so, clean up the mic + state so an
+   *  aborted start leaves the client idle rather than half-connected. */
+  private _abortStart(): boolean {
+    if (!this._stopping) return false;
+    this._stopTracks();
+    this._state = 'idle';
+    return true;
   }
 
   private _stopTracks(): void {

@@ -118,6 +118,61 @@ describe('VoiceClient.start() — getUserMedia rejected (permission denied)', ()
   });
 });
 
+describe('VoiceClient.stop() during in-flight start()', () => {
+  it('aborts cleanly: state is idle, mic tracks are stopped, no token minting', async () => {
+    // Deferred getUserMedia — lets us pause start() at the mic-permission await.
+    let resolveMic!: (s: MediaStream) => void;
+    const track = makeTrack();
+    const stream = makeStream([track]);
+    const getUserMedia = vi.fn<() => Promise<MediaStream>>(
+      () => new Promise<MediaStream>((r) => { resolveMic = r; }),
+    );
+
+    const fetchFn = makeSuccessFetch();
+    const connector = makeConnector();
+    // Ensure connector has updateToken so a TokenRefresher would be started if we
+    // reached 'connected'; the test asserts we never get there.
+    const connectorWithToken: typeof connector & { updateToken: ReturnType<typeof vi.fn> } = {
+      ...connector,
+      updateToken: vi.fn(),
+    };
+
+    const client = new VoiceClient({
+      sessionId: 'sess-stop',
+      getUserMedia,
+      fetchFn,
+      connector: connectorWithToken,
+    });
+
+    // Kick off start() but DON'T await — it's suspended at getUserMedia.
+    const startPromise = client.start();
+
+    // While it's suspended, call stop().
+    await client.stop();
+
+    // Now let the getUserMedia resolve (simulates permission granted late).
+    resolveMic(stream);
+
+    // Await start() to let it drain through all its checkpoints.
+    await startPromise;
+
+    // The client must be idle (not connected), because stop() was called before
+    // getUserMedia resolved and the _abortStart() checkpoint fires.
+    expect(client.state).toBe('idle');
+
+    // Mic tracks must be released.
+    expect(track.stop).toHaveBeenCalled();
+
+    // The server and connector should NOT have been reached after stop().
+    // (fetchFn was never called because the _abortStart check fires right after
+    // getUserMedia; connector.connect is certainly not called.)
+    expect(connector.connect).not.toHaveBeenCalled();
+
+    // No TokenRefresher minting should happen.
+    expect(connectorWithToken.updateToken).not.toHaveBeenCalled();
+  });
+});
+
 describe('VoiceClient.stop()', () => {
   it('stops all mic tracks and calls connector.disconnect', async () => {
     const track = makeTrack();

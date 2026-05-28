@@ -8,10 +8,12 @@
  * client mints once on join and once per ~4-minute refresh, so a window of a few
  * mints per minute is far above real use yet well below abuse.
  *
- * Fixed-window (not token-bucket) on purpose: it's one Map lookup + compare, has
- * no background timer, and self-prunes lazily as keys are touched — cheap enough
- * to sit on a hot request path. State is per-process (acceptable: the limit is a
- * safety backstop, not a billing-grade quota).
+ * Fixed-window (not token-bucket) on purpose: it's one Map lookup + compare and
+ * has no background timer. Stale windows are pruned lazily when *any* key opens a
+ * fresh window, so map size is bounded across windows but not within one — a flood
+ * of distinct keys can hold ~one entry each until their window elapses. That is
+ * acceptable for this safety backstop at single-process tutor scale; it is not a
+ * billing-grade quota.
  */
 export interface RateLimiter {
   /** Returns true if this key may proceed; false if it has exceeded the window. */

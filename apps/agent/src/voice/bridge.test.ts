@@ -50,6 +50,84 @@ function bridgeOpts(
 describe('VoiceBridge — barge-in (no DB needed)', () => {
   beforeEach(() => resetCacheRegistry());
 
+  it('a late final tutor transcript after barge-in does NOT create a phantom second turn', async () => {
+    // After a barge-in, completeTurn() resets the accumulator to a fresh empty turn.
+    // A late `{role:'tutor', final:true}` transcript that races the interrupt must
+    // NOT trigger a second completeTurn() (the new accumulator has no content).
+    // We need to deliver a tutor transcript after interrupt() has cleared the mock's
+    // queue; the mock's queue is empty at that point and tick/flush won't emit it.
+    // So we capture the bridge's onTranscript callback via a passthrough wrapper and
+    // fire it directly — the same signal the bridge would receive from a real provider.
+    const insertedPayloads: unknown[] = [];
+    const stubDb = {
+      insert: () => ({
+        values: (v: { payload: unknown }) => {
+          insertedPayloads.push(v.payload);
+          // Return a resolved promise (not returning is fine; we don't need the id).
+          return { returning: async () => [{ id: `fake-row-${insertedPayloads.length}` }] };
+        },
+      }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    } as unknown as Db;
+
+    // A passthrough wrapper that lets us inject transcripts directly after the bridge
+    // has subscribed. This is the cleanest seam available: the mock's interrupt()
+    // clears the queue, so we cannot deliver the late tutor segment via tick/flush.
+    let capturedTranscriptCb: ((t: import('./realtimeClient.js').VoiceTranscript) => void) | undefined;
+    const session = new MockRealtimeSession(CONFIG, {
+      reply: { tutorText: 'Consider the rows.', audioFrames: 3 },
+    });
+    const origOnTranscript = session.onTranscript.bind(session);
+    vi.spyOn(session, 'onTranscript').mockImplementation((cb) => {
+      capturedTranscriptCb = cb;
+      origOnTranscript(cb);
+    });
+
+    const bridge = new VoiceBridge(
+      bridgeOpts(session, stubDb, 'sess-phantom'),
+    );
+    await bridge.start();
+
+    // Drive to a barge-in: learner utterance -> tick() so tutor starts -> barge-in.
+    session.pushLearnerUtterance('Explain OR.');
+    session.tick(); // emits learner final transcript; tutor queue starts
+    expect(session.isResponding()).toBe(true);
+
+    bridge.onLearnerAudioActivity(); // triggers interrupt + completeTurn for the barged-in turn
+    expect(session.isResponding()).toBe(false);
+
+    // Let the async completeTurn persist (it's a stub so it resolves instantly).
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const insertsAfterBargeIn = insertedPayloads.length;
+    expect(insertsAfterBargeIn).toBe(1); // exactly the barged-in turn
+
+    // Now deliver the late final tutor transcript that races the interrupt — as if the
+    // provider's WebSocket drained this segment slightly after interrupt() fired.
+    expect(capturedTranscriptCb).toBeDefined();
+    capturedTranscriptCb!({
+      role: 'tutor',
+      text: 'Consider the rows.',
+      at: 99,
+      final: true,
+    });
+
+    // Allow any queued microtasks to settle.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The late tutor transcript must NOT have triggered a second completeTurn():
+    // the fresh accumulator had no learner content (turnHasContent() is false),
+    // so no phantom second row should appear.
+    expect(insertedPayloads.length).toBe(1);
+
+    // The one stored turn must be the barged-in one.
+    const storedPayload = insertedPayloads[0] as { bargeIn: boolean; transcript: { learner?: string } };
+    expect(storedPayload.bargeIn).toBe(true);
+    expect(storedPayload.transcript.learner).toBe('Explain OR.');
+  });
+
   it('interrupts a responding tutor and stops further frames; marks bargeIn', async () => {
     // A db stub whose insert is a no-op (returns a fake row id) so we can exercise
     // the interrupt path without a database.

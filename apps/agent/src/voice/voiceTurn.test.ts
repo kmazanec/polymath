@@ -68,4 +68,42 @@ describe.skipIf(!canRunPg)('logVoiceTurn — voice_turn persistence', () => {
     expect(stored.cacheHit).toBe(false);
     expect(stored.bargeIn).toBe(false);
   });
+
+  it('single-insert invariant: events.id === returned transcriptLogId === stored payload.transcriptLogId, and exactly ONE row written', async () => {
+    // This locks in the app-side randomUUID + single-insert pattern: no
+    // insert-then-update reconciliation, no orphaned id window, no phantom second row.
+    const payload: VoiceTurnPayload = {
+      turnId: 'turn-single-write',
+      transcript: { learner: 'What is NOT?', tutor: 'Flip the bit.' },
+      modelVersion: 'gpt-realtime',
+      cacheHit: true,
+      ttftMs: 50,
+      bargeIn: false,
+      transcriptLogId: '', // placeholder — overwritten by logVoiceTurn
+    };
+
+    const { transcriptLogId } = await logVoiceTurn(db, sessionId, payload);
+
+    // The returned id must be a valid uuid.
+    expect(transcriptLogId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+    // Fetch the row by primary key to confirm the id triple-matches.
+    const rows = await db.select().from(events).where(eq(events.id, transcriptLogId));
+
+    // Exactly ONE row — the single insert; no second write was made.
+    expect(rows).toHaveLength(1);
+
+    const row = rows[0]!;
+    // events.id (PK) === the value returned to the caller.
+    expect(row.id).toBe(transcriptLogId);
+
+    // The stored payload's transcriptLogId also equals the row's PK.
+    const stored = VoiceTurnPayload.parse(row.payload);
+    expect(stored.transcriptLogId).toBe(row.id);
+
+    // All three are the same uuid — the triple-equality that makes the id
+    // self-describing on replay without a follow-up update.
+    expect(stored.transcriptLogId).toBe(transcriptLogId);
+    expect(row.id).toBe(stored.transcriptLogId);
+  });
 });

@@ -46,6 +46,8 @@ export class TokenRefresher {
   // `true` between start() and stop(); guards in-flight mint results from being
   // applied (or re-scheduling) after the session was torn down.
   private running = false;
+  // Set once by stop(); makes teardown permanent so a late start() can't re-arm.
+  private stopped = false;
 
   constructor(opts: TokenRefreshOptions) {
     this.sessionId = opts.sessionId;
@@ -58,14 +60,18 @@ export class TokenRefresher {
     this.onError = opts.onError;
   }
 
-  /** Begin scheduling refreshes given the CURRENT token's expiresAt (ms-epoch). */
+  /** Begin scheduling refreshes given the CURRENT token's expiresAt (ms-epoch).
+   *  A refresher that has been stopped never re-arms — stop() is permanent, so a
+   *  late start() (e.g. racing a teardown) can't silently resume token minting. */
   start(initialExpiresAt: number): void {
+    if (this.stopped) return;
     this.running = true;
     this.scheduleFor(initialExpiresAt);
   }
 
-  /** Stop all scheduled refreshes. Idempotent; no mint/apply after this. */
+  /** Stop all scheduled refreshes. Idempotent and permanent; no mint/apply after this. */
   stop(): void {
+    this.stopped = true;
     this.running = false;
     if (this.timer !== null) {
       this.clearTimer(this.timer);
@@ -116,7 +122,16 @@ export class TokenRefresher {
     // The session may have been stopped while mint() was in flight; if so, do
     // not apply the stale token or re-arm.
     if (!this.running) return;
-    await this.applyToken(next.token);
+    try {
+      await this.applyToken(next.token);
+    } catch (err) {
+      // Applying the fresh token failed (e.g. the room reconnect rejected). Treat
+      // it like a mint failure: surface it and retry while the old token is still
+      // valid, rather than letting the rejection escape and silently kill refresh.
+      this.onError?.(err);
+      this.scheduleRetry();
+      return;
+    }
     if (!this.running) return;
     // Rolling refresh: arm the next one off the NEW expiry.
     this.scheduleFor(next.expiresAt);

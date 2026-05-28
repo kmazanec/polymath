@@ -24,7 +24,6 @@ import {
   type RealtimeSession,
   type VoiceTranscript,
 } from './realtimeClient.js';
-import { buildVoiceSystemPrompt, voiceCacheKey } from './persona.js';
 import { logVoiceTurn, type VoiceTurnPayload } from './voiceTurn.js';
 import { recordVoiceTurnSpan } from './otel.js';
 
@@ -89,19 +88,6 @@ export class VoiceBridge {
     this.started = true;
 
     const { session } = this.opts;
-    // The persona prefix is stable; only the lesson-context tail varies — that is
-    // what keeps the provider prompt cache warm across turns (see persona.ts).
-    const persona = {
-      lessonId: this.opts.lessonId,
-      lessonTitle: this.opts.lessonTitle,
-      phase: this.opts.phase,
-    };
-    // The session was constructed with its config (the seam owns RealtimeSessionConfig);
-    // we build the same persona inputs here so the prompt/cacheKey the room uses are
-    // derived from the same lesson state the bridge reasons about.
-    void buildVoiceSystemPrompt(persona);
-    void voiceCacheKey(persona);
-
     session.onTranscript((t) => this.handleTranscript(t));
     session.onAudio((frame) => this.handleAudio(frame));
 
@@ -133,6 +119,10 @@ export class VoiceBridge {
   }
 
   private handleTranscript(t: VoiceTranscript): void {
+    // A real provider's WebSocket drains asynchronously, so a transcript can land
+    // after close(); ignore it rather than insert against a draining pool.
+    if (this.stopped) return;
+
     if (t.role === 'learner') {
       this.turn.learnerText = t.text;
       if (t.final) this.turn.learnerFinalAt = t.at;
@@ -145,12 +135,17 @@ export class VoiceBridge {
       this.turn.firstTutorOutputAt = t.at;
     }
     this.turn.tutorText = t.text;
-    if (t.final) {
+    // Only a turn that actually started (a learner utterance began it) completes
+    // on a final tutor transcript. After a barge-in, completeTurn() already reset
+    // to a fresh empty turn; a late final tutor segment racing the interrupt must
+    // not log a phantom empty turn.
+    if (t.final && this.turnHasContent()) {
       void this.completeTurn();
     }
   }
 
   private handleAudio(frame: Uint8Array): void {
+    if (this.stopped) return;
     // First tutor *audio* can arrive before/without a tutor transcript; either way
     // it counts as first output for ttft. Use the injected clock since audio frames
     // carry no timestamp.
@@ -158,6 +153,12 @@ export class VoiceBridge {
       this.turn.firstTutorOutputAt = this.now();
     }
     this.opts.publishAudio(frame);
+  }
+
+  /** A turn is real once a learner utterance has begun it (text or a final mark).
+   *  A fresh, untouched accumulator is not a turn worth persisting. */
+  private turnHasContent(): boolean {
+    return this.turn.learnerText !== undefined || this.turn.learnerFinalAt !== undefined;
   }
 
   /**
@@ -183,7 +184,7 @@ export class VoiceBridge {
       cacheHit: this.opts.session.cacheHit,
       ttftMs,
       bargeIn: finished.bargeIn,
-      // Placeholder; logVoiceTurn reconciles this to the persisted row's id.
+      // Placeholder; logVoiceTurn assigns the real row id before the insert.
       transcriptLogId: '',
     };
 

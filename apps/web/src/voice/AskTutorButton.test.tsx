@@ -72,6 +72,18 @@ describe('AskTutorButton — click behaviour', () => {
   });
 });
 
+describe('AskTutorButton — unmount stops the client', () => {
+  it('calls client.stop() when the component is unmounted', () => {
+    const client = makeClientSpy('idle');
+    const { unmount } = render(
+      <AskTutorButton sessionId="sess-1" client={client as unknown as VoiceClient} />,
+    );
+    expect(client.stop).not.toHaveBeenCalled();
+    unmount();
+    expect(client.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('AskTutorButton — state reflection', () => {
   it('shows idle/ready label when state is idle', () => {
     const client = makeClientSpy('idle');
