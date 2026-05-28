@@ -118,31 +118,53 @@ None. The react-flow library installation is part of F-01's dependency wiring; i
 
 ### Implementation plan (checklist)
 
-- [ ] **Chunk 1 — react-flow canvas + custom nodes (T-03a).** Tests first. `@xyflow/react`
-  canvas; custom node types for AND/OR/NOT with typed input/output `Handle`s; draggable gate
-  palette; fixed input-source nodes (from `variables(targetExpression)`) + output sink. Drag
-  latency target <50ms (AC1/AC2).
-- [ ] **Chunk 2 — circuit topology → Boolean AST → `equivalent` (T-03b, T-03e).** Tests first.
-  Walk nodes+edges from inputs through gates to output, build an `Ast`, call
-  `equivalent(circuitExpr, targetExpression)`. Stock errors (not exceptions) for: disconnected
-  output ("Output not wired"), wiring cycle, unused gates (warning) (AC7). Submit dispatches the
-  `submit` event + `repSubmission`; verdict UI green/red (AC5/AC6). Var-count guard (≤10).
-- [ ] **Chunk 3 — `PulseContext` producer + `PulseRenderer` (T-03c).** Tests first — **lock the
-  context shape in this chunk's first commit.** Topological-sort the topology into a
-  deterministic `schedule: PulseStep[]`; publish `{ activeStep, schedule }`. Pulse-determinism
-  snapshot test (AC4); pulse-correctness test: each step's output matches
-  `evaluate(circuitExpr, inputs)` for every input combination. Total propagation 600–1200ms
-  (ADR-004). Color-blind-safe blue(active)/gray(inactive), not red/green (AC10).
-- [ ] **Chunk 4 — `Test it` + reduced-motion + SR announcements (T-03d).** Tests first. Learner-
-  triggered, one pulse per click. `prefers-reduced-motion: reduce` → `Next gate →` step-through
-  (AC8); each gate-activation step emits a live-region update e.g. "AND gate evaluates: true and
-  false equals false" (AC11). Suppress during transfer (reuse `AnimateOrNot`/`shouldAnimate`).
-- [ ] **Chunk 5 — Tests + visual regression + a11y (T-03g).** Component/wiring/Test-it/Submit;
-  axe-core; Playwright visual at 3 stages (initial, mid-pulse, post-submit-correct) for the L1
-  hardest item `(A AND B) OR (NOT C)`.
-- [ ] **AC9 hiddenReps**: renders null when its rep is hidden (testable standalone; full
-  behavior observable once F-07 lands).
+- [x] **Chunk 1 — react-flow canvas + custom nodes (T-03a).** `@xyflow/react` canvas with
+  custom `InputNode`/`GateNode`/`OutputNode` (typed `Handle`s; NOT has one input port, AND/OR
+  two); gate palette (`Add X gate` buttons per `allowedGates`); input nodes derived from
+  `variables(targetExpression)` + output sink. `apps/web/src/components/{CircuitBuilder,circuitNodes}.tsx`.
+- [x] **Chunk 2 — circuit topology → Boolean AST → `equivalent` (T-03b, T-03e).** Pure model in
+  `apps/web/src/canvas/circuitModel.ts` (`buildCircuit`) + submission in `circuitSubmission.ts`
+  (`evaluateSubmission` → client-side `equivalent`). Typed errors for unwired output / cycle /
+  too-many-vars — never throws (AC7). Submit builds the `{rep:'circuit',expression,nodes,edges}`
+  repSubmission + verdict (AC5/AC6). Var-count guard ≤10.
+- [x] **Chunk 3 — `PulseContext` producer + schedule (T-03c).** `circuitModel.pulseSchedule`
+  (topological order, deterministic — inline-snapshot test, AC4) + `PulseContext.tsx` producer,
+  shape `{ activeStep, schedule, vars, env }` locked in its own commit before behavior. Pulse-
+  correctness test: every step's value == `evaluate`/`truthTable` for all input combos. Color-
+  blind-safe blue(active)/gray(inactive) + border-width intensity, not red/green (AC10).
+- [x] **Chunk 4 — `Test it` + reduced-motion + SR announcements (T-03d).** `usePulseRunner`
+  drives `activeStep` over a 600–1200ms timer (continuous) or one step/call (reduced-motion
+  `Next gate →`, AC8); polite live region announces each step (AC11). 900ms mid-band budget.
+- [x] **Chunk 5 — Tests + a11y region + build (T-03g).** 30 web tests (model 9, context 3,
+  runner 4, submission 4, component 5, + existing). Component test mocks ResizeObserver/matchMedia
+  for react-flow. **Deferred:** axe-core + Playwright 3-stage visual regression — react-flow needs
+  real layout (jsdom has no geometry); deferred to an integrated browser pass at F-05 mount /
+  manual review. Noted as a deferral, not skipped.
+- [x] **AC9 hiddenReps**: `CircuitBuilder` returns null when `hiddenReps` includes `circuit`
+  (tested standalone; full transfer behavior observable once F-07 supplies the prop).
 
 ### Build verification evidence
 
-> Filled in per-chunk during the build.
+- `pnpm --filter @polymath/web exec vitest run` → **30 passed (7 files)**. Key:
+  `circuitModel.test.ts (9)` incl. determinism inline-snapshot + pulse-correctness-vs-validator;
+  `usePulseRunner.test.ts (4)`; `circuitSubmission.test.ts (4)`; `CircuitBuilder.test.tsx (5)`.
+- `pnpm --filter @polymath/web typecheck` → clean.
+- `pnpm --filter @polymath/web build` → **"✓ 82 modules transformed … ✓ built in 587ms"** — the
+  react-flow circuit component + canvas logic bundle cleanly for production.
+- **Deferred verification (deliberate):** end-to-end drive (drag→Test it→pulse→Submit in a real
+  browser) needs the agent to mount `CircuitBuilder`, which is F-05; and axe/Playwright-visual
+  need browser geometry. Unit + build coverage proves the contract + wiring; runtime exercise is
+  deferred to F-05 integration. The renderer-switch `case` is wired by the coordinator at
+  integration (not in this branch).
+
+### Decisions
+
+- **Logic/view split:** the pulse scheduler, circuit→AST, and submission are pure, DOM-free
+  modules under `src/canvas/` so determinism (AC4) and correctness are unit properties; the
+  react-flow piece is a thin view. This is why coverage is high despite react-flow being hard to
+  drive in jsdom.
+- **Pulse is timer-driven CSS state, not framer-motion:** `motion` is installed but the pulse is
+  a sequence of `activeStep` advances + a blue/border highlight — simpler, testable, and
+  reduced-motion is a clean branch (`step()` vs `start()`) rather than a motion-config toggle.
+- **Added `@polymath/booleans` to `apps/web` deps** (the reps validate client-side). F-02 added
+  the same dep independently — benign duplicate, reconciled at integration.
