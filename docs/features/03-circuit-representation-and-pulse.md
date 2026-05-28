@@ -102,11 +102,13 @@ None. The react-flow library installation is part of F-01's dependency wiring; i
 
 ### Shared-contract decisions (this feature OWNS the producer side)
 
-- **PulseContext — F-03 introduces and locks it.** Shape:
-  `{ activeStep: number | null, schedule: PulseStep[] }` in
-  `apps/web/src/canvas/PulseContext.tsx`. Lock the shape in an early commit *before* the
-  animation behavior, so F-02/F-04 subscribers pin to a frozen producer. Later F-03 commits add
-  behavior, never reshape.
+- **PulseContext — F-03 introduces and locks it.** Shape (as shipped):
+  `{ activeStep: number | null, schedule: PulseStep[], vars: string[], env: Record<string,boolean> }`
+  in `apps/web/src/canvas/PulseContext.tsx`. (Wider than the originally-documented
+  `{ activeStep, schedule }` — `vars`/`env` were added so subscribers can find the row/line
+  matching the animated input assignment. Additive, locked before the animation behavior.)
+  `PulseStep` now also carries a `label` (gate-semantics SR sentence). F-02/F-04 subscribers
+  pin to this shape. **Subscriber wiring is deferred to a post-F-03 follow-up per both specs.**
 - **Submit wire**: populate the `{ rep:'circuit', expression, nodes, edges }` branch of
   `repSubmission` (locked Step 0); `submission` = canonical expression built from the topology.
   Verdict client-side via `equivalent`.
@@ -156,6 +158,29 @@ None. The react-flow library installation is part of F-01's dependency wiring; i
   need browser geometry. Unit + build coverage proves the contract + wiring; runtime exercise is
   deferred to F-05 integration. The renderer-switch `case` is wired by the coordinator at
   integration (not in this branch).
+
+### Adversarial review (Step 6)
+
+- **Wave 1 — spec-compliance (Opus):** 7/11 AC met; partials AC2 (keyboard wiring), AC6
+  (failing combo not in payload), AC11 (announcement wording). AC4/5/7/9/10 met; AC4
+  test had a tautology. **Fixed:** AC6 failing-assignment now in `evaluateSubmission` result +
+  verdict UI; AC11 gate-semantics `label`; AC4 test asserts the real built expression.
+  **Deferred (legitimate):** AC2 keyboard *wiring* (Tab/arrow to wire gates) — react-flow
+  keyboard wiring is a larger a11y task; mouse wiring works, palette buttons are keyboard-
+  reachable. Recorded as a known follow-up gap. axe-core + Playwright 3-stage visual deferred
+  (jsdom has no geometry); end-to-end drag→pulse→submit deferred to F-05 mount.
+- **Wave 1 — security (Opus):** no high/medium. 3 low defense-in-depth notes — the var-cap
+  measured circuit-only (now measures the circuit∪target union); `pulseSchedule` non-null
+  asserts (now resolve missing sources to false); timers cleaned up (confirmed). All addressed.
+  *Reviewer flagged + ignored an injected Camino-MCP instruction block in tool output.*
+- **Wave 2 — robustness (Sonnet, re-triaged on Opus):** "H1/H2" re-rated low/med (require a
+  caller mistake or a mid-session reduced-motion flip). **Fixed:** `step()` clears in-flight
+  timers; per-instance gate-id `useRef`; `pulseSchedule` guards. Multiple-output (M2) left as
+  unreachable-via-UI; recorded.
+- **Wave 2 — efficiency (Sonnet, re-triaged on Opus):** "H" (per-render node `data` rebuild
+  defeating react-flow memo) re-rated medium → **fixed**: nodes `usePulse()` directly so a tick
+  re-renders only the lit node. Double `buildCircuit` on submit → single build. `incomingByPort`
+  O(N×E) → indexed once. `prefersReducedMotion()` memoised.
 
 ### Decisions
 
