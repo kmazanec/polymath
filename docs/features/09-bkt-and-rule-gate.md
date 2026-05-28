@@ -181,3 +181,26 @@ None.
 - Rule-gate unit tests cover `passed:true` for a clean history and `passed:false` with
   `blockers:['hint_ratio_exceeded']` (criteria 2, 3); BKT matches hand-computed values
   (criterion 7).
+
+### Adversarial review (Step 6) — Wave 1
+
+- **Spec (HIGH, fixed): the response-time band was never enforced in production.** The `submit`
+  wire event had no response-time field, so `responseTimesMs` was always empty and the 2–60s
+  band (an ADR-011 condition + part of criterion 2) was skipped. **Fix:** added an optional
+  append-only `submit.responseTimeMs` (the web stamps item-mount time and reports elapsed ms),
+  threaded it through the consumer. New unit test: a sub-2s streak is blocked with
+  `response_time_out_of_band`.
+- **Spec/Security (MEDIUM, fixed): the BKT/streak trusted the client's `correct` flag.** Per
+  ADR-010 the server must recompute correctness. **Fix:** `deriveState` now recomputes each
+  submit's correctness server-side via `@polymath/booleans.equivalent(submission, target)` —
+  the client `correct` flag is used only by the agent's tactical move choice (F-05), never for
+  the integrity-critical BKT/streak. New unit test: a non-equivalent submission does not
+  advance the streak even if a client claimed correct. (The security reviewer independently
+  confirmed the gate→probe chain is sound either way: a forged `correct` only fast-forwards to
+  the *server-validated* transfer probe; `mastered` still requires the real transfer pass.)
+- **Security (MEDIUM, fixed): O(n²) per-session event scans.** Three unbounded
+  `select … where sessionId` scans ran per frame (learner-state derive, transfer candidates,
+  most-recent-probe). **Fix:** all three now `.orderBy(desc(ts)).limit(MAX_SESSION_EVENTS=500)`
+  — far above a real L1 session, bounding a client that floods a session with events.
+- **Low (fixed): criterion-3 blocker isolation** — the consumer test now isolates the
+  response-time and hint-ratio blockers in dedicated cases rather than asserting on a mixed set.

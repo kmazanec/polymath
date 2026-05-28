@@ -1,4 +1,5 @@
 import { type BKTConfig, type BKTParams, initBKT, updateBKT } from '@polymath/bkt';
+import { equivalent } from '@polymath/booleans';
 import type { LessonContent, MasteryConfig } from '@polymath/contract';
 import type { LearnerState } from './gate.js';
 
@@ -16,8 +17,10 @@ export interface LoggedEvent {
   kind: string;
   /** The item the event concerns (canonical expression or itemId). */
   itemId?: string;
-  /** Client-computed correctness on a `submit`. */
-  correct?: boolean;
+  /** The learner's submitted canonical expression — the server recomputes
+   *  correctness from this (it does NOT trust a client `correct` flag for the
+   *  integrity-critical BKT/streak; ADR-010 the validator is the truth-maker). */
+  submission?: string;
   /** Server-computed transfer verdict on a `transfer_submitted`. */
   transferCorrect?: boolean;
   /** Milliseconds the learner took (when available). */
@@ -53,10 +56,27 @@ export function deriveState(
 ): DerivedState {
   const cfg = bktConfig(config);
   const kcByItem = new Map<string, string>();
+  const exprByItem = new Map<string, string>();
   for (const item of lesson.items) {
     kcByItem.set(item.itemId, item.kc);
     kcByItem.set(item.targetExpression, item.kc); // the web names items by expression
+    exprByItem.set(item.itemId, item.targetExpression);
+    exprByItem.set(item.targetExpression, item.targetExpression);
   }
+
+  /** Recompute correctness server-side (never trust the client flag): the
+   *  submission is equivalent to the item's canonical target expression. An
+   *  unknown item or unparseable submission is simply wrong. */
+  const isCorrect = (itemId: string | undefined, submission: string | undefined): boolean => {
+    if (!itemId || submission === undefined) return false;
+    const target = exprByItem.get(itemId);
+    if (!target) return false;
+    try {
+      return equivalent(submission, target);
+    } catch {
+      return false;
+    }
+  };
 
   const state: DerivedState = {
     bktByKc: {},
@@ -75,18 +95,19 @@ export function deriveState(
   for (const ev of events) {
     if (ev.kind === 'submit') {
       state.submits++;
+      const correct = isCorrect(ev.itemId, ev.submission);
       const kc = ev.itemId ? kcByItem.get(ev.itemId) : undefined;
       if (kc) {
         const prior = state.bktByKc[kc] ?? initBKT(cfg);
-        state.bktByKc[kc] = updateBKT(prior, ev.correct === true, cfg);
+        state.bktByKc[kc] = updateBKT(prior, correct, cfg);
       }
       if (ev.itemId && missed.has(ev.itemId)) state.retries++;
       if (ev.itemId) {
-        if (ev.correct === false) missed.add(ev.itemId);
+        if (!correct) missed.add(ev.itemId);
         else missed.delete(ev.itemId); // a correct attempt clears the miss
       }
       if (typeof ev.responseTimeMs === 'number') state.responseTimesMs.push(ev.responseTimeMs);
-      state.consecutiveCorrect = ev.correct === true ? state.consecutiveCorrect + 1 : 0;
+      state.consecutiveCorrect = correct ? state.consecutiveCorrect + 1 : 0;
     } else if (ev.kind === 'request_hint') {
       state.hintsUsed++;
       state.consecutiveCorrect = 0; // a hinted item doesn't count toward the streak

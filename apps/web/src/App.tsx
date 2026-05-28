@@ -43,6 +43,8 @@ export function App(): ReactElement {
   const [answer, setAnswer] = useState<ComponentSpec | null>(null);
   /** The id of the item currently mounted, echoed on submit. */
   const currentItemId = useRef<string>('l1-and');
+  /** When the current item was mounted (for the submit's response-time report). */
+  const itemMountedAt = useRef<number>(Date.now());
   const socketRef = useRef<AgentSocket | null>(null);
   const [question, setQuestion] = useState('');
   /** The active transfer probe's id + held-out reps, tracked in refs so the WS
@@ -110,14 +112,15 @@ export function App(): ReactElement {
     };
   }, [send]);
 
-  // When a new item is mounted, remember its id so a submit can name it. Only the
-  // item-generating specs carry an itemId concept; we derive a stable id from the
-  // expression (the lesson loader's items are keyed by expression too).
+  // When a new item is mounted, remember its id so a submit can name it, and stamp
+  // the mount time so a submit can report how long the learner took (the rule
+  // gate's response-time band, ADR-011).
   useEffect(() => {
     if (mounted.kind === 'TruthTablePractice') currentItemId.current = mounted.expression;
     else if (mounted.kind === 'CircuitBuilder' || mounted.kind === 'PseudocodeChallenge') {
       currentItemId.current = mounted.targetExpression;
     }
+    itemMountedAt.current = Date.now();
   }, [mounted]);
 
   const onSubmit = useCallback(
@@ -142,6 +145,7 @@ export function App(): ReactElement {
         submission: payload.submission,
         repSubmission: payload.repSubmission,
         correct: payload.correct,
+        responseTimeMs: Date.now() - itemMountedAt.current,
       });
     },
     [sessionId, mounted.kind],

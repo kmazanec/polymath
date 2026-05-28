@@ -47,6 +47,13 @@ const MAX_WS_PAYLOAD_BYTES = 64 * 1024;
  *  `no_action` rather than hanging the connection. */
 const AGENT_TURN_TIMEOUT_MS = 15_000;
 
+/** Cap per-session event scans. `sessionId` is client-controlled and a client
+ *  can append a row per frame, so an unbounded `select … where sessionId` re-read
+ *  + re-fold every turn would be O(n²) over a long-running/abusive session. A few
+ *  hundred recent events far exceeds a real L1 session (~10–30 turns) while
+ *  bounding the per-turn cost. */
+const MAX_SESSION_EVENTS = 500;
+
 /** Lessons are immutable per process; load once and cache. */
 const lessonCache = new Map<number, Lesson>();
 function getLesson(lessonId: number): Lesson {
@@ -64,16 +71,19 @@ function lessonIdForEvent(event: ClientEvent): number {
   return event.kind === 'session_start' ? event.lessonId : 1;
 }
 
-/** Project a logged event payload into the consumer's `LoggedEvent` shape. */
+/** Project a logged event payload into the consumer's `LoggedEvent` shape. The
+ *  learner's `submission` is carried so the consumer can recompute correctness
+ *  server-side (the BKT/streak must not trust the client's `correct` flag). */
 function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
   const p = (payload ?? {}) as {
-    event?: { itemId?: string; submission?: string; correct?: boolean };
+    event?: { itemId?: string; submission?: string; correct?: boolean; responseTimeMs?: number };
     transferVerdict?: { correct?: boolean };
   };
   return {
     kind,
     itemId: p.event?.itemId ?? p.event?.submission,
-    correct: p.event?.correct,
+    submission: p.event?.submission,
+    responseTimeMs: p.event?.responseTimeMs,
     transferCorrect: p.transferVerdict?.correct,
   };
 }
@@ -93,11 +103,15 @@ async function updateAndReadLearnerState(
   lesson: Lesson,
   transferVerdict: { itemId: string; correct: boolean } | undefined,
 ): Promise<LearnerSnapshot> {
-  const priorRows = await db
-    .select({ kind: events.kind, payload: events.payload })
-    .from(events)
-    .where(eq(events.sessionId, sessionId))
-    .orderBy(events.ts);
+  // Most-recent N events (bounded), then chronological for the fold.
+  const priorRows = (
+    await db
+      .select({ kind: events.kind, payload: events.payload })
+      .from(events)
+      .where(eq(events.sessionId, sessionId))
+      .orderBy(desc(events.ts))
+      .limit(MAX_SESSION_EVENTS)
+  ).reverse();
 
   const logged: LoggedEvent[] = priorRows.map((r) => toLoggedEvent(r.kind, r.payload));
   // Fold in the current event (not yet persisted), threading the server-computed
@@ -185,7 +199,12 @@ async function readTransferCandidates(
 ): Promise<TransferProbeItem[]> {
   const [bank, prior] = await Promise.all([
     db.select().from(transferBank).where(eq(transferBank.lessonId, lessonId)),
-    db.select({ payload: events.payload }).from(events).where(eq(events.sessionId, sessionId)),
+    db
+      .select({ payload: events.payload })
+      .from(events)
+      .where(eq(events.sessionId, sessionId))
+      .orderBy(desc(events.ts))
+      .limit(MAX_SESSION_EVENTS),
   ]);
   const seen = new Set<string>();
   for (const row of prior) {
@@ -258,11 +277,14 @@ async function computeTransferVerdict(
 /** The itemId of the most-recently-mounted `TransferProbe` for the session, or
  *  null if none has been mounted. */
 async function mostRecentProbeItemId(db: Db, sessionId: string): Promise<string | null> {
+  // Newest-first, bounded: the most-recent probe is near the top, so a recent
+  // window suffices (and bounds the scan on a long/abusive session).
   const rows = await db
     .select({ payload: events.payload })
     .from(events)
     .where(eq(events.sessionId, sessionId))
-    .orderBy(desc(events.ts));
+    .orderBy(desc(events.ts))
+    .limit(MAX_SESSION_EVENTS);
   for (const row of rows) {
     const c = (row.payload as { action?: { component?: { kind?: string; itemId?: string } } })?.action
       ?.component;

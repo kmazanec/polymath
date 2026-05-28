@@ -92,6 +92,11 @@ export const ClientEvent = z.discriminatedUnion('kind', [
      *  correctness, but the agent reads it to choose its next move (e.g. a second
      *  wrong attempt on an item → `simpler_item`, not `next_practice_item`). */
     correct: z.boolean().optional(),
+    /** Milliseconds the learner spent on the item before submitting (client clock,
+     *  append-only optional). The rule gate's response-time band (2–60s, ADR-011)
+     *  reads this; an absent value is simply not counted toward the band. Bounded
+     *  to a sane day so a bad client clock can't poison the median. */
+    responseTimeMs: z.number().int().nonnegative().max(86_400_000).optional(),
   }),
   z.object({
     kind: z.literal('request_hint'),
