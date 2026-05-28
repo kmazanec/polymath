@@ -145,7 +145,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
       server at `/agent`; LangGraph `StateGraph` no_action node behind `AgentClient` seam;
       **server-side Zod validation of every Action before send** (criterion 5). In-process
       integration test: boot → WS `submit` → valid `no_action` + `events` row written.
-- [ ] **Chunk 7 — `apps/web`.** Vite + React + React Router + XState; typed WS client;
+- [x] **Chunk 7 — `apps/web`.** Vite + React + React Router + XState; typed WS client;
       exhaustive `registry.ts` switch on `ComponentSpec.kind` (TS `never` check); `LessonIntro`
       "Lesson 1 — Basic operators" + `Submit`; `<AnimateOrNot>` reduced-motion stub. Verify
       `pnpm build` → `dist`; Submit round-trips `no_action`.
@@ -258,3 +258,32 @@ into `apps/agent/drizzle/`.
   integration… actually 5 agent-unit + 3 loader + 3 integration = 11); typecheck + build clean;
   test pg container torn down. `LangGraph checkpointer` schema deferred (stub graph doesn't
   checkpoint).
+
+**Chunk 7 — `apps/web`.** Vite + React 19 + React Router + XState (`@xstate/react`).
+Modules: `ws/client.ts` (typed `AgentSocket`, Zod-validates inbound, capped-backoff reconnect),
+`motion/AnimateOrNot.tsx`, `components/{registry,LessonIntro}.tsx`, `lessonIntroContent.ts`,
+`App.tsx`, `main.tsx`.
+- **Decision — exhaustive renderer switch with a `never` default.** `renderComponent` switches
+  on `ComponentSpec.kind`; the `default` assigns `spec` to `const _: never`, so adding a union
+  variant without a case is a *compile error* — the testing-requirement exhaustiveness guarantee
+  (no dynamic lookup / `eval` / `dangerouslySetInnerHTML`). Only `LessonIntro` renders for real;
+  the other 11 render a typed `Tbd` placeholder.
+- **Decision — `<AnimateOrNot>` gates motion centrally** on `(phase === 'transferring')` and
+  `prefers-reduced-motion` (ADR-004/008); the animation primitives plug in later. `shouldAnimate`
+  is pure + unit-tested.
+- **Decision — single-origin via vite proxy.** Dev proxies `/api` + `/agent` to the agent
+  (origin overridable via `AGENT_ORIGIN` env for local testing); prod is same-origin behind
+  Caddy. The client derives `ws`/`wss` from `location`.
+- **Decision — LessonIntro copy authored in the three-representation pedagogical voice**
+  (`lessonIntroContent.ts`) per ADR-001 (no exact copy was locked in the ADRs).
+- **Verification — real running system (Step 5.4 gate):** booted Postgres + the agent (on
+  :8090, since a sibling `uvicorn` service already held :8080 — noted for infra) and the vite
+  dev server; navigated a real Chrome via DevTools MCP. The `LessonIntro` card rendered, the WS
+  showed "Agent: open", clicking **Submit** produced "Agent responded: `no_action`" in the UI,
+  and Postgres recorded the `submit` event (`events.kind='submit'`, `payload.action.type=
+  'no_action'`). Only console error was the browser's default `/favicon.ico` 404 (harmless).
+  Build: `dist/` produced, bundle **121 KB gzipped** (< the 500 KB ADR-008 budget). 5 web tests
+  pass; typecheck clean.
+- **Note for infra (chunk 8):** the droplet/dev port 8080 may already be taken by a sibling
+  project; the compose/Caddy wiring uses an internal agent port and Caddy routing, so this is a
+  local-dev concern only, but worth flagging.
