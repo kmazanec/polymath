@@ -94,23 +94,58 @@ None.
 
 ### Implementation plan (checklist)
 
-- [ ] **Chunk 1 — `<TruthTable>` component (T-02a, T-02d).** Tests first: render 2^n rows from
+- [x] **Chunk 1 — `<TruthTable>` component (T-02a, T-02d).** Tests first: render 2^n rows from
   `truthTable(expression).vars/rows`; input columns read-only; output column cells toggle 0↔1
   on click in <50ms (no network); auto-extract variables from `expression` via the parser (AC5).
   Cap distinct-variable count (≤10) before calling `truthTable` and surface a stock error (F-01
   build note: 2^n blowup guard). Component renders for `kind: 'TruthTablePractice'`.
-- [ ] **Chunk 2 — Submit handler + verdict (T-02b).** Tests first: on Submit, compare learner
+- [x] **Chunk 2 — Submit handler + verdict (T-02b).** Tests first: on Submit, compare learner
   cells cell-for-cell to `truthTable(expression).out`; mark correct cells green, incorrect red
   (AC3/AC4); dispatch a `submit` `ClientEvent` with `submission = expression` and
   `repSubmission = { rep:'truth_table', cells }`. Assert the dispatched event shape.
-- [ ] **Chunk 3 — Keyboard + reduced-motion (AC6, AC7).** Tab moves between output cells, Space
+- [x] **Chunk 3 — Keyboard + reduced-motion (AC6, AC7).** Tab moves between output cells, Space
   toggles focused cell, Enter submits; under `prefers-reduced-motion` the flip is an instant
   color change (no transition). Tests assert keyboard reachability + submit-via-Enter.
-- [ ] **Chunk 4 — Tests (T-02e).** Component tests (toggle, submit shape, correct/incorrect
+- [x] **Chunk 4 — Tests (T-02e).** Component tests (toggle, submit shape, correct/incorrect
   render, keyboard); property test: random ≤4-var expressions → extracted vars match the parser
   AST (`variables(parse(expr))`).
 - [ ] **Deferred — T-02c PulseContext subscriber (AC8)**: follow-up after F-03 lands PulseContext.
 
 ### Build verification evidence
 
-> Filled in per-chunk during the build.
+**Chunk 1 — Component rendering + toggle (T-02a):**
+- Added `@polymath/booleans` as workspace dep to `apps/web/package.json` (was missing; web had
+  only `contract` + `statechart`).
+- 7 rendering tests + 3 toggle tests pass.
+- Decision: output cells rendered as `<button aria-pressed={…}>` (semantic toggle; Tab-reachable
+  natively; Space/Enter work via native button behavior — no custom key handler needed).
+- Decision: input cells rendered as `<td role="cell" aria-readonly="true">` (read-only, not
+  focusable, not buttons).
+- 2^n blowup guard: parse → variables() → if vars.length > 10, render `<div role="alert">` error.
+
+**Chunk 2 — Submit handler + verdict (T-02b):**
+- 6 submit/verdict tests pass.
+- Client-side verdict: compare `cells[i]` to `expectedOut[i] ? 1 : 0`; marks `data-verdict="correct"` or `"incorrect"` on each output button.
+- Event shape: `{ kind: 'submit', submission: spec.expression, repSubmission: { rep: 'truth_table', cells: number[] }, correct: boolean }`.
+- Cells are locked (disabled) after submit — prevents post-submit mutation.
+
+**Chunk 3 — Keyboard + reduced-motion (AC6, AC7):**
+- 4 keyboard/motion tests pass.
+- `prefersReducedMotion()` from AnimateOrNot.tsx reused; `style={{ transition: 'none' }}` applied
+  to output buttons when reduced motion is detected.
+- Native `<button>` handles Tab/Space/Enter without custom event handlers.
+
+**Chunk 4 — Property tests (T-02e):**
+- 8 property tests pass (8 expressions with 1–4 variables).
+- Confirms column header order matches `variables(parse(expr))` sorted output.
+
+**Final run:** `pnpm --filter @polymath/web test`
+```
+✓ web src/motion/AnimateOrNot.test.ts (3 tests)
+✓ web src/components/registry.test.tsx (2 tests)
+✓ web src/components/TruthTable.test.tsx (28 tests)
+Test Files  3 passed (3)
+      Tests  33 passed (33)
+   Duration  646ms
+```
+Typecheck: `pnpm --filter @polymath/web typecheck` — clean, no errors.
