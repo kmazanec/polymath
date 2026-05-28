@@ -2,17 +2,20 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { createDb } from './client.js';
+import { seedTransferBank } from './seed.js';
 
 const migrationsFolder = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../drizzle',
 );
 
-/** Apply all pending migrations. Run on container startup and from CI. */
+/** Apply all pending migrations then idempotently seed static data. Run on
+ *  container startup and from CI. */
 export async function runMigrations(connectionString: string): Promise<void> {
   const { db, pool } = createDb(connectionString);
   try {
     await migrate(db, { migrationsFolder });
+    await seedTransferBank(db);
   } finally {
     await pool.end();
   }
