@@ -51,12 +51,11 @@ export class HeuristicMoveProvider implements MoveProvider {
     if (ev.kind === 'submit') {
       // A wrong submit must NOT advance: re-present the same item (rephrase), and
       // on a *repeated* wrong attempt at the same item, drop to a simpler item
-      // (ADR-003 menu; F-05 criterion 3). Correctness is the client-computed
-      // verdict on the submit; the server still treats `submission` as canonical.
-      if (ev.correct === false) {
-        const priorWrong = input.recentHistory.some(
-          (t) => t.eventKind === 'submit' && t.correct === false && t.itemId === ev.itemId,
-        );
+      // (ADR-003 menu; F-05 criterion 3). Correctness is the SERVER's recompute
+      // (currentSubmitCorrect), never the client `correct` flag — a client can't
+      // claim correct to skip remediation. Prior-miss count is also server-derived.
+      if (input.currentSubmitCorrect === false) {
+        const priorWrong = (input.priorMissesByItem?.[ev.itemId] ?? 0) > 0;
         const same = currentItem(input);
         if (same) {
           return Promise.resolve(

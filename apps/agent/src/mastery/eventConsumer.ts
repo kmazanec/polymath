@@ -46,6 +46,9 @@ export interface DerivedState {
   /** Hints requested per item this session — the authoritative hint-level source
    *  (a capped recent-history window can mis-count and reset the ladder). */
   hintsByItem: Record<string, number>;
+  /** Server-recomputed wrong submissions per item this session (the heuristic's
+   *  repeated-miss escalation reads this, not the client flag). */
+  missesByItem: Record<string, number>;
   submits: number;
   retries: number;
   responseTimesMs: number[];
@@ -61,6 +64,27 @@ function bktConfig(config: MasteryConfig): BKTConfig {
   };
 }
 
+/** Server-side correctness of a submission against the item's canonical target
+ *  (`booleans.equivalent`, var-capped). Identifies the item by `itemId` matched
+ *  against the lesson's itemId OR targetExpression. Unknown item / unparseable /
+ *  over-cap → false. The single source of truth for correctness — never the
+ *  client's `submit.correct` flag. */
+export function recomputeCorrect(
+  lesson: LessonContent,
+  itemId: string | undefined,
+  submission: string | undefined,
+): boolean {
+  if (!itemId || submission === undefined) return false;
+  const item = lesson.items.find((i) => i.itemId === itemId || i.targetExpression === itemId);
+  if (!item) return false;
+  try {
+    if (variables(parse(submission)).length > MAX_SUBMIT_VARS) return false;
+    return equivalent(submission, item.targetExpression);
+  } catch {
+    return false;
+  }
+}
+
 /** Fold the session's events into the derived state. `lesson` maps items → KCs. */
 export function deriveState(
   events: LoggedEvent[],
@@ -69,36 +93,22 @@ export function deriveState(
 ): DerivedState {
   const cfg = bktConfig(config);
   const kcByItem = new Map<string, string>();
-  const exprByItem = new Map<string, string>();
   for (const item of lesson.items) {
     kcByItem.set(item.itemId, item.kc);
     kcByItem.set(item.targetExpression, item.kc); // the web names items by expression
-    exprByItem.set(item.itemId, item.targetExpression);
-    exprByItem.set(item.targetExpression, item.targetExpression);
   }
 
-  /** Recompute correctness server-side (never trust the client flag): the
-   *  submission is equivalent to the item's canonical target expression. An
-   *  unknown item or unparseable submission is simply wrong. */
-  const isCorrect = (itemId: string | undefined, submission: string | undefined): boolean => {
-    if (!itemId || submission === undefined) return false;
-    const target = exprByItem.get(itemId);
-    if (!target) return false;
-    try {
-      // Cap distinct vars before enumerating (DoS guard) — an over-wide submission
-      // is simply wrong, never an event-loop-blocking 2^n enumeration.
-      if (variables(parse(submission)).length > MAX_SUBMIT_VARS) return false;
-      return equivalent(submission, target);
-    } catch {
-      return false;
-    }
-  };
+  // Correctness is the server-side recompute (never the client flag), shared with
+  // the per-turn `recomputeCorrect` used by the server.
+  const isCorrect = (itemId: string | undefined, submission: string | undefined): boolean =>
+    recomputeCorrect(lesson, itemId, submission);
 
   const state: DerivedState = {
     bktByKc: {},
     consecutiveCorrect: 0,
     hintsUsed: 0,
     hintsByItem: {},
+    missesByItem: {},
     submits: 0,
     retries: 0,
     responseTimesMs: [],
@@ -120,8 +130,12 @@ export function deriveState(
       }
       if (ev.itemId && missed.has(ev.itemId)) state.retries++;
       if (ev.itemId) {
-        if (!correct) missed.add(ev.itemId);
-        else missed.delete(ev.itemId); // a correct attempt clears the miss
+        if (!correct) {
+          missed.add(ev.itemId);
+          state.missesByItem[ev.itemId] = (state.missesByItem[ev.itemId] ?? 0) + 1;
+        } else {
+          missed.delete(ev.itemId); // a correct attempt clears the miss
+        }
       }
       if (typeof ev.responseTimeMs === 'number') state.responseTimesMs.push(ev.responseTimeMs);
       state.consecutiveCorrect = correct ? state.consecutiveCorrect + 1 : 0;

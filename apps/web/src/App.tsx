@@ -27,6 +27,23 @@ export function wantsHiddenRep(question: string, hiddenReps: readonly Rep[]): Re
   return hiddenReps.find((rep) => REP_PHRASES[rep].test(question)) ?? null;
 }
 
+/** A stable identity for the mounted workspace, used as a React `key` so a new
+ *  item remounts fresh (no stale submitted/cells state from the prior item). */
+function mountKey(spec: ComponentSpec): string {
+  switch (spec.kind) {
+    case 'TruthTablePractice':
+      return `tt:${spec.expression}`;
+    case 'CircuitBuilder':
+      return `circuit:${spec.targetExpression}`;
+    case 'PseudocodeChallenge':
+      return `pseudo:${spec.targetExpression}`;
+    case 'TransferProbe':
+      return `probe:${spec.itemId}`;
+    default:
+      return spec.kind;
+  }
+}
+
 /** Map the lesson sub-statechart's current state value to the contract PhaseName
  *  the motion wrapper expects. The spine's state ids ARE the PhaseNames. */
 function currentPhase(value: unknown): 'introducing' | 'practicing' | 'transferring' {
@@ -210,7 +227,13 @@ export function App(): ReactElement {
 
   return (
     <main>
-      <AnimateOrNot phase={phase}>{renderComponent(mounted, { onSubmit })}</AnimateOrNot>
+      {/* Key the workspace by the mounted item's identity so the agent mounting a
+          *new* item of the same kind remounts a fresh component — without the key,
+          React reuses the instance and the prior item's submitted/cells state (and
+          its disabled submit button) would bleed into the new item, blocking it. */}
+      <AnimateOrNot phase={phase}>
+        <div key={mountKey(mounted)}>{renderComponent(mounted, { onSubmit })}</div>
+      </AnimateOrNot>
 
       {hint && <aside className="hint-slot">{renderComponent(hint)}</aside>}
 

@@ -19,9 +19,11 @@ import type {
   TurnSummary,
 } from './agent/client.js';
 import { validateLayer2 } from './agent/layer2.js';
-import { evaluateRuleGate } from './mastery/gate.js';
+import { evaluateRuleGate, isMastered, type LearnerState } from './mastery/gate.js';
+import type { MasteryConfig } from '@polymath/contract';
 import {
   deriveState,
+  recomputeCorrect,
   toLearnerState,
   type DerivedState,
   type LoggedEvent,
@@ -107,7 +109,13 @@ async function updateAndReadLearnerState(
   current: ClientEvent,
   lesson: Lesson,
   transferVerdict: { itemId: string; correct: boolean } | undefined,
-): Promise<{ snapshot: LearnerSnapshot; hintsByItem: Record<string, number> }> {
+): Promise<{
+  snapshot: LearnerSnapshot;
+  masteryState: LearnerState;
+  hintsByItem: Record<string, number>;
+  priorMissesByItem: Record<string, number>;
+  currentSubmitCorrect: boolean | undefined;
+}> {
   // Most-recent N events (bounded), then chronological for the fold.
   const priorRows = (
     await db
@@ -118,11 +126,14 @@ async function updateAndReadLearnerState(
       .limit(MAX_SESSION_EVENTS)
   ).reverse();
 
-  const logged: LoggedEvent[] = priorRows.map((r) => toLoggedEvent(r.kind, r.payload));
-  // Fold in the current event (not yet persisted), threading the server-computed
-  // transfer verdict so a passing transfer counts toward the gate this turn.
-  logged.push(toLoggedEvent(current.kind, { event: current, transferVerdict }));
+  const priorLogged: LoggedEvent[] = priorRows.map((r) => toLoggedEvent(r.kind, r.payload));
+  // Prior-only fold gives the miss baseline BEFORE this turn (so the heuristic's
+  // repeated-miss escalation sees prior misses, not the current one).
+  const priorDerived = deriveState(priorLogged, lesson.content, lesson.masteryConfig);
 
+  // Then fold in the current event (not yet persisted), threading the server-computed
+  // transfer verdict so a passing transfer counts toward the gate this turn.
+  const logged = [...priorLogged, toLoggedEvent(current.kind, { event: current, transferVerdict })];
   const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
   const learnerState_ = toLearnerState(derived);
   const gate = evaluateRuleGate(learnerState_, lesson.masteryConfig);
@@ -141,7 +152,11 @@ async function updateAndReadLearnerState(
       consecutiveCorrect: derived.consecutiveCorrect,
       ruleGatePassed: gate.passed,
     },
+    masteryState: learnerState_,
     hintsByItem: derived.hintsByItem,
+    priorMissesByItem: priorDerived.missesByItem,
+    currentSubmitCorrect:
+      current.kind === 'submit' ? recomputeCorrect(lesson.content, current.itemId, current.submission) : undefined,
   };
 }
 
@@ -244,19 +259,19 @@ const MAX_TRANSFER_VARS = 10;
  *  expression via `@polymath/booleans.equivalent` (ADR-010: the validator is the
  *  source of truth; the server decides the transfer verdict, not the agent).
  *
- *  Integrity: the submission is only honored against the item the agent *actually
- *  probed* for this session — a `transfer_submitted` naming a different bank item
- *  (a forged/substituted id) is scored `correct: false`, so a client can't pick an
- *  easier held-out item or burn a different item from the unseen set. */
+ *  Integrity: the submission is only honored against the item with a *currently
+ *  unresolved* probe for this session. A `transfer_submitted` naming a different
+ *  bank item (forged/substituted id) OR a resubmission against an already-resolved
+ *  probe (e.g. retrying a failed held-out item until it passes) is scored
+ *  `correct: false` — the no-repeat held-out transfer gate. */
 async function computeTransferVerdict(
   db: Db,
   event: ClientEvent,
 ): Promise<{ itemId: string; correct: boolean } | undefined> {
   if (event.kind !== 'transfer_submitted') return undefined;
 
-  // The probe must have been mounted for this session, and the submitted itemId
-  // must match it (probe-substitution defense).
-  const probedItemId = await mostRecentProbeItemId(db, event.sessionId);
+  // There must be an UNRESOLVED probe for this session whose itemId matches.
+  const probedItemId = await unresolvedProbeItemId(db, event.sessionId);
   if (probedItemId === null || probedItemId !== event.itemId) {
     return { itemId: event.itemId, correct: false };
   }
@@ -282,18 +297,19 @@ async function computeTransferVerdict(
   return { itemId: event.itemId, correct };
 }
 
-/** The itemId of the most-recently-mounted `TransferProbe` for the session, or
- *  null if none has been mounted. */
-async function mostRecentProbeItemId(db: Db, sessionId: string): Promise<string | null> {
-  // Newest-first, bounded: the most-recent probe is near the top, so a recent
-  // window suffices (and bounds the scan on a long/abusive session).
+/** The itemId of the currently-UNRESOLVED transfer probe, or null. Scanning
+ *  newest-first: a `transfer_submitted` seen before any probe means the latest
+ *  probe was already resolved → null (so a client can't resubmit a resolved/failed
+ *  probe item until it finally passes — the no-repeat held-out gate). */
+async function unresolvedProbeItemId(db: Db, sessionId: string): Promise<string | null> {
   const rows = await db
-    .select({ payload: events.payload })
+    .select({ kind: events.kind, payload: events.payload })
     .from(events)
     .where(eq(events.sessionId, sessionId))
     .orderBy(desc(events.ts))
     .limit(MAX_SESSION_EVENTS);
   for (const row of rows) {
+    if (row.kind === 'transfer_submitted') return null; // latest probe already resolved
     const c = (row.payload as { action?: { component?: { kind?: string; itemId?: string } } })?.action
       ?.component;
     if (c?.kind === 'TransferProbe' && typeof c.itemId === 'string') return c.itemId;
@@ -319,15 +335,25 @@ async function isInTransferProbe(db: Db, sessionId: string): Promise<boolean> {
   return false;
 }
 
-/** Reject an outbound `TransferProbe` mount the learner hasn't earned or that the
- *  agent forged. Returns a rejection reason (→ downgrade to `no_action`) or null if
- *  the probe is authorized. A probe is authorized only when the rule gate passed and
- *  the mounted component exactly matches an allowed unseen `transfer_bank` row. */
-function rejectUnauthorizedProbe(
+/** Reject an outbound privileged action the learner hasn't earned, regardless of
+ *  what the agent proposed (the server never trusts the agent — defense for a
+ *  jailbroken/misbehaving LLM provider). Returns a rejection reason (→ downgrade to
+ *  `no_action`) or null if authorized:
+ *   - a `TransferProbe` mount needs `ruleGatePassed` AND an exact match to an
+ *     allowed unseen `transfer_bank` row;
+ *   - a `transition` → `mastered` needs the full mastery predicate satisfied
+ *     server-side (`isMastered` over the derived state). In I1 explain-back is
+ *     unbuilt, so this can never pass — a forged mastery transition is downgraded. */
+function rejectUnauthorizedAction(
   action: Action,
   learner: LearnerSnapshot,
+  masteryState: LearnerState,
+  config: MasteryConfig,
   candidates: TransferProbeItem[] | undefined,
 ): string | null {
+  if (action.type === 'transition' && action.to === 'mastered') {
+    return isMastered(masteryState, config) ? null : 'mastery transition before the full gate is satisfied';
+  }
   if (action.type !== 'mount' || action.component.kind !== 'TransferProbe') return null;
   if (!learner.ruleGatePassed) return 'transfer probe before the rule gate passed';
   const c = action.component;
@@ -426,6 +452,8 @@ export async function handleClientFrame(
     transferVerdict,
     inTransferProbe,
     hintsByItem: learnerDerived.hintsByItem,
+    priorMissesByItem: learnerDerived.priorMissesByItem,
+    currentSubmitCorrect: learnerDerived.currentSubmitCorrect,
   };
 
   // Propose an action (under a timeout), then validate it server-side before it
@@ -437,15 +465,21 @@ export async function handleClientFrame(
   const proposed = await proposeWithTimeout(deps.agent, input);
   const { action: shaped, downgraded } = validateOutboundAction(proposed);
   const layer2 = validateLayer2(shaped);
-  // Outbound transfer-probe gate (server never trusts the agent — matters once an
-  // LLM provider is live and could fire an early/forged probe): a TransferProbe
-  // mount is downgraded unless the rule gate passed AND its fields exactly match an
-  // allowed unseen `transfer_bank` row for the session.
-  const probeRejection = rejectUnauthorizedProbe(shaped, learnerDerived.snapshot, transferCandidates);
+  // Outbound earned-it gate (server never trusts the agent — matters once an LLM
+  // provider is live): a TransferProbe mount is downgraded unless the rule gate
+  // passed and it matches an allowed unseen bank row; a transition→mastered is
+  // downgraded unless the full mastery predicate holds server-side.
+  const earnedItRejection = rejectUnauthorizedAction(
+    shaped,
+    learnerDerived.snapshot,
+    learnerDerived.masteryState,
+    lesson.masteryConfig,
+    transferCandidates,
+  );
   const action: Action = !layer2.ok
     ? noAction('agent_unsure', `outbound Layer-2 rejection: ${layer2.detail}`)
-    : probeRejection
-      ? noAction('agent_unsure', probeRejection)
+    : earnedItRejection
+      ? noAction('agent_unsure', earnedItRejection)
       : shaped;
 
   // ADR-010 Layer 3: a HintCard level-3 mount is logged as unverified_prose.

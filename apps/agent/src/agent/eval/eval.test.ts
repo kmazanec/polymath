@@ -33,12 +33,16 @@ const lesson = loadLesson(1);
 const SID = '00000000-0000-0000-0000-000000000000';
 
 function inputFor(s: Scenario): AgentInput {
+  const event = { sessionId: SID, ...s.event } as AgentInput['event'];
   return {
-    event: { sessionId: SID, ...s.event } as AgentInput['event'],
+    event,
     lesson,
     learnerState: { bktByKc: {}, ...s.learnerState },
     recentHistory: [],
     transferCandidates: s.transferCandidates,
+    // Mirror the scenario's `correct` into the server-derived flag the heuristic
+    // reads (production recomputes it server-side).
+    currentSubmitCorrect: event.kind === 'submit' ? event.correct : undefined,
   };
 }
 

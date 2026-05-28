@@ -205,8 +205,11 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
+    // The submission ("A OR B") is genuinely WRONG for l1-and ("A AND B"); the
+    // server recomputes correctness (it ignores the client `correct` flag) and
+    // re-presents the item rather than advancing.
     const [action] = await driveSequence(sessionId, [
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: false },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A OR B', correct: true },
     ]);
     expect(action!.type).toBe('mount');
     if (action!.type === 'mount' && action!.component.kind === 'TruthTablePractice') {

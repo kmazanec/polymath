@@ -45,6 +45,15 @@ export interface AgentInput {
    *  for the hint ladder's level — `recentHistory` is a capped window that can
    *  mis-count). The hint arm reads this, not the recent history. */
   hintsByItem?: Record<string, number>;
+  /** On a `submit` turn: the server-recomputed correctness of THIS submission
+   *  (`booleans.equivalent`, var-capped). The agent's tactical choice reads this,
+   *  never the client's `submit.correct` flag — a client can't claim correct to
+   *  skip remediation while the server records a miss. */
+  currentSubmitCorrect?: boolean;
+  /** Server-derived count of PRIOR wrong (recomputed) submissions per item this
+   *  session — the heuristic's repeated-miss escalation reads this, not the client
+   *  flag in recentHistory. */
+  priorMissesByItem?: Record<string, number>;
 }
 
 /** A held-out transfer item the agent may fire as a probe. Mirrors the

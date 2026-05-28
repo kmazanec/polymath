@@ -8,11 +8,16 @@ import { validateOutboundAction } from './validateAction.js';
 const lesson = loadLesson(1);
 const SID = '00000000-0000-0000-0000-000000000000';
 function input(event: AgentInput['event'], ruleGatePassed = false): AgentInput {
+  // For tests, mirror the event's `correct` (when present) into the server-derived
+  // `currentSubmitCorrect` the heuristic actually reads — in production the server
+  // recomputes it from the submission; here the test states intent via `correct`.
+  const currentSubmitCorrect = event.kind === 'submit' ? event.correct : undefined;
   return {
     event,
     lesson,
     learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 1, ruleGatePassed },
     recentHistory: [],
+    currentSubmitCorrect,
   };
 }
 
@@ -124,10 +129,8 @@ describe('inner-agent flow (heuristic, key-free)', () => {
   });
 
   it('a second wrong submit on the same item drops to a simpler item (criterion 3)', async () => {
-    const inp = input({ kind: 'submit', sessionId: SID, itemId: 'l1-or', submission: 'A OR B', correct: false });
-    inp.recentHistory = [
-      { eventKind: 'submit', actionType: 'mount', rationale: 'rephrase', correct: false, itemId: 'l1-or' },
-    ];
+    const inp = input({ kind: 'submit', sessionId: SID, itemId: 'l1-or', submission: 'wrong', correct: false });
+    inp.priorMissesByItem = { 'l1-or': 1 }; // a prior miss on this item (server-derived)
     const action = await new StubAgentClient().propose(inp);
     expect(action.type).toBe('mount');
     if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
