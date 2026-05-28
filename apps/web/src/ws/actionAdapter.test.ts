@@ -28,10 +28,10 @@ describe('adaptAction', () => {
     expect(r.lessonEvents).toBeUndefined();
   });
 
-  it('a TransferProbe mount drives the spine into transferring', () => {
+  it('a TransferProbe mount opens the transfer gate then enters transferring', () => {
     const r = adaptAction(probeMount);
     expect(r.mount?.kind).toBe('TransferProbe');
-    expect(r.lessonEvents).toEqual([{ type: 'enter_transfer' }]);
+    expect(r.lessonEvents).toEqual([{ type: 'set_transfer_ready', ready: true }, { type: 'enter_transfer' }]);
   });
 
   it('transition to mastered → mastery_ok (from a non-transfer phase)', () => {

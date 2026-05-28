@@ -5,7 +5,7 @@ import { WebSocket } from 'ws';
 import { Action } from '@polymath/contract';
 import { createDb, type Db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
-import { events, learnerState, sessions } from './db/schema.js';
+import { events, sessions } from './db/schema.js';
 import { StubAgentClient } from './agent/stubClient.js';
 import { createServer, type PolymathServer } from './server.js';
 import { eq } from 'drizzle-orm';
@@ -273,24 +273,23 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     expect(offTopic!.type === 'answer_question' && offTopic!.topicClassification).toBe('off_topic');
   });
 
-  it('fires a transfer probe when ready, then a correct transfer leads to mastery (F-07 criteria 1,5,7)', async () => {
+  it('fires a transfer probe once the REAL rule gate passes, then a correct transfer leads to mastery (F-07/F-09 criteria 1,5,7)', async () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
-    // Mark the learner ready so the heuristic fires a probe (F-09 wires the real
-    // gate; here we set masteryReady-equivalent via a learner_state row).
-    await db
-      .insert(learnerState)
-      .values({ sessionId, kc: 'AND', bktProbability: 0.99, signals: { ruleGatePassed: true, consecutiveCorrect: 3 } })
-      .onConflictDoNothing();
-
-    const [probe] = await driveSequence(sessionId, [
+    // F-09: the gate is derived from the actual event history (BKT ≥ 0.95 after 3
+    // consecutive correct on the AND KC, no hints, no retries). The first submits
+    // don't pass the gate; once it does, the agent fires the probe. Drive correct
+    // AND submits until a TransferProbe mounts.
+    const actions = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
     ]);
-    expect(probe!.type).toBe('mount');
-    expect(probe!.type === 'mount' && probe!.component.kind).toBe('TransferProbe');
-    const probedItemId = probe!.type === 'mount' && probe!.component.kind === 'TransferProbe' ? probe!.component.itemId : '';
-    const probedExpr = probe!.type === 'mount' && probe!.component.kind === 'TransferProbe' ? probe!.component.expression : '';
+    const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    expect(probe, 'a transfer probe should fire once the rule gate passes').toBeTruthy();
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     expect(probedItemId).toBeTruthy();
 
     // Submit a correct transfer answer (equivalent to the probed expression).
@@ -300,12 +299,18 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     expect(afterTransfer!.type).toBe('transition');
     expect(afterTransfer!.type === 'transition' && afterTransfer!.to).toBe('mastered');
 
-    // The transfer verdict is recorded in the replay log (criterion 5).
+    // The transfer verdict is recorded in the replay log (criterion 5), and the
+    // replay shows the per-turn BKT trajectory rising toward mastery (F-09 crit 8).
     await new Promise((r) => setTimeout(r, 300));
     const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
-      events: { payload: { transferVerdict?: { correct: boolean } } }[];
+      events: { payload: { transferVerdict?: { correct: boolean }; learnerSnapshot?: { bktByKc?: Record<string, number> } } }[];
     };
     expect(replay.events.some((e) => e.payload.transferVerdict?.correct === true)).toBe(true);
+    const andTrajectory = replay.events
+      .map((e) => e.payload.learnerSnapshot?.bktByKc?.['AND'])
+      .filter((v): v is number => typeof v === 'number');
+    expect(andTrajectory.length).toBeGreaterThanOrEqual(3);
+    expect(andTrajectory.at(-1)!).toBeGreaterThanOrEqual(0.95); // reached mastery threshold
   });
 
   it('refuses a transfer_submitted for an item the session never probed (forgery defense)', async () => {

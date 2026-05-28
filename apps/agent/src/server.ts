@@ -19,6 +19,13 @@ import type {
   TurnSummary,
 } from './agent/client.js';
 import { validateLayer2 } from './agent/layer2.js';
+import { evaluateRuleGate } from './mastery/gate.js';
+import {
+  deriveState,
+  toLearnerState,
+  type DerivedState,
+  type LoggedEvent,
+} from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
 import { loadLesson, type Lesson } from './lessons/loader.js';
 
@@ -57,30 +64,89 @@ function lessonIdForEvent(event: ClientEvent): number {
   return event.kind === 'session_start' ? event.lessonId : 1;
 }
 
-/** Read the learner snapshot the agent reasons over. F-09 populates
- *  `learner_state`; until then this reads whatever rows exist and reports an
- *  empty/zeroed snapshot with the rule gate closed. */
-async function readLearnerSnapshot(db: Db, sessionId: string): Promise<LearnerSnapshot> {
-  const rows = await db
-    .select({ kc: learnerState.kc, bkt: learnerState.bktProbability, signals: learnerState.signals })
-    .from(learnerState)
-    .where(eq(learnerState.sessionId, sessionId));
-  const bktByKc: Record<string, number> = {};
-  let hintsUsed = 0;
-  let consecutiveCorrect = 0;
-  let ruleGatePassed = false;
-  for (const row of rows) {
-    if (row.bkt !== null) bktByKc[row.kc] = row.bkt;
-    const s = (row.signals ?? {}) as {
-      hintsUsed?: number;
-      consecutiveCorrect?: number;
-      ruleGatePassed?: boolean;
-    };
-    hintsUsed += s.hintsUsed ?? 0;
-    consecutiveCorrect = Math.max(consecutiveCorrect, s.consecutiveCorrect ?? 0);
-    ruleGatePassed ||= s.ruleGatePassed ?? false;
+/** Project a logged event payload into the consumer's `LoggedEvent` shape. */
+function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
+  const p = (payload ?? {}) as {
+    event?: { itemId?: string; submission?: string; correct?: boolean };
+    transferVerdict?: { correct?: boolean };
+  };
+  return {
+    kind,
+    itemId: p.event?.itemId ?? p.event?.submission,
+    correct: p.event?.correct,
+    transferCorrect: p.transferVerdict?.correct,
+  };
+}
+
+/**
+ * F-09 single-writer of `learner_state`. Folds the session's prior events PLUS the
+ * just-arrived `current` event into the derived per-KC BKT + behavioral aggregates
+ * (ADR-011), persists them to `learner_state`, and returns the snapshot the agent
+ * reasons over — with `ruleGatePassed` computed from the real rule-gate predicate
+ * (not the F-05 placeholder flag). Runs before the agent proposes so a transfer
+ * probe fires exactly when the gate passes.
+ */
+async function updateAndReadLearnerState(
+  db: Db,
+  sessionId: string,
+  current: ClientEvent,
+  lesson: Lesson,
+  transferVerdict: { itemId: string; correct: boolean } | undefined,
+): Promise<LearnerSnapshot> {
+  const priorRows = await db
+    .select({ kind: events.kind, payload: events.payload })
+    .from(events)
+    .where(eq(events.sessionId, sessionId))
+    .orderBy(events.ts);
+
+  const logged: LoggedEvent[] = priorRows.map((r) => toLoggedEvent(r.kind, r.payload));
+  // Fold in the current event (not yet persisted), threading the server-computed
+  // transfer verdict so a passing transfer counts toward the gate this turn.
+  logged.push(toLoggedEvent(current.kind, { event: current, transferVerdict }));
+
+  const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
+  const learnerState_ = toLearnerState(derived);
+  const gate = evaluateRuleGate(learnerState_, lesson.masteryConfig);
+
+  // Persist one learner_state row per KC (the single writer). Best-effort: a write
+  // failure must not block the turn (the agent still proposes from the in-memory
+  // derived state), so we don't await-throw into the handler.
+  await persistLearnerState(db, sessionId, derived, gate.passed).catch((err) =>
+    console.error('learner_state persist failed (non-fatal)', err),
+  );
+
+  return {
+    bktByKc: learnerState_.bktByKc,
+    hintsUsed: derived.hintsUsed,
+    consecutiveCorrect: derived.consecutiveCorrect,
+    ruleGatePassed: gate.passed,
+  };
+}
+
+/** Write the derived state to `learner_state`, one row per KC (upsert). */
+async function persistLearnerState(
+  db: Db,
+  sessionId: string,
+  derived: DerivedState,
+  ruleGatePassed: boolean,
+): Promise<void> {
+  const signals = {
+    hintsUsed: derived.hintsUsed,
+    consecutiveCorrect: derived.consecutiveCorrect,
+    retries: derived.retries,
+    submits: derived.submits,
+    transferPassed: derived.transferPassed,
+    ruleGatePassed,
+  };
+  for (const [kc, params] of Object.entries(derived.bktByKc)) {
+    await db
+      .insert(learnerState)
+      .values({ sessionId, kc, bktProbability: params.pMastered, masteryState: ruleGatePassed ? 'rule_gate_passed' : 'practicing', signals })
+      .onConflictDoUpdate({
+        target: [learnerState.sessionId, learnerState.kc],
+        set: { bktProbability: params.pMastered, masteryState: ruleGatePassed ? 'rule_gate_passed' : 'practicing', signals },
+      });
   }
-  return { bktByKc, hintsUsed, consecutiveCorrect, ruleGatePassed };
 }
 
 /** Recent turns (newest last) for short agent context. */
@@ -272,11 +338,13 @@ export async function handleClientFrame(
   // Assemble the turn input the agent reasons over: lesson content, the learner
   // snapshot, and recent history (ADR-003: fresh-per-turn, structured state only).
   const lesson = getLesson(lessonIdForEvent(event));
-  const [learner, recentHistory, transferCandidates, transferVerdict] = await Promise.all([
-    readLearnerSnapshot(deps.db, event.sessionId),
+  // The transfer verdict (server-computed) must be known before deriving learner
+  // state, so a passed transfer sets the gate's transfer condition this turn.
+  const transferVerdict = await computeTransferVerdict(deps.db, event);
+  const [learner, recentHistory, transferCandidates] = await Promise.all([
+    updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict),
     readRecentHistory(deps.db, event.sessionId),
     readTransferCandidates(deps.db, event.sessionId, lesson.content.lessonId),
-    computeTransferVerdict(deps.db, event),
   ]);
   const input: AgentInput = {
     event,

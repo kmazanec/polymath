@@ -1,4 +1,4 @@
-import { setup } from 'xstate';
+import { assign, setup } from 'xstate';
 import type { PhaseName } from '@polymath/contract';
 
 /**
@@ -21,6 +21,10 @@ export interface LessonContext {
   lessonId: number;
   /** Set by F-09; F-01 leaves it false so `canDeclareMastery` is a no-op. */
   masteryReady: boolean;
+  /** Set by F-09's rule gate (via `set_transfer_ready`): the learner has cleared
+   *  the behavioral + BKT bar, so `practicing → transferring` is legal. False
+   *  until the gate passes — the spine refuses to enter a transfer probe early. */
+  transferReady: boolean;
 }
 
 export type LessonEvent =
@@ -28,6 +32,7 @@ export type LessonEvent =
   | { type: 'submit' }
   | { type: 'request_hint' }
   | { type: 'resume_practice' }
+  | { type: 'set_transfer_ready'; ready: boolean }
   | { type: 'enter_transfer' }
   | { type: 'assess' }
   | { type: 'mastery_ok' }
@@ -37,7 +42,7 @@ export const lessonMachine = setup({
   types: {
     context: {} as LessonContext,
     events: {} as LessonEvent,
-    input: {} as { lessonId: number; masteryReady?: boolean },
+    input: {} as { lessonId: number; masteryReady?: boolean; transferReady?: boolean },
   },
   guards: {
     /** ADR-005 refusal #3 source: a transition into `mastered` is only legal
@@ -46,6 +51,16 @@ export const lessonMachine = setup({
     /** ADR-005 refusal #1 source: an item only ends on an explicit learner act.
      *  F-01 stub is trivially true (no mid-item auto-advance path exists yet). */
     canEndItem: () => true,
+    /** F-09 rule-gate seam: `practicing → transferring` only when the learner has
+     *  cleared the behavioral + BKT bar (the server-computed rule gate, mirrored
+     *  into `transferReady`). The spine refuses an early transfer probe. */
+    canEnterTransfer: ({ context }) => context.transferReady,
+  },
+  actions: {
+    setTransferReady: assign({
+      transferReady: ({ event }) =>
+        event.type === 'set_transfer_ready' ? event.ready : false,
+    }),
   },
 }).createMachine({
   id: 'lesson_1',
@@ -53,6 +68,7 @@ export const lessonMachine = setup({
   context: ({ input }) => ({
     lessonId: input.lessonId,
     masteryReady: input.masteryReady ?? false,
+    transferReady: input.transferReady ?? false,
   }),
   states: {
     introducing: {
@@ -61,7 +77,8 @@ export const lessonMachine = setup({
     practicing: {
       on: {
         request_hint: { target: 'hint' },
-        enter_transfer: { target: 'transferring' },
+        set_transfer_ready: { actions: 'setTransferReady' },
+        enter_transfer: { target: 'transferring', guard: 'canEnterTransfer' },
         submit: { target: 'assessed', guard: 'canEndItem' },
       },
     },

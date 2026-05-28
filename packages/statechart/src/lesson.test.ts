@@ -34,11 +34,19 @@ describe('lesson_1 statechart', () => {
     expect(actor.getSnapshot().value).toBe('practicing');
   });
 
-  it('practicing → transferring on enter_transfer', () => {
+  it('practicing → transferring on enter_transfer once the rule gate opens (set_transfer_ready)', () => {
     const actor = start();
     actor.send({ type: 'start_practice' });
+    actor.send({ type: 'set_transfer_ready', ready: true });
     actor.send({ type: 'enter_transfer' });
     expect(actor.getSnapshot().value).toBe('transferring');
+  });
+
+  it('REFUSES practicing → transferring while the rule gate is closed (F-09 canEnterTransfer)', () => {
+    const actor = start();
+    actor.send({ type: 'start_practice' });
+    actor.send({ type: 'enter_transfer' }); // no set_transfer_ready → guard refuses
+    expect(actor.getSnapshot().value).toBe('practicing');
   });
 
   it('practicing → assessed on submit', () => {
@@ -51,6 +59,7 @@ describe('lesson_1 statechart', () => {
   it('transferring → assessed on assess', () => {
     const actor = start();
     actor.send({ type: 'start_practice' });
+    actor.send({ type: 'set_transfer_ready', ready: true });
     actor.send({ type: 'enter_transfer' });
     actor.send({ type: 'assess' });
     expect(actor.getSnapshot().value).toBe('assessed');

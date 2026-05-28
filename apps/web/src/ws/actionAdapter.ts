@@ -94,7 +94,10 @@ export function adaptAction(action: Action, ctx?: AdapterContext): AdapterResult
       // makes the hidden-rep refusal + pulse suppression active (they gate on the
       // phase). Without it the probe would render but the refusals stay inert.
       if (action.component.kind === 'TransferProbe') {
-        result.lessonEvents = [{ type: 'enter_transfer' }];
+        // The agent only mounts a probe when the server-side rule gate passed, so
+        // the probe arrival is the signal to open the statechart's transfer guard
+        // (set_transfer_ready) before entering the transferring phase.
+        result.lessonEvents = [{ type: 'set_transfer_ready', ready: true }, { type: 'enter_transfer' }];
       } else if (PRACTICE_KINDS.has(action.component.kind)) {
         // A practice item arriving *during* a transfer probe is the agent
         // remediating a failed transfer: walk the spine transferring → assessed →
