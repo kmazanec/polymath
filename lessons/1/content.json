@@ -1,0 +1,31 @@
+{
+  "lessonId": 1,
+  "title": "Basic operators",
+  "knowledgeComponents": ["AND", "OR", "NOT"],
+  "items": [
+    {
+      "itemId": "l1-and",
+      "kc": "AND",
+      "difficultyTier": 1,
+      "targetExpression": "A AND B",
+      "variables": ["A", "B"],
+      "truthTable": [0, 0, 0, 1]
+    },
+    {
+      "itemId": "l1-or",
+      "kc": "OR",
+      "difficultyTier": 1,
+      "targetExpression": "A OR B",
+      "variables": ["A", "B"],
+      "truthTable": [0, 1, 1, 1]
+    },
+    {
+      "itemId": "l1-not",
+      "kc": "NOT",
+      "difficultyTier": 1,
+      "targetExpression": "NOT A",
+      "variables": ["A"],
+      "truthTable": [1, 0]
+    }
+  ]
+}

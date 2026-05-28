@@ -1,0 +1,20 @@
+{
+  "consecutiveCorrectAtHardestTier": 3,
+  "hintsUsedInLastN_items": 0,
+  "responseTimeFloorMs": 2000,
+  "responseTimeCeilingMs": 60000,
+  "responseTimeMedianBandMs": [2000, 60000],
+
+  "bktMasteryThreshold": 0.95,
+  "bktPrior_L0": 0.3,
+  "bktTransition_T": 0.2,
+  "bktGuess_G": 0.15,
+  "bktSlip_S": 0.1,
+
+  "hintRatioMax": 0.2,
+  "retryRatioMax": 0.3,
+
+  "requireHandCuratedTransfer": true,
+  "requireDifferentRepresentation": true,
+  "requireExplainBackPass": true
+}

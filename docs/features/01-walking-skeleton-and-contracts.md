@@ -137,7 +137,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
 - [x] **Chunk 4 — `@polymath/statechart`.** XState v5 `lesson_1` spine with locked phases
       `introducing → practicing → {hint, transferring} → assessed → {mastered, remediating}`,
       stub (constant) guards. Transition tests (incl. `introducing→practicing`, criterion 7).
-- [ ] **Chunk 5 — `lessons/1/`.** `mastery_config.json` (full ADR-011 param set) +
+- [x] **Chunk 5 — `lessons/1/`.** `mastery_config.json` (full ADR-011 param set) +
       `content.json` (3 stub items, one per L1 KC). Zod config schema + contract test.
 - [ ] **Chunk 6 — `apps/agent`.** Drizzle schema + migrations (`sessions`, `events`,
       `learner_state`, `transfer_bank` empty, `validated_distractors`); REST
@@ -213,3 +213,15 @@ inbound kinds + `ServerMessage` 3 outbound kinds), `lessonConfig.ts` (`MasteryCo
 - **Decision — `LessonContext` is minimal** (`lessonId`, `masteryReady`); F-09 expands it with
   BKT params + behavioral signals. `masteryReady` is seedable via machine `input` for testing.
 - **Tests:** 11 passing; typecheck + build clean.
+
+**Chunk 5 — `lessons/1/`.** `mastery_config.json` = the full ADR-011 parameter set verbatim
+(BKT 0.95 / Corbett-Anderson priors / 2–60s band / behavioral flags / transfer + explain-back
+required). `content.json` = 3 stub items, one per L1 KC: `l1-and` (`A AND B`, `[0,0,0,1]`),
+`l1-or` (`A OR B`, `[0,1,1,1]`), `l1-not` (`NOT A`, `[1,0]`).
+- **Decision — config shape lives in `@polymath/contract`** (`MasteryConfig`/`LessonContent`),
+  validated there; the JSON here is the lesson-1 *values*. Lessons 2/3/4 add sibling dirs with
+  the same shape (directory-scoped ownership, no cross-feature edits).
+- **Verification:** each item's hand-authored `truthTable` was checked against
+  `@polymath/booleans` `truthTable().out` — all three match (`l1-and/or/not` OK). The
+  permanent automated version of this check lands in chunk 6 (the agent loads lessons at boot,
+  so the loader+validation test belongs with it).
