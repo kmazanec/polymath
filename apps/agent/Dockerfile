@@ -31,6 +31,8 @@ COPY packages/booleans packages/booleans
 COPY packages/statechart packages/statechart
 COPY apps/agent apps/agent
 COPY lessons lessons
+# seedTransferBank reads seed_data/transfer_items.json (repo root) at boot.
+COPY seed_data seed_data
 WORKDIR /app/apps/agent
 EXPOSE 8080
 # Migrations run on boot (index.ts calls runMigrations before listening).

@@ -227,6 +227,34 @@ describe('wire protocol', () => {
     ).toThrow();
   });
 
+  it('rejects an oversized repSubmission (lesson-scale bounds at the wire boundary)', () => {
+    // A truth-table submission with > 1024 cells is an abusive/buggy frame.
+    expect(() =>
+      ClientEvent.parse({
+        kind: 'submit',
+        sessionId: SID,
+        itemId: 'i',
+        submission: 'A',
+        repSubmission: { rep: 'truth_table', cells: new Array(2000).fill(0) },
+      }),
+    ).toThrow();
+    // A circuit submission with thousands of nodes is rejected too.
+    expect(() =>
+      ClientEvent.parse({
+        kind: 'submit',
+        sessionId: SID,
+        itemId: 'i',
+        submission: 'A',
+        repSubmission: {
+          rep: 'circuit',
+          expression: 'A',
+          nodes: new Array(1000).fill({ id: 'x' }),
+          edges: [],
+        },
+      }),
+    ).toThrow();
+  });
+
   it('rejects an unknown client event kind', () => {
     expect(() => ClientEvent.parse({ kind: 'nope', sessionId: SID })).toThrow();
   });

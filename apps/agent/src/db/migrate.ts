@@ -10,12 +10,21 @@ const migrationsFolder = path.resolve(
 );
 
 /** Apply all pending migrations then idempotently seed static data. Run on
- *  container startup and from CI. */
+ *  container startup and from CI.
+ *
+ *  Migrations are fatal (a broken schema must halt boot). The transfer-bank seed
+ *  is **non-fatal**: a missing/bad seed file degrades to a stale-or-empty
+ *  read-only bank (F-07/F-16 see fewer probes) rather than crashing the agent
+ *  before it can serve health — a degraded read path beats a total outage. */
 export async function runMigrations(connectionString: string): Promise<void> {
   const { db, pool } = createDb(connectionString);
   try {
     await migrate(db, { migrationsFolder });
-    await seedTransferBank(db);
+    try {
+      await seedTransferBank(db);
+    } catch (err) {
+      console.error('transfer_bank seed failed — continuing with the existing bank', err);
+    }
   } finally {
     await pool.end();
   }

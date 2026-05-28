@@ -27,33 +27,37 @@ function seedFilePath(): string {
 /**
  * Idempotently seed the `transfer_bank` table from `seed_data/transfer_items.json`.
  *
- * Strategy: check the row-count first; if any rows exist skip the seed entirely.
- * This keeps the operation O(1) on already-seeded deployments and avoids ON
- * CONFLICT complexity given the item_id primary key.
+ * Strategy: **upsert keyed on `item_id`** (every boot reconciles the table to the
+ * canonical file). A `COUNT(*) > 0` skip would permanently strand a partial or
+ * stale bank — e.g. if a prior deploy left only some lessons, future boots would
+ * never repair it. The upsert is cheap at lesson scale (32 rows) and self-healing.
  *
  * Validates every item against the Zod schema before inserting.
  */
 export async function seedTransferBank(db: Db): Promise<void> {
-  // Idempotency guard: skip if any rows already exist.
-  const result = await db.execute<{ count: string }>(
-    sql`SELECT COUNT(*) AS count FROM transfer_bank`,
-  );
-  const existing = Number(result.rows[0]?.count ?? 0);
-  if (existing > 0) {
-    return;
-  }
-
   const raw: unknown = JSON.parse(fs.readFileSync(seedFilePath(), 'utf8'));
   const items = TransferItemFile.parse(raw);
 
-  await db.insert(transferBank).values(
-    items.map((item) => ({
-      itemId: item.itemId,
-      lessonId: item.lessonId,
-      targetExpression: item.targetExpression,
-      truthTable: item.truthTable,
-      targetRep: item.targetRep,
-      hiddenReps: item.hiddenReps,
-    })),
-  );
+  await db
+    .insert(transferBank)
+    .values(
+      items.map((item) => ({
+        itemId: item.itemId,
+        lessonId: item.lessonId,
+        targetExpression: item.targetExpression,
+        truthTable: item.truthTable,
+        targetRep: item.targetRep,
+        hiddenReps: item.hiddenReps,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: transferBank.itemId,
+      set: {
+        lessonId: sql`excluded.lesson_id`,
+        targetExpression: sql`excluded.target_expression`,
+        truthTable: sql`excluded.truth_table`,
+        targetRep: sql`excluded.target_rep`,
+        hiddenReps: sql`excluded.hidden_reps`,
+      },
+    });
 }

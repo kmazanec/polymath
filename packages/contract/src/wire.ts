@@ -36,21 +36,35 @@ export type SessionId = z.infer<typeof SessionId>;
  *    form is in `submission`; `expression` here echoes it for self-containment,
  *    plus the rep-native source (topology / pseudocode text) for replay.
  */
+/**
+ * Lesson-scale bounds on the rep-native payload. The truth-table enumeration is
+ * capped at 10 distinct variables (2^10 = 1024 rows), so cells never legitimately
+ * exceed that; circuits are hand-built and small. These `.max()` limits reject
+ * megabyte-scale `submit` frames at the contract boundary before the agent
+ * persists/logs them for replay (a malformed/abusive client otherwise gets an
+ * unbounded write). Generous vs. real L1 use, well below an abuse threshold.
+ */
+const MAX_CELLS = 1024;
+const MAX_NODES = 512;
+const MAX_EDGES = 512;
+const MAX_EXPRESSION_LEN = 2000;
+const MAX_SOURCE_LEN = 4000;
+
 export const RepSubmission = z.discriminatedUnion('rep', [
   z.object({
     rep: z.literal('truth_table'),
-    cells: z.array(z.union([z.literal(0), z.literal(1)])),
+    cells: z.array(z.union([z.literal(0), z.literal(1)])).max(MAX_CELLS),
   }),
   z.object({
     rep: z.literal('circuit'),
-    expression: z.string(),
-    nodes: z.array(z.record(z.string(), z.unknown())),
-    edges: z.array(z.record(z.string(), z.unknown())),
+    expression: z.string().max(MAX_EXPRESSION_LEN),
+    nodes: z.array(z.record(z.string(), z.unknown())).max(MAX_NODES),
+    edges: z.array(z.record(z.string(), z.unknown())).max(MAX_EDGES),
   }),
   z.object({
     rep: z.literal('pseudocode'),
-    expression: z.string(),
-    source: z.string(),
+    expression: z.string().max(MAX_EXPRESSION_LEN),
+    source: z.string().max(MAX_SOURCE_LEN),
   }),
 ]);
 export type RepSubmission = z.infer<typeof RepSubmission>;

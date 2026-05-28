@@ -29,7 +29,9 @@ export function renderComponent(spec: ComponentSpec): ReactElement {
     case 'LessonIntro':
       return <LessonIntro spec={spec} />;
     case 'CircuitBuilder':
-      return <CircuitBuilder spec={spec} hiddenReps={[]} />;
+      // Visibility is driven by spec.visibleReps inside the component; F-07 will
+      // pass an explicit hiddenReps override when it wires transfer probes.
+      return <CircuitBuilder spec={spec} />;
     case 'PseudocodeChallenge':
       return <PseudocodeChallenge spec={spec} />;
     case 'TruthTablePractice':

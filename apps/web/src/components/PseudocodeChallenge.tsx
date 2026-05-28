@@ -38,7 +38,17 @@ interface Props {
 
 const EDITOR_LABEL_ID = 'pseudocode-editor-label';
 
-export function PseudocodeChallenge({ spec, onSubmit }: Props): ReactElement {
+/**
+ * Suppress the pseudocode workspace when its rep isn't visible (a transfer probe
+ * hiding `pseudocode` must not expose it). Guards before the inner hooks. Mirrors
+ * CircuitBuilder / TruthTable.
+ */
+export function PseudocodeChallenge({ spec, onSubmit }: Props): ReactElement | null {
+  if (!spec.visibleReps.includes('pseudocode')) return null;
+  return <PseudocodeChallengeInner spec={spec} onSubmit={onSubmit} />;
+}
+
+function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // Track source in state so tests can set it via fireEvent

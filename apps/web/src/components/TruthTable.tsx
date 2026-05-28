@@ -24,6 +24,16 @@ interface TruthTableProps {
   onSubmit?: (event: TruthTableSubmitEvent) => void;
 }
 
+/**
+ * Suppress the truth-table workspace when its rep isn't visible (a transfer probe
+ * hiding `truth_table` must not expose it). Guards before the inner component's
+ * hooks. Mirrors CircuitBuilder's visibleReps gate.
+ */
+export function TruthTable({ spec, onSubmit }: TruthTableProps): ReactElement | null {
+  if (!spec.visibleReps.includes('truth_table')) return null;
+  return <TruthTableInner spec={spec} onSubmit={onSubmit} />;
+}
+
 type CellVerdict = 'correct' | 'incorrect' | null;
 
 /**
@@ -40,7 +50,7 @@ type CellVerdict = 'correct' | 'incorrect' | null;
  * The coordinator wires this into registry.tsx under the TruthTablePractice case.
  * PulseContext subscriber (AC8 / T-02c) is deferred until F-03 lands PulseContext.
  */
-export function TruthTable({ spec, onSubmit }: TruthTableProps): ReactElement {
+function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
   // -----------------------------------------------------------------------
   // Parse expression and derive table
   // -----------------------------------------------------------------------

@@ -73,6 +73,37 @@ describe('renderComponent', () => {
     expect(container.querySelector('[data-testid="source-input"]')).not.toBeNull();
   });
 
+  it('hides a rep workspace when its rep is not in visibleReps (probe integrity)', () => {
+    // A transfer probe mounts e.g. CircuitBuilder with visibleReps that exclude
+    // circuit — the workspace must not render (would otherwise expose a hidden rep).
+    const hiddenCircuit: ComponentSpec = {
+      kind: 'CircuitBuilder',
+      targetExpression: 'A AND B',
+      claimedTruthTable: [0, 0, 0, 1],
+      allowedGates: ['AND', 'OR', 'NOT'],
+      visibleReps: ['truth_table'], // circuit NOT visible
+    };
+    expect(render(renderComponent(hiddenCircuit)).container.querySelector('.circuit-builder')).toBeNull();
+
+    const hiddenTruthTable: ComponentSpec = {
+      kind: 'TruthTablePractice',
+      expression: 'A AND B',
+      claimedTruthTable: [0, 0, 0, 1],
+      visibleReps: ['circuit'], // truth_table NOT visible
+    };
+    expect(render(renderComponent(hiddenTruthTable)).container.querySelector('.truth-table')).toBeNull();
+
+    const hiddenPseudo: ComponentSpec = {
+      kind: 'PseudocodeChallenge',
+      targetExpression: 'A AND B',
+      claimedTruthTable: [0, 0, 0, 1],
+      visibleReps: ['circuit'], // pseudocode NOT visible
+    };
+    expect(
+      render(renderComponent(hiddenPseudo)).container.querySelector('[data-testid="source-input"]'),
+    ).toBeNull();
+  });
+
   it('renders a TBD placeholder for an unimplemented variant', () => {
     const spec: ComponentSpec = { kind: 'HintCard', level: 1, body: 'b' };
     const { getByRole } = render(renderComponent(spec));

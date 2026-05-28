@@ -233,7 +233,10 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
 }
 
 export function CircuitBuilder(props: CircuitBuilderProps): ReactElement | null {
-  // During a transfer probe with this rep hidden, render nothing (AC9).
+  // Render nothing when the circuit rep is suppressed: either the spec doesn't
+  // list it in visibleReps, or a transfer probe explicitly hides it (AC9). Both
+  // are the probe-integrity boundary — a hidden rep must not be reachable.
+  if (!props.spec.visibleReps.includes('circuit')) return null;
   if (props.hiddenReps?.includes('circuit')) return null;
   return (
     <ReactFlowProvider>
