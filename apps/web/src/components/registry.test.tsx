@@ -61,6 +61,18 @@ describe('renderComponent', () => {
     expect(container.querySelector('.circuit-builder')).not.toBeNull();
   });
 
+  it('renders the PseudocodeChallenge for real (no longer a TBD stub)', () => {
+    const spec: ComponentSpec = {
+      kind: 'PseudocodeChallenge',
+      targetExpression: 'A AND B',
+      claimedTruthTable: [0, 0, 0, 1],
+      visibleReps: ['pseudocode'],
+    };
+    const { container, queryByRole } = render(renderComponent(spec));
+    expect(queryByRole('note')).toBeNull();
+    expect(container.querySelector('[data-testid="source-input"]')).not.toBeNull();
+  });
+
   it('renders a TBD placeholder for an unimplemented variant', () => {
     const spec: ComponentSpec = { kind: 'HintCard', level: 1, body: 'b' };
     const { getByRole } = render(renderComponent(spec));
