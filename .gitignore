@@ -19,3 +19,7 @@ coverage/
 
 # drizzle generated artifacts kept; local pg data not
 pgdata/
+
+# playwright artifacts
+apps/web/test-results/
+apps/web/playwright-report/
