@@ -255,3 +255,230 @@ export function equivalent(a: string, b: string): boolean {
   const outB = tableOver(astB, vars);
   return outA.every((v, i) => v === outB[i]);
 }
+
+// ---------------------------------------------------------------------------
+// F-04 additions — strictly additive; existing API is unchanged.
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert an Ast back to a canonical Boolean expression string that `parse()`
+ * accepts. Used internally by `parsePseudocode` round-trip tests and exported
+ * so the web component can populate `submission` / `repSubmission.expression`.
+ *
+ * Parenthesises sub-expressions conservatively so the output is always
+ * unambiguous when re-parsed.
+ */
+export function astToExpression(ast: Ast): string {
+  switch (ast.kind) {
+    case 'var':
+      return ast.name;
+    case 'not':
+      return `NOT (${astToExpression(ast.operand)})`;
+    case 'and': {
+      const l =
+        ast.left.kind === 'or'
+          ? `(${astToExpression(ast.left)})`
+          : astToExpression(ast.left);
+      const r =
+        ast.right.kind === 'or'
+          ? `(${astToExpression(ast.right)})`
+          : astToExpression(ast.right);
+      return `${l} AND ${r}`;
+    }
+    case 'or': {
+      return `${astToExpression(ast.left)} OR ${astToExpression(ast.right)}`;
+    }
+  }
+}
+
+/**
+ * Pseudocode grammar (superset of `parse`'s canonical grammar):
+ *
+ *   program  := if_expr
+ *   if_expr  := 'if' or_expr 'then' or_expr | or_expr
+ *   or_expr  := and_expr ( 'or' and_expr )*
+ *   and_expr := not_expr ( 'and' not_expr )*
+ *   not_expr := 'not' not_expr | atom
+ *   atom     := VAR | '(' if_expr ')'
+ *
+ * Keywords (`if`, `then`, `and`, `or`, `not`) are case-insensitive. Variables
+ * are single letters (uppercased). `true` / `false` literals are NOT supported;
+ * use variable expressions. Distinct-variable count is capped at 10 (guards
+ * 2^n truth-table growth).
+ *
+ * @throws {BooleanParseError} on any syntax error or variable-count violation.
+ */
+export function parsePseudocode(src: string): Ast {
+  const tokens = tokenizePseudo(src);
+  const parser = new PseudoParser(tokens);
+  const ast = parser.parse();
+  // Cap distinct variables
+  const vars = variables(ast);
+  if (vars.length > 10) {
+    throw new BooleanParseError(
+      `Expression uses ${vars.length.toString()} distinct variables; maximum is 10 (guards 2^n truth-table size).`,
+    );
+  }
+  return ast;
+}
+
+// --- pseudocode tokenizer ---
+
+type PseudoToken =
+  | { type: 'var'; name: string }
+  | { type: 'not' }
+  | { type: 'and' }
+  | { type: 'or' }
+  | { type: 'if' }
+  | { type: 'then' }
+  | { type: 'lparen' }
+  | { type: 'rparen' };
+
+const PSEUDO_KEYWORDS: Record<string, PseudoToken['type']> = {
+  NOT: 'not',
+  AND: 'and',
+  OR: 'or',
+  IF: 'if',
+  THEN: 'then',
+};
+
+function tokenizePseudo(input: string): PseudoToken[] {
+  const tokens: PseudoToken[] = [];
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i]!;
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+      i++;
+      continue;
+    }
+    if (ch === '(') {
+      tokens.push({ type: 'lparen' });
+      i++;
+      continue;
+    }
+    if (ch === ')') {
+      tokens.push({ type: 'rparen' });
+      i++;
+      continue;
+    }
+    if (/[A-Za-z]/.test(ch)) {
+      let word = '';
+      while (i < input.length && /[A-Za-z]/.test(input[i]!)) {
+        word += input[i]!;
+        i++;
+      }
+      const upper = word.toUpperCase();
+      const keyword = PSEUDO_KEYWORDS[upper];
+      if (keyword) {
+        tokens.push({ type: keyword } as PseudoToken);
+      } else if (upper === 'TRUE' || upper === 'FALSE') {
+        throw new BooleanParseError(
+          `Boolean literals "true"/"false" are not supported — use variable expressions.`,
+        );
+      } else if (upper.length === 1) {
+        tokens.push({ type: 'var', name: upper });
+      } else {
+        throw new BooleanParseError(
+          `Unexpected identifier "${word}" — variables are single letters; keywords are: not, and, or, if, then`,
+        );
+      }
+      continue;
+    }
+    throw new BooleanParseError(`Illegal character "${ch}" at position ${i}`);
+  }
+  return tokens;
+}
+
+// --- pseudocode recursive-descent parser ---
+
+class PseudoParser {
+  private pos = 0;
+  constructor(private readonly tokens: PseudoToken[]) {}
+
+  parse(): Ast {
+    if (this.tokens.length === 0) {
+      throw new BooleanParseError('Empty expression');
+    }
+    const ast = this.parseIfExpr();
+    if (this.pos < this.tokens.length) {
+      throw new BooleanParseError('Unexpected trailing tokens');
+    }
+    return ast;
+  }
+
+  private peek(): PseudoToken | undefined {
+    return this.tokens[this.pos];
+  }
+
+  private parseIfExpr(): Ast {
+    if (this.peek()?.type === 'if') {
+      this.pos++; // consume 'if'
+      const condition = this.parseOr();
+      const thenTok = this.peek();
+      if (thenTok?.type !== 'then') {
+        throw new BooleanParseError(
+          'Expected "then" after condition in "if … then …" expression',
+        );
+      }
+      this.pos++; // consume 'then'
+      const consequent = this.parseOr();
+      // if P then Q === (NOT P) OR Q
+      return {
+        kind: 'or',
+        left: { kind: 'not', operand: condition },
+        right: consequent,
+      };
+    }
+    return this.parseOr();
+  }
+
+  private parseOr(): Ast {
+    let left = this.parseAnd();
+    while (this.peek()?.type === 'or') {
+      this.pos++;
+      const right = this.parseAnd();
+      left = { kind: 'or', left, right };
+    }
+    return left;
+  }
+
+  private parseAnd(): Ast {
+    let left = this.parseNot();
+    while (this.peek()?.type === 'and') {
+      this.pos++;
+      const right = this.parseNot();
+      left = { kind: 'and', left, right };
+    }
+    return left;
+  }
+
+  private parseNot(): Ast {
+    if (this.peek()?.type === 'not') {
+      this.pos++;
+      return { kind: 'not', operand: this.parseNot() };
+    }
+    return this.parseAtom();
+  }
+
+  private parseAtom(): Ast {
+    const tok = this.peek();
+    if (!tok) {
+      throw new BooleanParseError('Unexpected end of expression — operand expected');
+    }
+    if (tok.type === 'var') {
+      this.pos++;
+      return { kind: 'var', name: tok.name };
+    }
+    if (tok.type === 'lparen') {
+      this.pos++;
+      const inner = this.parseIfExpr();
+      const close = this.peek();
+      if (close?.type !== 'rparen') {
+        throw new BooleanParseError('Unbalanced parentheses — expected ")"');
+      }
+      this.pos++;
+      return inner;
+    }
+    throw new BooleanParseError(`Unexpected token "${tok.type}" — operand expected`);
+  }
+}

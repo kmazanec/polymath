@@ -5,6 +5,8 @@ import {
   truthTable,
   equivalent,
   variables,
+  parsePseudocode,
+  astToExpression,
   BooleanParseError,
   type Ast,
 } from './index.js';
@@ -266,4 +268,295 @@ describe('Ast type export', () => {
     const ast: Ast = parse('A');
     expect(ast.kind).toBe('var');
   });
+});
+
+// ---------------------------------------------------------------------------
+// parsePseudocode — F-04
+// ---------------------------------------------------------------------------
+
+describe('parsePseudocode', () => {
+  // --- Basic structural equivalences ---
+
+  it('parses a single lowercase variable (uppercases it)', () => {
+    expect(parsePseudocode('a')).toEqual({ kind: 'var', name: 'A' });
+  });
+
+  it('parses a single uppercase variable', () => {
+    expect(parsePseudocode('A')).toEqual({ kind: 'var', name: 'A' });
+  });
+
+  it('parses "a and b" — canonical L1 form', () => {
+    const ast = parsePseudocode('a and b');
+    expect(ast).toEqual({
+      kind: 'and',
+      left: { kind: 'var', name: 'A' },
+      right: { kind: 'var', name: 'B' },
+    });
+  });
+
+  it('parses "a or b"', () => {
+    const ast = parsePseudocode('a or b');
+    expect(ast).toEqual({
+      kind: 'or',
+      left: { kind: 'var', name: 'A' },
+      right: { kind: 'var', name: 'B' },
+    });
+  });
+
+  it('parses "not a"', () => {
+    expect(parsePseudocode('not a')).toEqual({
+      kind: 'not',
+      operand: { kind: 'var', name: 'A' },
+    });
+  });
+
+  it('parses "(a) and (b)" — equivalent to "a and b"', () => {
+    const ast1 = parsePseudocode('a and b');
+    const ast2 = parsePseudocode('(a) and (b)');
+    // Both should produce the same AST
+    expect(ast2).toEqual(ast1);
+  });
+
+  it('parses "(a and b)" — parens around whole expression', () => {
+    expect(parsePseudocode('(a and b)')).toEqual(parsePseudocode('a and b'));
+  });
+
+  // --- if/then sugar ---
+
+  it('parses "if a then b" as "(not a) or b" (implication)', () => {
+    const ast = parsePseudocode('if a then b');
+    // if P then Q === NOT P OR Q
+    expect(equivalent(astToExpression(ast), '(NOT A) OR B')).toBe(true);
+  });
+
+  it('parses "if a and b then c" — precedence in condition and consequent', () => {
+    const ast = parsePseudocode('if a and b then c');
+    expect(equivalent(astToExpression(ast), '(NOT (A AND B)) OR C')).toBe(true);
+  });
+
+  // --- Precedence mirrors the canonical parse ---
+
+  it('NOT binds tighter than AND in pseudocode', () => {
+    // "not a and b" === "(not a) and b"
+    const ast = parsePseudocode('not a and b');
+    expect(ast).toEqual({
+      kind: 'and',
+      left: { kind: 'not', operand: { kind: 'var', name: 'A' } },
+      right: { kind: 'var', name: 'B' },
+    });
+  });
+
+  it('AND binds tighter than OR in pseudocode', () => {
+    // "a or b and c" === "a or (b and c)"
+    const ast = parsePseudocode('a or b and c');
+    expect(ast).toEqual({
+      kind: 'or',
+      left: { kind: 'var', name: 'A' },
+      right: {
+        kind: 'and',
+        left: { kind: 'var', name: 'B' },
+        right: { kind: 'var', name: 'C' },
+      },
+    });
+  });
+
+  // --- Round-trip: every L1 target expression has ≥2 equivalent pseudocode forms ---
+
+  it('round-trip: "A AND B" — two equivalent pseudocode forms', () => {
+    const canonical = 'A AND B';
+    const form1 = parsePseudocode('a and b');
+    const form2 = parsePseudocode('(a) and (b)');
+    expect(equivalent(astToExpression(form1), canonical)).toBe(true);
+    expect(equivalent(astToExpression(form2), canonical)).toBe(true);
+    // and they are equivalent to each other
+    expect(equivalent(astToExpression(form1), astToExpression(form2))).toBe(true);
+  });
+
+  it('round-trip: "A OR B" — two equivalent pseudocode forms', () => {
+    const canonical = 'A OR B';
+    const form1 = parsePseudocode('a or b');
+    const form2 = parsePseudocode('(a or b)');
+    expect(equivalent(astToExpression(form1), canonical)).toBe(true);
+    expect(equivalent(astToExpression(form2), canonical)).toBe(true);
+  });
+
+  it('round-trip: "NOT A" — two equivalent pseudocode forms', () => {
+    const canonical = 'NOT A';
+    const form1 = parsePseudocode('not a');
+    const form2 = parsePseudocode('not (a)');
+    expect(equivalent(astToExpression(form1), canonical)).toBe(true);
+    expect(equivalent(astToExpression(form2), canonical)).toBe(true);
+  });
+
+  it('round-trip: "(A AND B) OR C" — two equivalent pseudocode forms', () => {
+    const canonical = '(A AND B) OR C';
+    const form1 = parsePseudocode('(a and b) or c');
+    const form2 = parsePseudocode('((a) and (b)) or (c)');
+    expect(equivalent(astToExpression(form1), canonical)).toBe(true);
+    expect(equivalent(astToExpression(form2), canonical)).toBe(true);
+  });
+
+  it('round-trip: "NOT (A OR B)" — two equivalent pseudocode forms', () => {
+    const canonical = 'NOT (A OR B)';
+    const form1 = parsePseudocode('not (a or b)');
+    const form2 = parsePseudocode('not ((a) or (b))');
+    expect(equivalent(astToExpression(form1), canonical)).toBe(true);
+    expect(equivalent(astToExpression(form2), canonical)).toBe(true);
+  });
+
+  // --- if/then round-trip ---
+
+  it('round-trip: "if a then b" is equivalent to "(NOT A) OR B"', () => {
+    const ast = parsePseudocode('if a then b');
+    expect(equivalent(astToExpression(ast), '(NOT A) OR B')).toBe(true);
+  });
+
+  // --- Variable count cap ---
+
+  it('throws when more than 10 distinct variables are used', () => {
+    const expr = 'a and b and c and d and e and f and g and h and i and j and k';
+    expect(() => parsePseudocode(expr)).toThrow(BooleanParseError);
+  });
+
+  it('accepts exactly 10 distinct variables', () => {
+    // 10 variables: A-J
+    const expr = 'a and b and c and d and e and f and g and h and i and j';
+    expect(() => parsePseudocode(expr)).not.toThrow();
+  });
+
+  // --- Error cases ---
+
+  it('throws BooleanParseError on empty input', () => {
+    expect(() => parsePseudocode('')).toThrow(BooleanParseError);
+    expect(() => parsePseudocode('   ')).toThrow(BooleanParseError);
+  });
+
+  it('throws on dangling operator', () => {
+    expect(() => parsePseudocode('a and')).toThrow(BooleanParseError);
+  });
+
+  it('throws on unbalanced parentheses', () => {
+    expect(() => parsePseudocode('(a and b')).toThrow(BooleanParseError);
+  });
+
+  it('throws on illegal character', () => {
+    expect(() => parsePseudocode('a & b')).toThrow(BooleanParseError);
+  });
+
+  it('throws on multi-letter identifier (not a keyword)', () => {
+    expect(() => parsePseudocode('foo and b')).toThrow(BooleanParseError);
+  });
+
+  it('throws on "if" without "then"', () => {
+    expect(() => parsePseudocode('if a')).toThrow(BooleanParseError);
+  });
+
+  it('throws on "true" boolean literal', () => {
+    expect(() => parsePseudocode('true')).toThrow(BooleanParseError);
+  });
+
+  it('throws on "false" boolean literal', () => {
+    expect(() => parsePseudocode('false')).toThrow(BooleanParseError);
+  });
+
+  it('throws on trailing tokens (e.g., "a b")', () => {
+    expect(() => parsePseudocode('a b')).toThrow(BooleanParseError);
+  });
+
+  it('throws on a leading operator as atom (e.g., "and a")', () => {
+    expect(() => parsePseudocode('and a')).toThrow(BooleanParseError);
+  });
+
+  // --- astToExpression: AND with an OR on the right parenthesises correctly ---
+
+  it('astToExpression parenthesises OR on the right side of AND', () => {
+    // Build: a and (b or c) — the right child of AND is OR, must be parenthesised
+    const ast: Ast = {
+      kind: 'and',
+      left: { kind: 'var', name: 'A' },
+      right: {
+        kind: 'or',
+        left: { kind: 'var', name: 'B' },
+        right: { kind: 'var', name: 'C' },
+      },
+    };
+    const expr = astToExpression(ast);
+    // Must parse back to the same structure
+    const reParsed = parse(expr);
+    expect(reParsed).toEqual(ast);
+  });
+
+  it('astToExpression parenthesises OR on the LEFT side of AND', () => {
+    // Build: (a or b) and c — the left child of AND is OR, must be parenthesised
+    const ast: Ast = {
+      kind: 'and',
+      left: {
+        kind: 'or',
+        left: { kind: 'var', name: 'A' },
+        right: { kind: 'var', name: 'B' },
+      },
+      right: { kind: 'var', name: 'C' },
+    };
+    const expr = astToExpression(ast);
+    const reParsed = parse(expr);
+    expect(reParsed).toEqual(ast);
+  });
+
+  // --- Case-insensitive keywords ---
+
+  it('accepts uppercase AND/OR/NOT keywords', () => {
+    expect(parsePseudocode('A AND B')).toEqual(parsePseudocode('a and b'));
+    expect(parsePseudocode('A OR B')).toEqual(parsePseudocode('a or b'));
+    expect(parsePseudocode('NOT A')).toEqual(parsePseudocode('not a'));
+  });
+
+  it('accepts mixed-case keywords (e.g. "And")', () => {
+    expect(parsePseudocode('a And b')).toEqual(parsePseudocode('a and b'));
+  });
+
+  // --- astToExpression produces a string parse() can re-parse ---
+
+  it('astToExpression produces a string that parse() can round-trip', () => {
+    const ast = parsePseudocode('not (a and b) or c');
+    const expr = astToExpression(ast);
+    const reParsed = parse(expr);
+    // The re-parsed AST should evaluate identically
+    expect(equivalent(astToExpression(reParsed), expr)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// property test: parsePseudocode → evaluate agrees with canonical form
+// ---------------------------------------------------------------------------
+
+describe('parsePseudocode property: evaluate agrees with canonical', () => {
+  // These expressions are the L1 target expressions from the lesson
+  const L1_EXPRESSIONS = [
+    'A AND B',
+    'A OR B',
+    'NOT A',
+    'NOT (A AND B)',
+    'NOT (A OR B)',
+    '(A AND B) OR C',
+    '(A OR B) AND C',
+    'NOT A AND NOT B',
+    'A OR (B AND C)',
+  ];
+
+  for (const expr of L1_EXPRESSIONS) {
+    it(`parsePseudocode of "${expr.toLowerCase()}" evaluates to the same table as parse("${expr}")`, () => {
+      const pseudoForm = expr.toLowerCase().replace(/ and /g, ' and ').replace(/ or /g, ' or ').replace(/not /g, 'not ');
+      const ast = parsePseudocode(pseudoForm);
+      const canonical = parse(expr);
+      const vars = [...new Set([...variables(ast), ...variables(canonical)])].sort();
+      const n = vars.length;
+      for (let mask = 0; mask < 1 << n; mask++) {
+        const env: Record<string, boolean> = {};
+        for (let bit = 0; bit < n; bit++) {
+          env[vars[bit]!] = (mask & (1 << (n - 1 - bit))) !== 0;
+        }
+        expect(evaluate(ast, env)).toBe(evaluate(canonical, env));
+      }
+    });
+  }
 });
