@@ -166,4 +166,62 @@ I2, **on the critical path**. Convergence point: F-12's mastery gate consumes F-
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+Built to the approved plan. Highlights + decisions made during the build:
+
+- **`@polymath/graph` (NEW workspace pkg)** holds the offline-testable subgraph:
+  `preconditions.ts` (5 ordered, first-fail, pure), `judge.ts` (`ExplainBackJudge`
+  DI seam + key-gated `OpenAIExplainBackJudge` via `withStructuredOutput`),
+  `subgraph.ts` (LangGraph `StateGraph`: preconditions → conditional edge →
+  fail-emit | judge → emit), `retryPrompts.ts`, `prosody.ts`. `runExplainBack`
+  fails closed throughout (missing/undefined judge / throw → `judge_unavailable`).
+  Verdict type imported from `@polymath/contract` (no agent→graph dep for F-12).
+- **Dockerfile lockstep** (deps-stage `COPY packages/graph/package.json` + runtime
+  `COPY packages/graph`) was in place; `kc_vocabulary.json` rides under
+  `COPY lessons lessons`. Verified with a real `docker build` + boot against a
+  Postgres sidecar: image contains `/app/packages/graph` and
+  `/app/lessons/1/kc_vocabulary.json`, `@polymath/graph` resolves via pnpm's
+  `.pnpm` virtual store, migrations run, and `/api/health` → 200 (no
+  WORKSPACE_PKG_NOT_FOUND / ENOENT). `evals/` is correctly NOT in the image.
+- **Server reflex** (`apps/agent/src/server.ts`): the `explain_back_recording_ended`
+  branch runs BEFORE the agent turn (off the LLM/menu path). It links the event to
+  its `ExplainBackPrompt` mount, clamps the window server-side
+  (`effectiveDurationMs = min(client.durationMs, maxDurationSec*1000)`, AC#9; an
+  unsolicited event → window 0 → fail closed), derives kcVocabulary (#4) +
+  var-capped item tokens (#5, `MAX_SUBMIT_VARS=10`) + bridge prosody, runs the
+  rubric, persists `{ explainBackVerdict, validation:{layer:4,…} }` (AC#7), and
+  re-mounts on fail with stock retry copy capping at 2 attempts (AC#8). The
+  **transfer-pass reflex** mounts `ExplainBackPrompt` deterministically on a passed
+  transfer when `requireExplainBackPass` (superseding the I1 `no_action` arm).
+- **Derived state**: `eventConsumer` now folds a persisted PASSING verdict into
+  `explainBackPassed` (replaces the hardcoded `false`); `toLoggedEvent` projects
+  `payload.explainBackVerdict.passed`. This is the F-12 input — fail closed (no
+  verdict → false).
+- **Eval gate (AC#6)**: `evals/explain_back/fixtures.json` (30 text stand-in
+  fixtures) + `packages/graph/src/explainback/eval.test.ts` — an always-on offline
+  preconditions-vs-labels assertion (hard block) PLUS a key-gated `liveIt`
+  ≥90%-agreement LLM-judge gate. Wired into `.gitlab-ci.yml verify`
+  (`OPENAI_API_KEY` forwarded). Threshold lives in `mastery_config.json`
+  (`explainBackJudgeAgreementThreshold: 0.9`; F-12 reads the same key).
+- **Precondition #4 vs #5 subtlety surfaced while authoring fixtures:** the item
+  deriver treats the item's *operator literal* (AND/OR/NOT) as an item token, so a
+  gamer who names the item's own operator DOES reference the item. The AC#4
+  keyword-stuffer fixture therefore names a generic operator the item did NOT use
+  (item operator `NOT`, learner says "OR gates") so #5 honestly fails — the distinct
+  code paths hold.
+
+**Deferred (exactly as the plan defers):**
+- The ~30 **real** labelled recordings (+ real prosody) — manual authoring task,
+  weeks 1–2. The bank uses text-transcript stand-ins meanwhile; real recordings drop
+  into the same fixture shape with no code change.
+- The **live cross-platform device smoke** (WebRTC prosody capture on real
+  keys/devices, iOS-Safari TTS) — see `docs/voice-cross-platform-smoke.md`. The
+  prosody *derivation* is unit-tested with `MockRealtimeSession`; the component
+  swallows TTS throws and degrades a blocked mic to an empty (fail-closed)
+  transcript.
+
+**QA evidence:** `pnpm typecheck` clean; full `pnpm test` green (graph 28, contract
+32, web 155, agent 190+1 skipped); the WS+Postgres **reachability** integration
+test drives raw `explain_back_recording_ended` frames through `handleClientFrame`
+(verdict persisted, retry mount on precondition fail, server-side clamp,
+unsolicited-event fail-closed) — all pass against a throwaway Postgres. Docker image
+built + booted to a healthy `/api/health`.

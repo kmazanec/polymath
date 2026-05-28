@@ -1,8 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadLesson } from './loader.js';
+
+/** Resolve a repo path from this test file (NOT process.cwd(), which differs
+ *  between `pnpm --filter @polymath/agent test` and a root `pnpm test` run). */
+const testDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(testDir, '../../../..');
 
 describe('loadLesson', () => {
   it('loads and validates lesson 1 against the contract + the validator', () => {
@@ -52,7 +58,7 @@ describe('loadLesson', () => {
     );
     // Reuse lesson 1's mastery_config shape.
     const cfg = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), '../../lessons/1/mastery_config.json'), 'utf8'),
+      fs.readFileSync(path.join(repoRoot, 'lessons/1/mastery_config.json'), 'utf8'),
     );
     fs.writeFileSync(path.join(dir, 'mastery_config.json'), JSON.stringify(cfg));
 
