@@ -113,15 +113,15 @@ against the frozen interface.
 - [x] **C2 — Realtime boundary interface + cache-friendly persona** (T-10c seam, T-10d) —
   `voice/realtimeClient.ts` (`RealtimeSession` interface + `MockRealtimeSession`) + `voice/persona.ts`
   (cache-friendly system prompt, stable cache key). → criterion 5.
-- [ ] **C3 — LiveKit Agents bridge** (T-10c) — `voice/bridge.ts` joins room as agent participant,
+- [x] **C3 — LiveKit Agents bridge** (T-10c) — `voice/bridge.ts` joins room as agent participant,
   proxies audio to/from `RealtimeSession`, handles barge-in (interrupt on learner audio). → criterion 3.
-- [ ] **C4 — voice_turn event + OTel attrs** (T-10e, T-10g) — `voice/voiceTurn.ts` (Zod payload) +
+- [x] **C4 — voice_turn event + OTel attrs** (T-10e, T-10g) — `voice/voiceTurn.ts` (Zod payload) +
   `voice/otel.ts` (span with the 8 required attrs, no-op exporter); bridge persists each turn. →
   criteria 2, 7.
-- [ ] **C5 — Browser voice client + Ask-the-tutor affordance** (T-10b) — `apps/web/src/voice/client.ts`
+- [x] **C5 — Browser voice client + Ask-the-tutor affordance** (T-10b) — `apps/web/src/voice/client.ts`
   + `AskTutorButton` requesting mic permission on click only, calling the token endpoint. →
   criteria 1, 6.
-- [ ] **C6 — Token refresh across the 5-min boundary** (T-10a/b) — transparent re-mint before
+- [x] **C6 — Token refresh across the 5-min boundary** (T-10a/b) — transparent re-mint before
   expiry. → criterion 8 (refresh).
 - [ ] **C7 — Playwright desktop e2e + cross-platform checklist + Caddy note** (T-10h, T-10f) —
   Playwright (fake media device) asserts transcript appears; `docs/voice-cross-platform-smoke.md`
@@ -164,3 +164,50 @@ large stable persona first (cacheable prefix), volatile lesson context last.
 Tests: `realtimeClient.test.ts` 10 + `persona.test.ts` 9 = 19 passed (pure, no DB).
 
 > Downstream chunks (C3 bridge, C4 event/OTel) consume the **frozen** `RealtimeSession` above — do not reshape it.
+
+### C4 — voice_turn event + OTel attributes
+`apps/agent/src/voice/voiceTurn.ts`: `VoiceTurnPayload` Zod schema `{turnId, transcript:{learner?,tutor?}, prosody?,
+modelVersion, cacheHit, ttftMs, bargeIn, transcriptLogId}`; `logVoiceTurn(db, sessionId, payload)` inserts a
+`kind:'voice_turn'` events row and returns `{transcriptLogId}` = the row uuid (no migration — `events.payload` is
+already JSONB). `apps/agent/src/voice/otel.ts`: `recordVoiceTurnSpan(attrs)` emits span `voice.turn` via
+`trace.getTracer('polymath.voice')` carrying exactly the 9 required attrs (`turn_id, learner_id, lesson_id, phase,
+model_version, cache_hit, ttft_ms, barge_in, transcript_log_id`). No provider registered in prod code → the OTel API
+no-ops until F-20 wires exporters; the test registers an `InMemorySpanExporter` to assert the attrs.
+Tests: `voiceTurn.test.ts` 1 (DB) + `otel.test.ts` 1 = green.
+
+### C3 — LiveKit Agents bridge
+`apps/agent/src/voice/bridge.ts` — `VoiceBridge` wires an injected `RealtimeSession` (mocked in tests, LiveKit-backed
+in prod) to the room: `start()` builds the persona, connects, subscribes to transcript/audio, forwards tutor audio via
+an injected `publishAudio`; `onLearnerAudioActivity()` is the VAD hook — if `isResponding()`, it sets `bargeIn:true`,
+calls `interrupt()` (drops the unemitted tutor queue → no further frames) and finalizes the turn; `ttftMs` is measured
+from the learner-final `at` to the first tutor output (injectable clock). Each completed/barged-in turn is persisted via
+`logVoiceTurn` + spanned via `recordVoiceTurnSpan`. No `@livekit/agents` import — the real LiveKit-backed session +
+room-publishing callback plug into the same injected surface (deferred to live wiring).
+Tests: `bridge.test.ts` 4 (happy path persists a turn; barge-in interrupts + logs `bargeIn:true`; cleanup idempotent).
+
+### C5 — Browser voice client + Ask-the-tutor affordance
+`apps/web/src/voice/client.ts` — `VoiceClient.start()` (call on click) requests mic via `getUserMedia` *only here*
+(criterion 6), POSTs the token endpoint (503→`unavailable`, graceful), then joins via an injected `RoomConnector`
+(default lazy-`import('livekit-client')` so the module loads/tests run without the SDK). `apps/web/src/voice/AskTutorButton.tsx`
+— a real `<button>` that calls `start()` on click and reflects state; never calls `getUserMedia` on mount.
+Tests: `client.test.ts` 8 + `AskTutorButton.test.tsx` 9 = green (the mount-without-getUserMedia test proves criterion 6).
+
+### C6 — Token refresh across the 5-minute boundary
+`apps/web/src/voice/tokenRefresh.ts` — `TokenRefresher.start(expiresAt)` schedules a re-mint at `expiresAt − skew − now`
+(skew default 60s, floor 0), then on fire mints → applies → re-schedules off the *new* expiry (rolling, indefinite); a
+`mint` failure calls `onError` + retries on a bounded backoff so a transient failure doesn't end refresh while the token
+still has ~skew of validity; `stop()` is idempotent. Tests: `tokenRefresh.test.ts` 7 = green (deterministic; injected clock+timer).
+
+### Integration (coordinator)
+- Added optional `RoomConnector.updateToken(token)`; `VoiceClient` constructs a `TokenRefresher` after a successful
+  connect (only when the connector supports `updateToken`) and `stop()`s it on teardown. The default connector's
+  `updateToken` does a fast reconnect with the fresh token (livekit-client has no in-place token swap; refresh fires at
+  T−60s, well inside the old token's validity).
+- Mounted `<AskTutorButton sessionId={sessionId} />` into `App.tsx` beside the existing text question form (the spoken
+  counterpart), gated on a non-null `sessionId`.
+- Added `livekit-client` to `apps/web` (runtime dep for the default connector).
+
+**Verification (coordinator-run):** `pnpm typecheck` clean across the workspace; `pnpm --filter @polymath/web build`
+succeeds (Vite handles the runtime-assembled dynamic import); full `pnpm test` = **425 passed | 1 skipped** (the 1 skip
+is the pre-existing API-key-gated `agent/src/agent/eval/eval.test.ts`, untouched by F-10). Agent voice suite 30 passed,
+web voice suite 24 passed.

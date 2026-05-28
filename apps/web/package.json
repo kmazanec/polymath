@@ -22,6 +22,7 @@
     "@xstate/react": "^5.0.2",
     "@xyflow/react": "^12.10.2",
     "codemirror": "^6.0.2",
+    "livekit-client": "2.19.0",
     "motion": "^12.40.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

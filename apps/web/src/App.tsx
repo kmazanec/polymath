@@ -8,6 +8,7 @@ import { AnimateOrNot } from './motion/AnimateOrNot.js';
 import { renderComponent, type RepSubmitPayload } from './components/registry.js';
 import { transferRepRefusal } from './copy/refusals.js';
 import { LESSON_1_INTRO } from './lessonIntroContent.js';
+import { AskTutorButton } from './voice/AskTutorButton.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
 
@@ -272,6 +273,11 @@ export function App(): ReactElement {
           Ask
         </button>
       </form>
+
+      {/* The spoken counterpart to the text question form: the mic permission is
+          requested only when this is clicked, never at session start. Mounts once
+          the session id exists (the token endpoint is session-scoped). */}
+      {sessionId && <AskTutorButton sessionId={sessionId} />}
 
       <p aria-live="polite" data-conn={conn} data-phase={phase}>
         Agent: {conn}
