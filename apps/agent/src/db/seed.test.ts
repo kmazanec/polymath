@@ -9,6 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { createDb, type Db } from './client.js';
+import { runMigrations } from './migrate.js';
 import { seedTransferBank } from './seed.js';
 import pg from 'pg';
 
@@ -22,6 +23,10 @@ describe.skipIf(!dbAvailable)('seedTransferBank — idempotency (DB-gated)', () 
   let pool: pg.Pool;
 
   beforeAll(async () => {
+    // The CI Postgres is a fresh container with no schema — apply migrations
+    // first so `transfer_bank` exists (matches the integration test's pattern).
+    await runMigrations(connectionString);
+
     const client = createDb(connectionString);
     db = client.db;
     pool = client.pool;
