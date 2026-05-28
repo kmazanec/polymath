@@ -136,6 +136,17 @@ Convergence: single PR. The deploy sub-task is the bottleneck; everything else r
 
 **Wall-clock estimate: 5–7 days.** This is the *only* iteration where serial wall-clock dominates parallelism budget.
 
+> **Build notes from F-01 (carried forward):**
+> - **Deploy port:** a sibling project on the shared droplet already binds host port `8080`.
+>   The compose stack publishes only Caddy (parameterized via `CADDY_HOST_PORT`, default 8080)
+>   and keeps agent/postgres on the internal network; pick a free host port (or front via the
+>   host Caddy) when deploying. Local-dev/deploy concern only — no contract impact.
+> - **F-05 (inner agent loop):** wrap the agent's `propose` call with a timeout — the WS handler
+>   awaits it with no deadline (safe for F-01's sync stub, a hang risk once it's an LLM call).
+> - **Any feature feeding learner input into `@polymath/booleans`:** cap the distinct-variable
+>   count before `truthTable`/`equivalent` (2^n enumeration; the grammar permits 26 vars).
+>   Unreachable in F-01 (the stub ignores `submission`).
+
 ### I1 — Lesson 1 cross-rep gym
 
 ```mermaid

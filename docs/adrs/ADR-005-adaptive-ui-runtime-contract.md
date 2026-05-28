@@ -85,6 +85,8 @@ type Action =
 
 Every Action carries `rationale`. Every Action is logged with `(timestamp, learnerStateSnapshot, agentInput, agentOutput, statechartDecision, statechartReason)`. The full per-session replay is a deliverable artifact — see [Round 7 — evaluation & mastery instrumentation].
 
+> **Clarification (F-01):** these four are the **wire** Action variants — the only shapes that cross the agent↔statechart boundary. The tactical menu in [ADR-003](./ADR-003-statechart-plus-bounded-inner-agent.md) (`rephrase`, `simpler_item`, `alt_representation`, `propose_transfer_probe`, …) is the agent's *internal decision vocabulary*; each such decision **resolves into** a `mount` or `transition` Action. The menu is not a competing union, and menu verbs must not be added to the wire `Action` type. (`sessionId` on the wire protocol is a server-minted UUID — validated as such at the contract boundary.)
+
 Schema validation is enforced server-side using Zod. The LLM is prompted with the schema (via OpenAI structured outputs / Anthropic tool-use / equivalent), and any malformed response is retried once; persistent malformed output falls back to `no_action`.
 
 ### Three explicit refusals (the stability policy)

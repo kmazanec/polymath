@@ -153,7 +153,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
       healthchecks), `infra/caddy/polymath.caddyfile` (WS upgrade on `/agent`),
       `infra/deploy.sh`, `infra/smoke.sh`, `.github/workflows/ci.yml`. Verify
       `docker compose up` healthy locally + `smoke.sh` against localhost + `caddy validate`.
-- [ ] **Step 6 — Adversarial review** (spec-compliance + security on Opus; robustness +
+- [x] **Step 6 — Adversarial review** (spec-compliance + security on Opus; robustness +
       efficiency on Sonnet), triage-fix, **Step 6.5 retro**, rebase onto local main, push,
       open PR.
 
@@ -228,6 +228,44 @@ all four checks through Caddy.
 Re-verification after Wave 2: `pnpm -r typecheck` clean; **85 tests pass** (booleans 40,
 contract 17, statechart 11, agent 12, web 5); docker-compose stack rebuilt, `smoke.sh` passes
 all four checks, and graceful shutdown confirmed (0s drain with an open WS).
+
+### Retro
+
+1. **What did we learn about the system that wasn't in the architecture?**
+   - The droplet/dev port **8080 is already taken by a sibling project** (a `uvicorn` service).
+     The compose stack is parameterized (`CADDY_HOST_PORT`) and uses internal ports + Caddy
+     routing, so this is a local-dev/droplet-port-allocation concern, not an architecture change.
+     Propagated to ROADMAP (cross-cutting note for deploy) below.
+   - The `Action` wire union (ADR-005: `mount|transition|answer_question|no_action`) and the
+     ADR-003 tactical menu (`rephrase`, `simpler_item`, …) initially *look* contradictory. They
+     aren't — the menu is the agent's internal decision vocabulary that resolves into wire
+     Actions. This is now documented in `action.ts` so F-05 doesn't add menu verbs to the wire
+     union. Worth a one-line clarification in ARCHITECTURE/ADR-005 (proposed below).
+2. **What did we learn that changes the roadmap?** Nothing structural. The contract surface
+   matched the ADRs cleanly; no missing integration feature surfaced. Two small forward notes
+   for later features (below) rather than roadmap edits.
+3. **What contract changed?** One refinement, not a reshape: `sessionId` on the wire is now
+   `z.string().uuid()` (`SessionId`) instead of a bare string — a security fix (reject malformed
+   ids at the boundary). It's stricter but append-only-safe; downstream features already mint
+   UUIDs (`POST /api/session`), so none are affected. Locked in `packages/contract/src/wire.ts`.
+4. **What should the next feature builder do differently?**
+   - **F-05 (inner agent loop):** wrap `agent.propose` with a timeout (the WS handler awaits it
+     with no deadline — fine for the sync stub, a hang risk once it's an LLM call).
+   - **F-05+ (anything feeding learner input into `@polymath/booleans`):** cap the distinct-
+     variable count before calling `truthTable`/`equivalent` (2^n; the grammar allows 26 vars →
+     64M rows). Unreachable today because the stub ignores `submission`.
+   - **Coverage threshold pattern:** the per-package `test` script gates coverage
+     (`vitest run --coverage` + 100% thresholds in `booleans`); reuse this for any package that
+     claims a coverage bar. Don't put the source file in vitest's coverage `exclude` (that
+     silently zeroes the report — hit during chunk 2).
+
+#### Propagated to
+- **ROADMAP.md** — added a deploy note (sibling project holds :8080; use `CADDY_HOST_PORT` /
+  internal ports) and forward notes for F-05 (propose timeout; cap booleans var count).
+- **ADR-005** — added a one-line clarification that the tactical menu resolves into the 4 wire
+  Action variants (it is not a competing union).
+- No new ADR needed (no decision was *reversed*; the `SessionId` tightening is a refinement
+  within ADR-005/009, not a new architectural decision).
 
 ### Decisions & evidence (appended as chunks complete)
 
