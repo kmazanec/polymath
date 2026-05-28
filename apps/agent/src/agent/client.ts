@@ -36,6 +36,11 @@ export interface AgentInput {
    *  item (correctness is decided server-side via `booleans.equivalent` against the
    *  bank's canonical expression — the agent never re-derives it). */
   transferVerdict?: { itemId: string; correct: boolean };
+  /** True when a transfer probe is currently active (mounted, not yet submitted)
+   *  for the session. The hint arm refuses during a probe — the transfer-probe
+   *  refusal (ADR-005 #2) extends to hints server-side, not just the disabled
+   *  button (F-06 criterion 8, defense in depth). */
+  inTransferProbe?: boolean;
 }
 
 /** A held-out transfer item the agent may fire as a probe. Mirrors the

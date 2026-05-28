@@ -114,6 +114,16 @@ export class HeuristicMoveProvider implements MoveProvider {
     }
 
     if (ev.kind === 'request_hint') {
+      // ADR-005 refusal #2 extends to hints: no hint during a transfer probe, even
+      // if the (normally-disabled) affordance is somehow triggered. Server-side
+      // defense in depth, not just the disabled button.
+      if (input.inTransferProbe) {
+        return Promise.resolve({
+          move: 'no_action',
+          reason: 'wait_for_learner',
+          rationale: 'hints are withheld during a transfer probe (heuristic provider)',
+        });
+      }
       return Promise.resolve(proposeHint(ev.itemId, input));
     }
 

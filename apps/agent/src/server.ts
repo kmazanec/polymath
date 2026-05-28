@@ -293,6 +293,24 @@ async function mostRecentProbeItemId(db: Db, sessionId: string): Promise<string 
   return null;
 }
 
+/** Whether a transfer probe is currently active for the session: the most recent
+ *  relevant turn mounted a `TransferProbe` and no `transfer_submitted` has resolved
+ *  it since. Used to extend the hidden-rep refusal to hints (ADR-005 #2). */
+async function isInTransferProbe(db: Db, sessionId: string): Promise<boolean> {
+  const rows = await db
+    .select({ kind: events.kind, payload: events.payload })
+    .from(events)
+    .where(eq(events.sessionId, sessionId))
+    .orderBy(desc(events.ts))
+    .limit(MAX_SESSION_EVENTS);
+  for (const row of rows) {
+    if (row.kind === 'transfer_submitted') return false; // a probe was resolved
+    const c = (row.payload as { action?: { component?: { kind?: string } } })?.action?.component;
+    if (c?.kind === 'TransferProbe') return true; // mounted and unresolved
+  }
+  return false;
+}
+
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
 async function proposeWithTimeout(agent: AgentClient, input: AgentInput): Promise<Action> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -363,10 +381,11 @@ export async function handleClientFrame(
   // The transfer verdict (server-computed) must be known before deriving learner
   // state, so a passed transfer sets the gate's transfer condition this turn.
   const transferVerdict = await computeTransferVerdict(deps.db, event);
-  const [learner, recentHistory, transferCandidates] = await Promise.all([
+  const [learner, recentHistory, transferCandidates, inTransferProbe] = await Promise.all([
     updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict),
     readRecentHistory(deps.db, event.sessionId),
     readTransferCandidates(deps.db, event.sessionId, lesson.content.lessonId),
+    isInTransferProbe(deps.db, event.sessionId),
   ]);
   const input: AgentInput = {
     event,
@@ -375,6 +394,7 @@ export async function handleClientFrame(
     recentHistory,
     transferCandidates,
     transferVerdict,
+    inTransferProbe,
   };
 
   // Propose an action (under a timeout), then validate it server-side before it

@@ -48,6 +48,12 @@ const MoveSchema = z.object({
    *  `hintBody` is the templated (L1/L2) or free-form (L3) text. */
   hintLevel: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable(),
   hintBody: z.string().nullable(),
+  /** Transfer-probe fields (F-07). The held-out item the learner must reproduce
+   *  in `probeTargetRep`, with `probeHiddenReps` excluded from the workspace. */
+  probeExpression: z.string().nullable(),
+  probeTargetRep: Rep.nullable(),
+  probeHiddenReps: z.array(Rep).nullable(),
+  probeItemId: z.string().nullable(),
 });
 type RawMove = z.infer<typeof MoveSchema>;
 
@@ -85,6 +91,18 @@ function toTacticalMove(raw: RawMove): TacticalMove {
       };
     case 'propose_mastery_transition':
       return { move: 'propose_mastery_transition', rationale: r };
+    case 'propose_transfer_probe':
+      if (!raw.probeExpression || !raw.probeTargetRep || !raw.probeItemId) {
+        throw new Error('propose_transfer_probe requires probeExpression + probeTargetRep + probeItemId');
+      }
+      return {
+        move: 'propose_transfer_probe',
+        expression: raw.probeExpression,
+        targetRep: raw.probeTargetRep,
+        hiddenReps: raw.probeHiddenReps ?? [],
+        itemId: raw.probeItemId,
+        rationale: r,
+      };
     case 'propose_hint':
       return {
         move: 'propose_hint',
