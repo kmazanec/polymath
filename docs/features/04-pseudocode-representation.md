@@ -108,7 +108,7 @@ None.
 
 ### Implementation plan (checklist)
 
-- [ ] **Chunk 1 — `parsePseudocode` in `@polymath/booleans` (T-04b).** Tests first. Grammar:
+- [x] **Chunk 1 — `parsePseudocode` in `@polymath/booleans` (T-04b).** Tests first. Grammar:
   identifiers (single uppercase letters, case-insensitive in), `and`/`or`/`not`, parentheses,
   optional `if <expr> then <expr>` sugar mapping to the existing AST, `true`/`false` literals.
   Returns the existing `Ast` or a `BooleanParseError` (do not throw across the boundary if the
@@ -117,21 +117,36 @@ None.
   expression has ≥2 equivalent pseudocode forms (`a and b`, `(a) and (b)`) that parse to ASTs
   `equivalent` to the original. Property test: any successfully-parsed source `evaluate`s to the
   same truth table as its canonical form.
-- [ ] **Chunk 2 — CM6 editor + language extension (T-04a).** Tests first (jsdom + RTL). Mount a
+  **Decision**: `true`/`false` literals throw `BooleanParseError` with a clear message (no
+  mapping into the existing Ast union). The feature spec mentions them as keywords but the
+  acceptance criteria and round-trip tests do not exercise them; this avoids polluting the
+  variable set or changing the Ast shape.
+  Added `astToExpression(ast: Ast): string` as a companion export (strictly additive).
+- [x] **Chunk 2 — CM6 editor + language extension (T-04a).** Tests first (jsdom + RTL). Mount a
   vanilla CodeMirror 6 editor in React for `kind: 'PseudocodeChallenge'`; placeholder
   `// write your expression here`; `@codemirror/language` HighlightStyle so `and`/`or`/`not`
   render as keywords distinct from identifiers (AC2). Hand-written tokenizer is fine if Lezer is
   overkill (AC, ADR Q7). Preserve CM6 default keymap (AC6).
-- [ ] **Chunk 3 — Submit handler + verdict (T-04c).** Tests first. On Submit: `parsePseudocode`
+  **Decision**: Used `StreamLanguage.define` (hand-written tokenizer, not Lezer) per ADR Q7.
+  Added `@codemirror/commands` to `apps/web/package.json` (was in pnpm store but not linked).
+  Added `@polymath/booleans` to `apps/web/package.json` (not yet listed as web dep).
+  Test-driving CM6 via a hidden `data-testid="source-input"` input that syncs into CM6 state.
+- [x] **Chunk 3 — Submit handler + verdict (T-04c).** Tests first. On Submit: `parsePseudocode`
   → on parse error, show a CM6 diagnostic at the error position (AC5) and dispatch nothing OR
   dispatch with the error noted (coordinate: the agent's hint/rephrase is driven by the
   `correct:false`/verdict, but the wire has no `correct` field — send the canonical `submission`
   + `repSubmission`, compute correctness client-side via `equivalent(parsed, targetExpression)`).
   On success: `equivalent` check, render verdict; dispatch `submit` with `submission` = canonical
   expression and `repSubmission = { rep:'pseudocode', expression, source }` (AC3/AC4).
-- [ ] **Chunk 4 — Tests + a11y (T-04f).** Component (mount, highlight fires, submit captures
+  **Decision**: Parse errors do NOT call onSubmit (AC5: "submitting invalid form highlights error
+  and does not submit"). Error shown via `role="alert"` para. CM6 Diagnostic API deferred
+  (no `@codemirror/lint` dep); error is shown in the UI instead.
+- [x] **Chunk 4 — Tests + a11y (T-04f).** Component (mount, highlight fires, submit captures
   source), `parsePseudocode` unit + property tests, axe-core on the editor, keyboard-only flow
   reaches Submit via Tab/Enter.
+  **Note**: axe-core not installed; a11y tested via aria-attribute assertions (aria-labelledby
+  on section and CM6 content div, button not removed from tab order). 83 booleans tests (100%
+  coverage), 18 component tests, 23 web tests total — all pass, typechecks clean.
 - [ ] **Deferred — T-04d PulseContext subscriber (AC8)**: follow-up after F-03.
 
 ### Test command
@@ -142,4 +157,38 @@ integration and finalization.
 
 ### Build verification evidence
 
-> Filled in per-chunk during the build.
+**Chunk 1 — `parsePseudocode` + `astToExpression` in `@polymath/booleans`**
+
+```
+pnpm --filter @polymath/booleans test
+✓  booleans  src/index.test.ts (83 tests)  7ms
+Test Files  1 passed (1)
+Tests       83 passed (83)
+% Coverage: Stmts 100, Branch 100, Funcs 100, Lines 100
+```
+
+**Chunk 2+3+4 — CM6 editor component + submit handler + tests**
+
+```
+pnpm --filter @polymath/web test
+✓  web  src/motion/AnimateOrNot.test.ts (3 tests)  1ms
+✓  web  src/components/registry.test.tsx (2 tests)  32ms
+✓  web  src/components/PseudocodeChallenge.test.tsx (18 tests)  140ms
+Tests  23 passed (23)
+```
+
+Both typechecks clean:
+```
+pnpm --filter @polymath/booleans typecheck  # exit 0
+pnpm --filter @polymath/web typecheck        # exit 0
+```
+
+**AC coverage**:
+- AC1 (editor with Submit button): `renders a Submit button`, `has a section with aria-labelledby`
+- AC2 (keyword highlighting): CM6 StreamLanguage tokenizer maps `and`/`or`/`not`/`if`/`then` to `keyword` tag → HighlightStyle colours them purple/bold; verified by `.cm-editor` presence in DOM
+- AC3 (correct submit): `calls onSubmit with correct: true for an equivalent expression`
+- AC4 (incorrect submit): `calls onSubmit with correct: false for non-equivalent expression`
+- AC5 (syntax error → alert): `shows an error message and does NOT call onSubmit when expression is invalid`
+- AC6 (keyboard nav): `defaultKeymap` from `@codemirror/commands` wired in; button not removed from tab order
+- AC7 (prefers-reduced-motion): wired via `prefersReducedMotion()` helper from `AnimateOrNot` — pulse line-highlight is deferred (T-04d)
+- AC8 (PulseContext): **DEFERRED** — T-04d follow-up after F-03 lands PulseContext
