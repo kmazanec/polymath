@@ -1,12 +1,21 @@
 import type { ReactElement } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { usePulse } from '../canvas/PulseContext.js';
 
 /**
  * Custom react-flow node types for the circuit canvas. The pulse highlights the
  * active node with a blue fill + thick border (color-blind-safe: intensity +
- * shape, never red/green — ADR-004 / acceptance criterion 10). The `active` flag
- * is set by the PulseRenderer as the schedule advances.
+ * shape, never red/green — ADR-004 / acceptance criterion 10). Each node reads
+ * the active step from PulseContext itself and compares its own id — so a pulse
+ * tick re-renders only the node that changed, not the whole node array (the
+ * parent does not rebuild every node's `data` per tick).
  */
+
+/** True when this node id is the one the pulse is currently lighting up. */
+function useIsActive(nodeId: string): boolean {
+  const { activeStep, schedule } = usePulse();
+  return activeStep !== null && schedule[activeStep]?.nodeId === nodeId;
+}
 
 const activeStyle = (active: boolean): React.CSSProperties => ({
   borderWidth: active ? 3 : 1,
@@ -19,8 +28,8 @@ const activeStyle = (active: boolean): React.CSSProperties => ({
   fontSize: 12,
 });
 
-export function InputNode({ data }: NodeProps): ReactElement {
-  const active = Boolean((data as { active?: boolean }).active);
+export function InputNode({ id, data }: NodeProps): ReactElement {
+  const active = useIsActive(id);
   return (
     <div style={activeStyle(active)} data-node="input" data-active={active}>
       {String((data as { name?: string }).name ?? '?')}
@@ -29,9 +38,9 @@ export function InputNode({ data }: NodeProps): ReactElement {
   );
 }
 
-export function GateNode({ data }: NodeProps): ReactElement {
-  const d = data as { gate?: string; active?: boolean };
-  const active = Boolean(d.active);
+export function GateNode({ id, data }: NodeProps): ReactElement {
+  const d = data as { gate?: string };
+  const active = useIsActive(id);
   const isNot = d.gate === 'NOT';
   return (
     <div style={activeStyle(active)} data-node="gate" data-gate={d.gate} data-active={active}>
@@ -43,8 +52,8 @@ export function GateNode({ data }: NodeProps): ReactElement {
   );
 }
 
-export function OutputNode({ data }: NodeProps): ReactElement {
-  const active = Boolean((data as { active?: boolean }).active);
+export function OutputNode({ id }: NodeProps): ReactElement {
+  const active = useIsActive(id);
   return (
     <div style={activeStyle(active)} data-node="output" data-active={active}>
       <Handle type="target" position={Position.Left} id="a" />

@@ -6,6 +6,7 @@ import {
   outputValue,
   pulseSchedule,
 } from './circuitModel.js';
+import { astToExpression } from './circuitSubmission.js';
 
 /** A AND B: inputs A,B → AND gate → output. */
 const andCircuit: Circuit = {
@@ -127,22 +128,27 @@ describe('pulseSchedule', () => {
     const s1 = pulseSchedule(hardestCircuit, built, env);
     const s2 = pulseSchedule(hardestCircuit, built, env);
     expect(s1).toEqual(s2);
-    // Snapshot the step ordering + values so a regression is visible.
-    expect(s1.steps.map((s) => ({ nodeId: s.nodeId, value: s.value }))).toMatchInlineSnapshot(`
+    // Snapshot the step ordering + values + SR labels so a regression is visible.
+    expect(s1.steps.map((s) => ({ nodeId: s.nodeId, value: s.value, label: s.label })))
+      .toMatchInlineSnapshot(`
       [
         {
+          "label": "AND gate evaluates: true and false equals false.",
           "nodeId": "and",
           "value": false,
         },
         {
+          "label": "NOT gate evaluates: not true equals false.",
           "nodeId": "not",
           "value": false,
         },
         {
+          "label": "OR gate evaluates: false or false equals false.",
           "nodeId": "or",
           "value": false,
         },
         {
+          "label": "Output latches false.",
           "nodeId": "out",
           "value": false,
         },
@@ -176,11 +182,13 @@ describe('pulseSchedule', () => {
 });
 
 describe('equivalence check is the submission truth-maker', () => {
-  it('a correct circuit is equivalent to the target expression', () => {
-    const built = buildCircuit(andCircuit);
+  it('the built circuit (rendered to a string) is equivalent to the target', () => {
+    const built = buildCircuit(hardestCircuit);
     expect(built.ok).toBe(true);
     if (!built.ok) return;
-    // Round-trip the built AST back to a string the validator accepts.
-    expect(equivalent('A AND B', 'A AND B')).toBe(true);
+    const expr = astToExpression(built.ast);
+    // Assert the ACTUAL built expression — not a constant tautology.
+    expect(equivalent(expr, '(A AND B) OR (NOT C)')).toBe(true);
+    expect(equivalent(expr, 'A OR B')).toBe(false);
   });
 });

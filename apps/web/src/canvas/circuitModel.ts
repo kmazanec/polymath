@@ -167,6 +167,9 @@ export interface PulseStep {
   value: boolean;
   /** Edge ids (source→target) that animate into this node, for the renderer. */
   fromEdges: { source: string; target: string }[];
+  /** Screen-reader sentence in gate semantics, e.g.
+   *  "AND gate evaluates: true and false equals false." (acceptance criterion 11). */
+  label: string;
 }
 
 /** The full pulse schedule + the input assignment it was computed for. */
@@ -192,41 +195,81 @@ export function pulseSchedule(
   const byId = new Map<string, CircuitNode>();
   for (const n of circuit.nodes) byId.set(n.id, n);
 
-  // Evaluate the AST sub-expression rooted at each node by re-deriving it from
-  // the topological order. We track per-node values as we go.
+  // Index incoming edges once (O(E)) so per-node lookups during evaluation are
+  // O(1) rather than re-scanning every edge per node.
+  const incomingPorts = new Map<string, Map<string, string>>();
+  const incomingEdges = new Map<string, { source: string; target: string }[]>();
+  for (const e of circuit.edges) {
+    let ports = incomingPorts.get(e.target);
+    if (!ports) {
+      ports = new Map();
+      incomingPorts.set(e.target, ports);
+    }
+    ports.set(e.targetPort, e.source);
+    const list = incomingEdges.get(e.target) ?? [];
+    list.push({ source: e.source, target: e.target });
+    incomingEdges.set(e.target, list);
+  }
+
+  // Evaluate each node by re-deriving it from the topological order, memoised in
+  // `value`. `built` is the result of buildCircuit on this same circuit, so every
+  // gate input is wired — but we still resolve missing sources to `false` rather
+  // than assert non-null, so a stale/mismatched argument degrades to a safe value
+  // instead of crashing.
   const value = new Map<string, boolean>();
-  const valueOf = (nodeId: string): boolean => {
+  const valueOf = (nodeId: string | undefined): boolean => {
+    if (nodeId === undefined) return false;
     const cached = value.get(nodeId);
     if (cached !== undefined) return cached;
-    const node = byId.get(nodeId)!;
+    const node = byId.get(nodeId);
+    if (!node) return false;
     if (node.type === 'input') {
       const v = env[node.name] ?? false;
       value.set(nodeId, v);
       return v;
     }
-    const incoming = incomingByPort(circuit.edges, nodeId);
+    const incoming = incomingPorts.get(nodeId);
     if (node.type === 'output') {
-      const v = valueOf(incoming.get('a')!);
+      const v = valueOf(incoming?.get('a'));
       value.set(nodeId, v);
       return v;
     }
     if (node.gate === 'NOT') {
-      const v = !valueOf(incoming.get('a')!);
+      const v = !valueOf(incoming?.get('a'));
       value.set(nodeId, v);
       return v;
     }
-    const a = valueOf(incoming.get('a')!);
-    const b = valueOf(incoming.get('b')!);
+    const a = valueOf(incoming?.get('a'));
+    const b = valueOf(incoming?.get('b'));
     const v = node.gate === 'AND' ? a && b : a || b;
     value.set(nodeId, v);
     return v;
   };
 
+  const bool = (b: boolean): string => (b ? 'true' : 'false');
+  const describe = (nodeId: string, value: boolean): string => {
+    const node = byId.get(nodeId);
+    if (!node) return '';
+    if (node.type === 'input') return `Input ${node.name} is ${bool(value)}.`;
+    if (node.type === 'output') return `Output latches ${bool(value)}.`;
+    const ports = incomingPorts.get(nodeId);
+    const a = valueOf(ports?.get('a'));
+    if (node.gate === 'NOT') {
+      return `NOT gate evaluates: not ${bool(a)} equals ${bool(value)}.`;
+    }
+    const b = valueOf(ports?.get('b'));
+    const op = node.gate === 'AND' ? 'and' : 'or';
+    return `${node.gate} gate evaluates: ${bool(a)} ${op} ${bool(b)} equals ${bool(value)}.`;
+  };
+
   const steps: PulseStep[] = built.order.map((nodeId) => {
-    const incoming = circuit.edges
-      .filter((e) => e.target === nodeId)
-      .map((e) => ({ source: e.source, target: e.target }));
-    return { nodeId, value: valueOf(nodeId), fromEdges: incoming };
+    const value = valueOf(nodeId);
+    return {
+      nodeId,
+      value,
+      fromEdges: incomingEdges.get(nodeId) ?? [],
+      label: describe(nodeId, value),
+    };
   });
 
   const vars = variables(built.ast);

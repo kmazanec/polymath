@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useMemo, useState } from 'react';
+import { type ReactElement, useCallback, useMemo, useRef, useState } from 'react';
 import {
   Background,
   ReactFlow,
@@ -52,9 +52,6 @@ function variablesOf(expr: string): string[] {
 
 const nodeTypes = { input: InputNode, gate: GateNode, output: OutputNode };
 
-let seq = 0;
-const nextId = (prefix: string): string => `${prefix}-${seq++}`;
-
 /** Translate the react-flow node/edge state into the pure Circuit model. */
 function toCircuit(nodes: Node[], edges: Edge[]): Circuit {
   const cNodes: Circuit['nodes'] = nodes.map((n) => {
@@ -71,7 +68,9 @@ function toCircuit(nodes: Node[], edges: Edge[]): Circuit {
 }
 
 function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElement {
-  const reduced = prefersReducedMotion();
+  // Read the media query once per mount — it's stable across a session and
+  // matchMedia is a layout-touching call we don't want on every render.
+  const reduced = useMemo(() => prefersReducedMotion(), []);
   const inputVars = useMemo(() => variablesOf(spec.targetExpression), [spec.targetExpression]);
 
   const initialNodes = useMemo<Node[]>(() => {
@@ -93,8 +92,12 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [verdict, setVerdict] = useState<'correct' | 'incorrect' | null>(null);
+  const [failing, setFailing] = useState<Record<string, boolean> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pulse = usePulseRunner();
+  // Per-instance gate-id counter — keeps node ids unique within this workspace
+  // without leaking a shared module-level counter across mounts/instances.
+  const seqRef = useRef(0);
 
   const onConnect = useCallback(
     (c: Connection) => setEdges((eds) => addEdge(c, eds)),
@@ -103,10 +106,11 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
 
   const addGate = useCallback(
     (gate: GateKind) => {
+      const id = `g-${seqRef.current++}`;
       setNodes((ns) => [
         ...ns,
         {
-          id: nextId('g'),
+          id,
           type: 'gate',
           position: { x: 200, y: 40 + ns.length * 20 },
           data: { gate },
@@ -143,10 +147,12 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
     if (!result.ok) {
       setError(result.message);
       setVerdict(null);
+      setFailing(null);
       return;
     }
     setError(null);
     setVerdict(result.correct ? 'correct' : 'incorrect');
+    setFailing(result.failingAssignment);
     onSubmit?.({
       submission: result.expression,
       repSubmission: result.repSubmission,
@@ -175,11 +181,11 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
         </div>
 
         <div className="circuit-canvas" style={{ height: 320 }}>
+          {/* Nodes are passed by stable reference; each node component reads the
+              active pulse step from PulseContext itself, so a pulse tick
+              re-renders only the lit node, not the whole array. */}
           <ReactFlow
-            nodes={nodes.map((n) => ({
-              ...n,
-              data: { ...n.data, active: ctx.schedule[ctx.activeStep ?? -1]?.nodeId === n.id },
-            }))}
+            nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -207,7 +213,13 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
         )}
         {verdict && (
           <p data-verdict-text className="circuit-verdict">
-            {verdict === 'correct' ? 'Correct — equivalent to the target.' : 'Not equivalent yet.'}
+            {verdict === 'correct'
+              ? 'Correct — equivalent to the target.'
+              : failing
+                ? `Not equivalent yet — differs when ${Object.entries(failing)
+                    .map(([k, v]) => `${k}=${v ? 'true' : 'false'}`)
+                    .join(', ')}.`
+                : 'Not equivalent yet.'}
           </p>
         )}
 

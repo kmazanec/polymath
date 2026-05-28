@@ -33,7 +33,8 @@ export interface PulseRunner {
 function describeStep(schedule: PulseSchedule, index: number): string {
   const s = schedule.steps[index];
   if (!s) return '';
-  return `Step ${index + 1} of ${schedule.steps.length}: node ${s.nodeId} evaluates to ${s.value ? 'true' : 'false'}.`;
+  // The step carries a gate-semantics sentence (AC11); prefix with progress.
+  return `Step ${index + 1} of ${schedule.steps.length}: ${s.label}`;
 }
 
 export function usePulseRunner(): PulseRunner {
@@ -81,18 +82,26 @@ export function usePulseRunner(): PulseRunner {
     [clearTimers],
   );
 
-  const step = useCallback((schedule: PulseSchedule) => {
-    setCurrent(schedule);
-    setActiveStep((prev) => {
-      const next = prev === null ? 0 : prev + 1;
-      if (next >= schedule.steps.length) {
-        setAnnouncement('Pulse complete.');
-        return null;
-      }
-      setAnnouncement(describeStep(schedule, next));
-      return next;
-    });
-  }, []);
+  const step = useCallback(
+    (schedule: PulseSchedule) => {
+      // Cancel any in-flight continuous pulse so a mid-session switch to
+      // step-through (e.g. the reduced-motion preference flips) can't leave
+      // stale timers racing against the manual step.
+      clearTimers();
+      setRunning(false);
+      setCurrent(schedule);
+      setActiveStep((prev) => {
+        const next = prev === null ? 0 : prev + 1;
+        if (next >= schedule.steps.length) {
+          setAnnouncement('Pulse complete.');
+          return null;
+        }
+        setAnnouncement(describeStep(schedule, next));
+        return next;
+      });
+    },
+    [clearTimers],
+  );
 
   return { activeStep, running, start, step, current, announcement };
 }

@@ -62,6 +62,7 @@ describe('usePulseRunner', () => {
     act(() => result.current.step(sched));
     expect(result.current.activeStep).toBe(1);
     expect(result.current.announcement).toMatch(/Step 2 of/);
+    expect(result.current.announcement).toMatch(/gate evaluates:/i);
   });
 
   it('step() past the end resets to idle and announces completion', () => {
@@ -76,10 +77,13 @@ describe('usePulseRunner', () => {
     expect(result.current.announcement).toBe('Pulse complete.');
   });
 
-  it('produces a screen-reader announcement naming the node and value', () => {
+  it('produces a gate-semantics screen-reader announcement (AC11)', () => {
     const sched = schedule();
     const { result } = renderHook(() => usePulseRunner());
+    // First step in the hardest circuit is the AND gate with A=true, B=false.
     act(() => result.current.step(sched));
-    expect(result.current.announcement).toMatch(/node and evaluates to false/i);
+    expect(result.current.announcement).toMatch(
+      /AND gate evaluates: true and false equals false/i,
+    );
   });
 });

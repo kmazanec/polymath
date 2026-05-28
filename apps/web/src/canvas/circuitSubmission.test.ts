@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { equivalent } from '@polymath/booleans';
-import { type Circuit } from './circuitModel.js';
-import { astToExpression, evaluateSubmission } from './circuitSubmission.js';
+import { type Circuit, buildCircuit } from './circuitModel.js';
+import { astToExpression, circuitExpression, evaluateSubmission } from './circuitSubmission.js';
 
 const andCircuit: Circuit = {
   nodes: [
@@ -18,10 +18,16 @@ const andCircuit: Circuit = {
 };
 
 describe('astToExpression', () => {
-  it('renders a parsable, equivalent expression', () => {
-    const expr = astToExpression(andCircuit);
-    expect(expr).not.toBeNull();
-    expect(equivalent(expr!, 'A AND B')).toBe(true);
+  it('renders a parsable, equivalent expression from a built circuit', () => {
+    const built = buildCircuit(andCircuit);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    const expr = astToExpression(built.ast);
+    expect(equivalent(expr, 'A AND B')).toBe(true);
+  });
+
+  it('circuitExpression returns null for a malformed circuit', () => {
+    expect(circuitExpression({ nodes: [{ id: 'out', type: 'output' }], edges: [] })).toBeNull();
   });
 });
 
@@ -31,12 +37,13 @@ describe('evaluateSubmission', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.correct).toBe(true);
+    expect(r.failingAssignment).toBeNull();
     expect(r.repSubmission.rep).toBe('circuit');
     expect(r.repSubmission.expression).toBe(r.expression);
     expect(r.repSubmission.nodes).toEqual([{ id: 'A' }]);
   });
 
-  it('marks an inequivalent circuit incorrect (OR built for an AND target)', () => {
+  it('marks an inequivalent circuit incorrect and reports the failing assignment (AC6)', () => {
     const orCircuit: Circuit = {
       ...andCircuit,
       nodes: andCircuit.nodes.map((n) =>
@@ -47,6 +54,10 @@ describe('evaluateSubmission', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.correct).toBe(false);
+    // A OR B differs from A AND B at the first assignment where exactly one is true.
+    expect(r.failingAssignment).not.toBeNull();
+    const env = r.failingAssignment!;
+    expect(env.A !== env.B).toBe(true);
   });
 
   it('returns a typed error for an unwired output rather than throwing', () => {
