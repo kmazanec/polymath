@@ -11,7 +11,7 @@
 
 import { type ReactElement, useEffect, useRef, useState } from 'react';
 import { EditorState } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
+import { EditorView, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap } from '@codemirror/commands';
 import type { ComponentSpec } from '@polymath/contract';
 import { parsePseudocode, astToExpression, equivalent, BooleanParseError } from '@polymath/booleans';
@@ -55,6 +55,7 @@ export function PseudocodeChallenge({ spec, onSubmit }: Props): ReactElement {
       doc: '',
       extensions: [
         booleanPseudocodeExtension,
+        placeholder('// write your expression here'),
         keymap.of(defaultKeymap),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {

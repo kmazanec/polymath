@@ -13,7 +13,11 @@ import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/
 import { tags } from '@lezer/highlight';
 import type { Extension } from '@codemirror/state';
 
-const KEYWORDS = new Set(['and', 'or', 'not', 'if', 'then', 'true', 'false']);
+// Note: 'true' and 'false' are intentionally NOT in this set.
+// parsePseudocode throws BooleanParseError on those literals, so highlighting
+// them as valid keywords would create a misleading UX — the editor would imply
+// they are valid input when they are not.
+const KEYWORDS = new Set(['and', 'or', 'not', 'if', 'then']);
 
 const booleanPseudoLang = StreamLanguage.define({
   name: 'boolean-pseudocode',

@@ -52,6 +52,14 @@ describe('PseudocodeChallenge', () => {
       expect(container.querySelector('.cm-editor')).toBeTruthy();
     });
 
+    it('AC1: editor placeholder text is present on mount', () => {
+      const { container } = render(<PseudocodeChallenge spec={SPEC_AND} />);
+      // CM6 placeholder() renders a .cm-placeholder element with the placeholder text
+      const placeholderEl = container.querySelector('.cm-placeholder');
+      expect(placeholderEl).toBeTruthy();
+      expect(placeholderEl?.textContent).toContain('write your expression here');
+    });
+
     it('has a section with aria-labelledby', () => {
       const { container } = render(<PseudocodeChallenge spec={SPEC_AND} />);
       const section = container.querySelector('section[aria-labelledby]');
@@ -166,6 +174,18 @@ describe('PseudocodeChallenge', () => {
       await waitFor(() => {
         const alert = container.querySelector('[role="alert"]');
         expect(alert?.textContent).toMatch(/parse|error|invalid|illegal|character/i);
+      });
+    });
+
+    it('AC5: alert text includes the error position for illegal characters', async () => {
+      const { container } = render(<PseudocodeChallenge spec={SPEC_AND} />);
+      // 'a &' — illegal char at position 2
+      setSource(container, 'a &');
+      submit(container);
+      await waitFor(() => {
+        const alert = container.querySelector('[role="alert"]');
+        // The tokenizer emits "Illegal character … at position N" — position should appear
+        expect(alert?.textContent).toMatch(/position\s+\d+/i);
       });
     });
   });

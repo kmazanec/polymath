@@ -192,3 +192,54 @@ pnpm --filter @polymath/web typecheck        # exit 0
 - AC6 (keyboard nav): `defaultKeymap` from `@codemirror/commands` wired in; button not removed from tab order
 - AC7 (prefers-reduced-motion): wired via `prefersReducedMotion()` helper from `AnimateOrNot` — pulse line-highlight is deferred (T-04d)
 - AC8 (PulseContext): **DEFERRED** — T-04d follow-up after F-03 lands PulseContext
+
+---
+
+### Adversarial review fixes (wave 1 — post-build review)
+
+**Finding 1 — HIGH (security): Bound parsePseudocode against DoS / stack overflow**
+
+Added two guards to `packages/booleans/src/index.ts`:
+
+1. **Source-length cap**: `parsePseudocode` rejects inputs longer than 2000 characters with
+   `BooleanParseError("Expression is too long … maximum is 2000")` before tokenization.
+   Bound chosen: 2000 chars is ~5× larger than any realistic L1 pseudocode expression while
+   still being well clear of tokenizer / stack overhead.
+
+2. **Recursion-depth cap**: `PseudoParser` tracks a `depth` counter incremented in
+   `enterDepth()` (called at the start of every recursive parse method) and decremented in
+   `leaveDepth()` (called in the `finally` block). When depth exceeds 200, throws
+   `BooleanParseError("Expression is too deeply nested … depth > 200")`. Bound chosen: 200
+   covers deeply nested real-world L1 expressions (10 vars × 4 precedence levels = ~40 deep)
+   while capping pathological `not not not… A` or `((((…A…))))` chains far below the JS
+   call-stack limit (~10 000+). Both errors are `BooleanParseError` (not `RangeError`) so the
+   component's catch block handles them correctly.
+
+New tests (3 added, all in `parsePseudocode` describe block): source >2000 chars → `BooleanParseError` matching `/too long/`; 250-deep nesting → `BooleanParseError` matching `/nested|depth/`; 250 `not` chain → same. 86 booleans tests total, 100% coverage maintained.
+
+**Finding 2 — PARTIAL (AC1): Editor placeholder**
+
+Added `placeholder('// write your expression here')` extension from `@codemirror/view` (already
+a dep, no new dep needed) to the `EditorState.create` extensions array in
+`PseudocodeChallenge.tsx`. The existing `.cm-placeholder` CSS rule is now exercised. Added test:
+`AC1: editor placeholder text is present on mount` — queries `.cm-placeholder` element and asserts
+it contains the required text.
+
+**Finding 3 — PARTIAL (AC5): Error position in alert**
+
+The tokenizer (`tokenizePseudo`) already emitted `"at position N"` for illegal characters (and
+now also for unknown multi-letter identifiers and boolean literals). The `BooleanParseError`
+message carries that position text through unchanged to the `role="alert"` paragraph. No
+`@codemirror/lint` dependency was added (would require a coordinated contract change). AC5 remains
+a **documented PARTIAL**: the error position is surfaced in the alert text (e.g. `Illegal character
+"&" at position 2`) but not as a CM6 in-editor diagnostic / gutter decoration. A true in-editor
+diagnostic would require `@codemirror/lint`, which is not yet a workspace dep. Added test:
+`AC5: alert text includes the error position for illegal characters` — asserts `/position\s+\d+/`.
+
+**Finding 4 — UX drift: true/false keyword highlighting**
+
+Removed `'true'` and `'false'` from the `KEYWORDS` set in `apps/web/src/pseudocode/language.ts`.
+These tokens were highlighted as valid keywords, but `parsePseudocode` throws `BooleanParseError`
+on them — the editor was implying they were valid input. Now they fall through to the `invalid`
+token path (red underline), correctly signalling they are not supported. Comment added to the
+`KEYWORDS` set documenting the decision.

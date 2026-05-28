@@ -306,9 +306,19 @@ export function astToExpression(ast: Ast): string {
  * use variable expressions. Distinct-variable count is capped at 10 (guards
  * 2^n truth-table growth).
  *
- * @throws {BooleanParseError} on any syntax error or variable-count violation.
+ * Input is capped at 2000 characters and parse recursion depth at 200 to
+ * prevent stack overflow / DoS from pathological inputs.
+ *
+ * @throws {BooleanParseError} on any syntax error, variable-count violation,
+ *   input-length violation, or recursion-depth overflow.
  */
 export function parsePseudocode(src: string): Ast {
+  // Source-length guard: prevent DoS from gigantic inputs
+  if (src.length > 2000) {
+    throw new BooleanParseError(
+      `Expression is too long (${src.length.toString()} characters); maximum is 2000.`,
+    );
+  }
   const tokens = tokenizePseudo(src);
   const parser = new PseudoParser(tokens);
   const ast = parser.parse();
@@ -325,14 +335,14 @@ export function parsePseudocode(src: string): Ast {
 // --- pseudocode tokenizer ---
 
 type PseudoToken =
-  | { type: 'var'; name: string }
-  | { type: 'not' }
-  | { type: 'and' }
-  | { type: 'or' }
-  | { type: 'if' }
-  | { type: 'then' }
-  | { type: 'lparen' }
-  | { type: 'rparen' };
+  | { type: 'var'; name: string; pos: number }
+  | { type: 'not'; pos: number }
+  | { type: 'and'; pos: number }
+  | { type: 'or'; pos: number }
+  | { type: 'if'; pos: number }
+  | { type: 'then'; pos: number }
+  | { type: 'lparen'; pos: number }
+  | { type: 'rparen'; pos: number };
 
 const PSEUDO_KEYWORDS: Record<string, PseudoToken['type']> = {
   NOT: 'not',
@@ -352,16 +362,17 @@ function tokenizePseudo(input: string): PseudoToken[] {
       continue;
     }
     if (ch === '(') {
-      tokens.push({ type: 'lparen' });
+      tokens.push({ type: 'lparen', pos: i });
       i++;
       continue;
     }
     if (ch === ')') {
-      tokens.push({ type: 'rparen' });
+      tokens.push({ type: 'rparen', pos: i });
       i++;
       continue;
     }
     if (/[A-Za-z]/.test(ch)) {
+      const wordStart = i;
       let word = '';
       while (i < input.length && /[A-Za-z]/.test(input[i]!)) {
         word += input[i]!;
@@ -370,29 +381,35 @@ function tokenizePseudo(input: string): PseudoToken[] {
       const upper = word.toUpperCase();
       const keyword = PSEUDO_KEYWORDS[upper];
       if (keyword) {
-        tokens.push({ type: keyword } as PseudoToken);
+        tokens.push({ type: keyword, pos: wordStart } as PseudoToken);
       } else if (upper === 'TRUE' || upper === 'FALSE') {
         throw new BooleanParseError(
-          `Boolean literals "true"/"false" are not supported — use variable expressions.`,
+          `Boolean literals "true"/"false" are not supported at position ${wordStart.toString()} — use variable expressions.`,
         );
       } else if (upper.length === 1) {
-        tokens.push({ type: 'var', name: upper });
+        tokens.push({ type: 'var', name: upper, pos: wordStart });
       } else {
         throw new BooleanParseError(
-          `Unexpected identifier "${word}" — variables are single letters; keywords are: not, and, or, if, then`,
+          `Unexpected identifier "${word}" at position ${wordStart.toString()} — variables are single letters; keywords are: not, and, or, if, then`,
         );
       }
       continue;
     }
-    throw new BooleanParseError(`Illegal character "${ch}" at position ${i}`);
+    throw new BooleanParseError(`Illegal character "${ch}" at position ${i.toString()}`);
   }
   return tokens;
 }
 
 // --- pseudocode recursive-descent parser ---
 
+/** Maximum parse recursion depth — generous for real L1 pseudocode but well
+ *  below the JS call-stack limit (~10 000+). Guards against crafted deep-nest
+ *  inputs like `((((…X…))))` or `not not not … X`. */
+const MAX_PARSE_DEPTH = 200;
+
 class PseudoParser {
   private pos = 0;
+  private depth = 0;
   constructor(private readonly tokens: PseudoToken[]) {}
 
   parse(): Ast {
@@ -410,54 +427,88 @@ class PseudoParser {
     return this.tokens[this.pos];
   }
 
-  private parseIfExpr(): Ast {
-    if (this.peek()?.type === 'if') {
-      this.pos++; // consume 'if'
-      const condition = this.parseOr();
-      const thenTok = this.peek();
-      if (thenTok?.type !== 'then') {
-        throw new BooleanParseError(
-          'Expected "then" after condition in "if … then …" expression',
-        );
-      }
-      this.pos++; // consume 'then'
-      const consequent = this.parseOr();
-      // if P then Q === (NOT P) OR Q
-      return {
-        kind: 'or',
-        left: { kind: 'not', operand: condition },
-        right: consequent,
-      };
+  /** Increment depth and throw BooleanParseError if the limit is exceeded. */
+  private enterDepth(): void {
+    this.depth++;
+    if (this.depth > MAX_PARSE_DEPTH) {
+      throw new BooleanParseError(
+        `Expression is too deeply nested (depth > ${MAX_PARSE_DEPTH.toString()}); simplify by removing unnecessary parentheses or NOT chains.`,
+      );
     }
-    return this.parseOr();
+  }
+
+  private leaveDepth(): void {
+    this.depth--;
+  }
+
+  private parseIfExpr(): Ast {
+    this.enterDepth();
+    try {
+      if (this.peek()?.type === 'if') {
+        this.pos++; // consume 'if'
+        const condition = this.parseOr();
+        const thenTok = this.peek();
+        if (thenTok?.type !== 'then') {
+          throw new BooleanParseError(
+            'Expected "then" after condition in "if … then …" expression',
+          );
+        }
+        this.pos++; // consume 'then'
+        const consequent = this.parseOr();
+        // if P then Q === (NOT P) OR Q
+        return {
+          kind: 'or',
+          left: { kind: 'not', operand: condition },
+          right: consequent,
+        };
+      }
+      return this.parseOr();
+    } finally {
+      this.leaveDepth();
+    }
   }
 
   private parseOr(): Ast {
-    let left = this.parseAnd();
-    while (this.peek()?.type === 'or') {
-      this.pos++;
-      const right = this.parseAnd();
-      left = { kind: 'or', left, right };
+    this.enterDepth();
+    try {
+      let left = this.parseAnd();
+      while (this.peek()?.type === 'or') {
+        this.pos++;
+        const right = this.parseAnd();
+        left = { kind: 'or', left, right };
+      }
+      return left;
+    } finally {
+      this.leaveDepth();
     }
-    return left;
   }
 
   private parseAnd(): Ast {
-    let left = this.parseNot();
-    while (this.peek()?.type === 'and') {
-      this.pos++;
-      const right = this.parseNot();
-      left = { kind: 'and', left, right };
+    this.enterDepth();
+    try {
+      let left = this.parseNot();
+      while (this.peek()?.type === 'and') {
+        this.pos++;
+        const right = this.parseNot();
+        left = { kind: 'and', left, right };
+      }
+      return left;
+    } finally {
+      this.leaveDepth();
     }
-    return left;
   }
 
   private parseNot(): Ast {
-    if (this.peek()?.type === 'not') {
-      this.pos++;
-      return { kind: 'not', operand: this.parseNot() };
+    this.enterDepth();
+    try {
+      if (this.peek()?.type === 'not') {
+        this.pos++;
+        return { kind: 'not', operand: this.parseNot() };
+      }
+      return this.parseAtom();
+    } finally {
+      this.leaveDepth();
     }
-    return this.parseAtom();
   }
 
   private parseAtom(): Ast {

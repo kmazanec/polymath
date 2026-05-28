@@ -459,6 +459,34 @@ describe('parsePseudocode', () => {
     expect(() => parsePseudocode('false')).toThrow(BooleanParseError);
   });
 
+  // --- DoS / stack-overflow guards (Fix 1 — adversarial review) ---
+
+  it('throws BooleanParseError (not RangeError) for a source longer than 2000 chars', () => {
+    // Build a valid-looking but absurdly long expression (e.g. "A or A or A …")
+    // that exceeds the 2000-char limit before tokenization
+    const longSrc = 'A or '.repeat(500); // 2500 chars
+    expect(longSrc.length).toBeGreaterThan(2000);
+    const err = (() => { try { parsePseudocode(longSrc); } catch (e) { return e; } })();
+    expect(err).toBeInstanceOf(BooleanParseError);
+    expect((err as BooleanParseError).message).toMatch(/too long/i);
+  });
+
+  it('throws BooleanParseError (not RangeError) for a deeply nested expression', () => {
+    // Build a deeply nested expression: ((((…A…)))) with depth > 200
+    const nested = '('.repeat(250) + 'A' + ')'.repeat(250);
+    const err = (() => { try { parsePseudocode(nested); } catch (e) { return e; } })();
+    expect(err).toBeInstanceOf(BooleanParseError);
+    expect((err as BooleanParseError).message).toMatch(/nested|depth/i);
+  });
+
+  it('throws BooleanParseError (not RangeError) for a very long NOT chain', () => {
+    // "not not not … A" — 250 nots — drives deep recursion in parseNot
+    const notChain = 'not '.repeat(250) + 'A';
+    const err = (() => { try { parsePseudocode(notChain); } catch (e) { return e; } })();
+    expect(err).toBeInstanceOf(BooleanParseError);
+    expect((err as BooleanParseError).message).toMatch(/nested|depth/i);
+  });
+
   it('throws on trailing tokens (e.g., "a b")', () => {
     expect(() => parsePseudocode('a b')).toThrow(BooleanParseError);
   });
