@@ -123,9 +123,10 @@ against the frozen interface.
   criteria 1, 6.
 - [x] **C6 — Token refresh across the 5-min boundary** (T-10a/b) — transparent re-mint before
   expiry. → criterion 8 (refresh).
-- [ ] **C7 — Playwright desktop e2e + cross-platform checklist + Caddy note** (T-10h, T-10f) —
-  Playwright (fake media device) asserts transcript appears; `docs/voice-cross-platform-smoke.md`
-  scripted per ADR-006; confirm token endpoint passes through Caddy. → criterion 4 (desktop only).
+- [x] **C7 — Playwright desktop e2e + cross-platform checklist + Caddy note** (T-10h, T-10f) —
+  Playwright (fake media device) asserts the permission-defer + token-mint contract;
+  `docs/voice-cross-platform-smoke.md` scripted per ADR-006; confirmed token endpoint passes through
+  Caddy (`/api/*` already routes to the agent). → criterion 4 (desktop Chromium only).
 - [ ] **Review (Step 6)** — Wave 1 spec+security, Wave 2 robustness+efficiency; high/medium fixed.
 - [ ] **Smoke (Step 7)** — drive the web dev server (mocked boundary) end-to-end + regression.
 
@@ -211,3 +212,32 @@ still has ~skew of validity; `stop()` is idempotent. Tests: `tokenRefresh.test.t
 succeeds (Vite handles the runtime-assembled dynamic import); full `pnpm test` = **425 passed | 1 skipped** (the 1 skip
 is the pre-existing API-key-gated `agent/src/agent/eval/eval.test.ts`, untouched by F-10). Agent voice suite 30 passed,
 web voice suite 24 passed.
+
+### C7 — Playwright e2e + cross-platform checklist + Caddy
+`apps/web/playwright.config.ts` (desktop Chromium, fake media device, mic pre-granted, Vite webServer on :5173) +
+`apps/web/e2e/voice.spec.ts` (3 tests, run via `pnpm --filter @polymath/web e2e`; vitest does not collect `e2e/*` so
+the unit count stays 137). The e2e stubs `/api/session` + `/api/realtime/session` with `page.route()` and asserts the
+**permission-defer + token-mint contract**: on load the button is `idle` and `/api/realtime/session` is NOT hit; after
+click it IS hit and the button leaves idle. **Deferred-live gap documented in the spec:** after the token mint the
+default connector dials `wss://fake.livekit` and lands in `error` (no real LiveKit Cloud) — the real WebRTC join + the
+audible round-trip are the manual-smoke gap.
+`docs/voice-cross-platform-smoke.md`: scripted manual checklist for all 5 ADR-006 platforms (Chrome/Firefox/Safari
+desktop + Chrome Android + iOS Safari), Setup (env keys), Known-risks (iOS Safari autoplay/permission), a blank results
+table — all boxes UNCHECKED pending a human with devices + real keys. Caddy note: `POST /api/realtime/session` needs no
+new route (the existing `handle /api/*` in both caddyfiles covers it); LiveKit WebRTC media is browser↔Cloud direct, only
+the token mint traverses Caddy.
+Playwright: **3 passed**.
+
+> **Build note:** Vite emits a non-fatal "dynamic import cannot be analyzed" warning for the runtime-assembled
+> `livekit-client` specifier in `client.ts`. Intended (the connector is an optional peer the bundle shouldn't statically
+> pull); the build + e2e succeed. A future cleanup could add `/* @vite-ignore */` to silence it.
+
+### Deferred — requires the user's LiveKit/OpenAI keys + physical devices
+The mocked-boundary tests cover the *contract*; these need real credentials/devices and are **not** checked off:
+- **Criteria 1, 2, 3, 5 (live):** audible round-trip ~1s TTFT, transcript in `events` ≤2s, barge-in <300ms, and the
+  cache-hit cost ratio can only be observed against real OpenAI Realtime over a real LiveKit room.
+- **Criterion 8 (live refresh):** the >5-minute seamless token refresh needs a live long session.
+- **Criterion 4 (device matrix):** Chrome/Firefox/Safari desktop + Chrome Android + iOS Safari is human device testing.
+  `docs/voice-cross-platform-smoke.md` is the script; run it with keys + devices and tick its table.
+Set `LIVEKIT_URL`/`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET` + confirm OpenAI Realtime access in `.env`, then run the
+checklist. The endpoint already returns 503 "voice not configured" until those keys are set.
