@@ -131,7 +131,7 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
       masteryConfig,
     );
     expect(d.explainBackPassed).toBe(false);
-    expect(toLearnerState(d).explainBackPassed).toBe(false);
+    expect(toLearnerState(d, masteryConfig).explainBackPassed).toBe(false);
   });
 
   it('a logged PASSING explain-back verdict flips explainBackPassed to true', () => {
@@ -144,7 +144,7 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
       masteryConfig,
     );
     expect(d.explainBackPassed).toBe(true);
-    expect(toLearnerState(d).explainBackPassed).toBe(true);
+    expect(toLearnerState(d, masteryConfig).explainBackPassed).toBe(true);
   });
 
   it('a logged FAILING explain-back verdict leaves explainBackPassed false (fail closed)', () => {

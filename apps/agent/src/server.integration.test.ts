@@ -1073,6 +1073,6 @@ describe.skipIf(!canRunPg)('F-11 explain-back PASS path through the real fold', 
     const lesson = loadLesson(1);
     const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
     expect(derived.explainBackPassed).toBe(true);
-    expect(toLearnerState(derived).explainBackPassed).toBe(true);
+    expect(toLearnerState(derived, lesson.masteryConfig).explainBackPassed).toBe(true);
   });
 });
