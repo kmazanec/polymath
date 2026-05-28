@@ -32,7 +32,10 @@ const manageOwnPg = !EXTERNAL_PG_URL && HAVE_DOCKER;
 export const testPostgresUrl: string =
   EXTERNAL_PG_URL ?? `postgres://polymath:polymath@localhost:${PG_PORT}/polymath`;
 
-async function waitForPg(url: string, attempts = 30): Promise<void> {
+// A cold `docker run` of postgres:16-alpine (image pull on a clean host + initdb)
+// can take well past 15s; poll patiently so a first-run cold start under the
+// whole-workspace test orchestration doesn't intermittently time out.
+async function waitForPg(url: string, attempts = 120): Promise<void> {
   for (let i = 0; i < attempts; i++) {
     const { db, pool } = createDb(url);
     try {
