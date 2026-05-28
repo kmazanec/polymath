@@ -105,3 +105,7 @@ F-09 owns `learner_state` as the single writer. Per spec criterion 9, `hintsUsed
 
 ### Deferred to integration (per reviewer)
 - **Server-side hint refusal during `transferring` (criterion 8):** the agent can't currently see the lesson `phase` (it's not threaded into `AgentInput`), which is a cross-cutting change. The UI already disables the Hint button during `transferring`; the reviewer is threading `phase` into `AgentInput` and adding the server-side refusal at integration. Left the UI-disable as the only guard here.
+
+---
+
+**Delivered in MR:** https://labs.gauntletai.com/keithmazanec/polymath/-/merge_requests/4 (unified I1 inner-loop batch: F-05/06/07/09).

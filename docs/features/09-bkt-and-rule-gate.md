@@ -204,3 +204,7 @@ None.
   — far above a real L1 session, bounding a client that floods a session with events.
 - **Low (fixed): criterion-3 blocker isolation** — the consumer test now isolates the
   response-time and hint-ratio blockers in dedicated cases rather than asserting on a mixed set.
+
+---
+
+**Delivered in MR:** https://labs.gauntletai.com/keithmazanec/polymath/-/merge_requests/4 (unified I1 inner-loop batch: F-05/06/07/09).
