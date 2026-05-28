@@ -1,0 +1,300 @@
+[
+  {
+    "itemId": "L1-01-and",
+    "lessonId": 1,
+    "targetExpression": "A AND B",
+    "truthTable": [0, 0, 0, 1],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "intro"
+  },
+  {
+    "itemId": "L1-02-or",
+    "lessonId": 1,
+    "targetExpression": "A OR B",
+    "truthTable": [0, 1, 1, 1],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "basic"
+  },
+  {
+    "itemId": "L1-03-nand",
+    "lessonId": 1,
+    "targetExpression": "NOT (A AND B)",
+    "truthTable": [1, 1, 1, 0],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L1-04-not",
+    "lessonId": 1,
+    "targetExpression": "NOT A",
+    "truthTable": [1, 0],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "intro"
+  },
+  {
+    "itemId": "L1-05-and-or",
+    "lessonId": 1,
+    "targetExpression": "A AND (B OR C)",
+    "truthTable": [0, 0, 0, 0, 0, 1, 1, 1],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L1-06-not-and",
+    "lessonId": 1,
+    "targetExpression": "NOT A AND B AND C",
+    "truthTable": [0, 0, 0, 1, 0, 0, 0, 0],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "hardest"
+  },
+  {
+    "itemId": "L1-07-nor",
+    "lessonId": 1,
+    "targetExpression": "NOT (A OR B)",
+    "truthTable": [1, 0, 0, 0],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "basic"
+  },
+  {
+    "itemId": "L1-08-or-and",
+    "lessonId": 1,
+    "targetExpression": "(A OR B) AND C",
+    "truthTable": [0, 0, 0, 1, 0, 1, 0, 1],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L2-01-xor",
+    "lessonId": 2,
+    "targetExpression": "(A AND NOT B) OR (NOT A AND B)",
+    "truthTable": [0, 1, 1, 0],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "intro"
+  },
+  {
+    "itemId": "L2-02-majority",
+    "lessonId": 2,
+    "targetExpression": "(A AND B) OR (B AND C) OR (A AND C)",
+    "truthTable": [0, 0, 0, 1, 0, 1, 1, 1],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L2-03-and-or-not",
+    "lessonId": 2,
+    "targetExpression": "A AND (B OR NOT C)",
+    "truthTable": [0, 0, 0, 0, 1, 0, 1, 1],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L2-04-xor-alt",
+    "lessonId": 2,
+    "targetExpression": "(A OR B) AND NOT (A AND B)",
+    "truthTable": [0, 1, 1, 0],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "basic"
+  },
+  {
+    "itemId": "L2-05-xnor",
+    "lessonId": 2,
+    "targetExpression": "(A AND B) OR (NOT A AND NOT B)",
+    "truthTable": [1, 0, 0, 1],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "basic"
+  },
+  {
+    "itemId": "L2-06-composed",
+    "lessonId": 2,
+    "targetExpression": "A AND (NOT B OR C)",
+    "truthTable": [0, 0, 0, 0, 1, 1, 0, 1],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L2-07-xor-bits",
+    "lessonId": 2,
+    "targetExpression": "(A AND NOT B AND C) OR (A AND B AND NOT C)",
+    "truthTable": [0, 0, 0, 0, 0, 1, 1, 0],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "hardest"
+  },
+  {
+    "itemId": "L2-08-odd-parity",
+    "lessonId": 2,
+    "targetExpression": "(A AND NOT B AND NOT C) OR (NOT A AND B AND NOT C) OR (NOT A AND NOT B AND C) OR (A AND B AND C)",
+    "truthTable": [0, 1, 1, 0, 1, 0, 0, 1],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "hardest"
+  },
+  {
+    "itemId": "L3-01-nand-gate",
+    "lessonId": 3,
+    "targetExpression": "NOT (A AND B)",
+    "truthTable": [1, 1, 1, 0],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "intro",
+    "_nandNote": "NAND(A,B): the fundamental NAND gate expressed in AND/OR/NOT. NOT(A AND B) is the target; the NAND universality framing is the pedagogical context. Parser supports AND/OR/NOT only."
+  },
+  {
+    "itemId": "L3-02-nand-self",
+    "lessonId": 3,
+    "targetExpression": "NOT (A AND A)",
+    "truthTable": [1, 0],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "intro",
+    "_nandNote": "NAND(A,A) = NOT A: self-NAND implements NOT. The A AND A is redundant but expresses the NAND-chip wiring."
+  },
+  {
+    "itemId": "L3-03-nand-or",
+    "lessonId": 3,
+    "targetExpression": "NOT (NOT A AND NOT B)",
+    "truthTable": [0, 1, 1, 1],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "basic",
+    "_nandNote": "NAND(NAND(A,A), NAND(B,B)) = A OR B: two self-NANDs feed into a third NAND to implement OR. Expressed as NOT(NOT A AND NOT B)."
+  },
+  {
+    "itemId": "L3-04-nand-and",
+    "lessonId": 3,
+    "targetExpression": "NOT (NOT (A AND B))",
+    "truthTable": [0, 0, 0, 1],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "basic",
+    "_nandNote": "NAND(NAND(A,B), NAND(A,B)) = A AND B: double-NAND re-implements AND. NOT NOT is explicit double-negation."
+  },
+  {
+    "itemId": "L3-05-nand-or3",
+    "lessonId": 3,
+    "targetExpression": "NOT (NOT A AND NOT B AND NOT C)",
+    "truthTable": [0, 1, 1, 1, 1, 1, 1, 1],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "harder",
+    "_nandNote": "3-input OR via NAND: NAND of three self-NANDs = NOT(NOT A AND NOT B AND NOT C). Generalises the 2-input pattern to 3 variables."
+  },
+  {
+    "itemId": "L3-06-nand3",
+    "lessonId": 3,
+    "targetExpression": "NOT (A AND B AND C)",
+    "truthTable": [1, 1, 1, 1, 1, 1, 1, 0],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "harder",
+    "_nandNote": "3-input NAND expressed directly. A NAND chip with 3 inputs; all must be 1 for output to be 0."
+  },
+  {
+    "itemId": "L3-07-nand-dist",
+    "lessonId": 3,
+    "targetExpression": "NOT (NOT (A AND B) AND NOT (A AND C))",
+    "truthTable": [0, 0, 0, 0, 0, 1, 1, 1],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "hardest",
+    "_nandNote": "A AND (B OR C) via NAND: NAND(NAND(A,B), NAND(A,C)). Demonstrates distributive law reconstructed from NAND gates."
+  },
+  {
+    "itemId": "L3-08-nand-majority",
+    "lessonId": 3,
+    "targetExpression": "NOT (NOT (A AND B) AND NOT (B AND C) AND NOT (A AND C))",
+    "truthTable": [0, 0, 0, 1, 0, 1, 1, 1],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "hardest",
+    "_nandNote": "Majority-of-3 via NAND: NAND(NAND(A,B), NAND(B,C), NAND(A,C)). Output is 1 iff at least 2 of 3 inputs are 1. Complex NAND-universality example."
+  },
+  {
+    "itemId": "L4-01-demorgan-nand",
+    "lessonId": 4,
+    "targetExpression": "NOT (A AND B)",
+    "truthTable": [1, 1, 1, 0],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "intro"
+  },
+  {
+    "itemId": "L4-02-demorgan-nor",
+    "lessonId": 4,
+    "targetExpression": "NOT (A OR B)",
+    "truthTable": [1, 0, 0, 0],
+    "targetRep": "circuit",
+    "hiddenReps": ["truth_table"],
+    "difficultyTier": "intro"
+  },
+  {
+    "itemId": "L4-03-demorgan-equiv-nand",
+    "lessonId": 4,
+    "targetExpression": "NOT A OR NOT B",
+    "truthTable": [1, 1, 1, 0],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "basic"
+  },
+  {
+    "itemId": "L4-04-demorgan-equiv-nor",
+    "lessonId": 4,
+    "targetExpression": "NOT A AND NOT B",
+    "truthTable": [1, 0, 0, 0],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "basic"
+  },
+  {
+    "itemId": "L4-05-demorgan-nand3",
+    "lessonId": 4,
+    "targetExpression": "NOT (A AND B AND C)",
+    "truthTable": [1, 1, 1, 1, 1, 1, 1, 0],
+    "targetRep": "pseudocode",
+    "hiddenReps": ["circuit"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L4-06-demorgan-nor3",
+    "lessonId": 4,
+    "targetExpression": "NOT (A OR B OR C)",
+    "truthTable": [1, 0, 0, 0, 0, 0, 0, 0],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "harder"
+  },
+  {
+    "itemId": "L4-07-halfway",
+    "lessonId": 4,
+    "targetExpression": "NOT (A AND B OR C)",
+    "truthTable": [1, 0, 1, 0, 1, 0, 0, 0],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "hardest",
+    "_halfwayNote": "HALFWAY-DEMORGAN MISCONCEPTION ITEM. Correct application: NOT((A AND B) OR C) = NOT(A AND B) AND NOT C = (NOT A OR NOT B) AND NOT C, table [1,0,1,0,1,0,0,0]. Halfway error: NOT(A AND B) OR NOT C = (NOT A OR NOT B) OR NOT C = NOT A OR NOT B OR NOT C, table [1,1,1,1,1,1,1,0]. Off-by-4-cells. Designed to catch learners who distribute NOT but keep OR instead of AND."
+  },
+  {
+    "itemId": "L4-08-halfway",
+    "lessonId": 4,
+    "targetExpression": "NOT (A OR B AND C)",
+    "truthTable": [1, 1, 1, 0, 0, 0, 0, 0],
+    "targetRep": "truth_table",
+    "hiddenReps": ["pseudocode"],
+    "difficultyTier": "hardest",
+    "_halfwayNote": "HALFWAY-DEMORGAN MISCONCEPTION ITEM. Correct application: NOT(A OR (B AND C)) = NOT A AND NOT(B AND C) = NOT A AND (NOT B OR NOT C), table [1,1,1,0,0,0,0,0]. Halfway error: NOT A OR NOT(B AND C) = NOT A OR (NOT B OR NOT C) = NOT A OR NOT B OR NOT C, table [1,1,1,1,1,1,1,0]. Off-by-3-cells. Designed to catch learners who flip NOT but keep OR instead of AND on outer operator."
+  }
+]
