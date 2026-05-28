@@ -41,23 +41,23 @@ describe('inner-agent flow — transfer probe (F-07)', () => {
     }
   });
 
-  it('proposes mastery when the rule gate passed but the transfer bank is exhausted', async () => {
+  it('does NOT declare mastery when the rule gate passed but no transfer item is available (fail closed)', async () => {
     const inp = input(
       { kind: 'submit', sessionId: SID, itemId: 'l1-and', submission: 'A AND B', correct: true },
       true,
     );
     inp.transferCandidates = [];
     const action = await new StubAgentClient().propose(inp);
-    expect(action.type).toBe('transition');
-    expect(action.type === 'transition' && action.to).toBe('mastered');
+    // A missing probe is a degraded state, not a pass — never jump to mastered.
+    expect(action.type).toBe('no_action');
   });
 
-  it('on a passed transfer (server verdict correct), proposes the mastery transition', async () => {
+  it('on a passed transfer, awaits explain-back rather than declaring mastery (config requires it)', async () => {
     const inp = input({ kind: 'transfer_submitted', sessionId: SID, itemId: PROBE.itemId, submission: 'A AND B' });
     inp.transferVerdict = { itemId: PROBE.itemId, correct: true };
     const action = await new StubAgentClient().propose(inp);
-    expect(action.type).toBe('transition');
-    expect(action.type === 'transition' && action.to).toBe('mastered');
+    // lesson 1 config requires explain-back (F-11/F-12) — mastery is not declared yet.
+    expect(action.type).toBe('no_action');
   });
 
   it('on a failed transfer, remediates with a simpler item rather than advancing', async () => {
@@ -136,12 +136,12 @@ describe('inner-agent flow (heuristic, key-free)', () => {
     }
   });
 
-  it('on a ready learner, it proposes the mastery transition', async () => {
-    const action = await new StubAgentClient().propose(
-      input({ kind: 'submit', sessionId: SID, itemId: 'l1-not', submission: 'NOT A' }, true),
-    );
-    expect(action.type).toBe('transition');
-    expect(action.type === 'transition' && action.to).toBe('mastered');
+  it('on a ready learner with a held-out item, it fires a transfer probe (not mastery)', async () => {
+    const inp = input({ kind: 'submit', sessionId: SID, itemId: 'l1-not', submission: 'NOT A' }, true);
+    inp.transferCandidates = [PROBE];
+    const action = await new StubAgentClient().propose(inp);
+    expect(action.type).toBe('mount');
+    expect(action.type === 'mount' && action.component.kind).toBe('TransferProbe');
   });
 
   it('answers an on-topic question and deflects an off-topic one', async () => {

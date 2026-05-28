@@ -14,10 +14,13 @@
       "expectMoveOneOf": ["rephrase", "simpler_item", "worked_example"]
     },
     {
-      "id": "rule-gate-ready-proposes-mastery",
+      "id": "rule-gate-ready-with-candidate-fires-probe",
       "event": { "kind": "submit", "itemId": "l1-not", "submission": "NOT A" },
       "learnerState": { "consecutiveCorrect": 3, "hintsUsed": 0, "ruleGatePassed": true },
-      "expectMoveOneOf": ["propose_mastery_transition", "propose_transfer_probe"]
+      "transferCandidates": [
+        { "itemId": "L1-01-and", "targetExpression": "A AND B", "targetRep": "circuit", "hiddenReps": ["truth_table"] }
+      ],
+      "expectMove": "propose_transfer_probe"
     },
     {
       "id": "on-topic-question-answered",

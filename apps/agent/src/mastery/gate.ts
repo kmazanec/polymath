@@ -66,9 +66,18 @@ export function evaluateRuleGate(state: LearnerState, config: MasteryConfig): Ru
   if (state.hintsUsedInLastN > config.hintsUsedInLastN_items) {
     blockers.push('hints_used');
   }
-  const med = median(state.responseTimesMs);
-  if (state.responseTimesMs.length > 0 && (med < config.responseTimeFloorMs || med > config.responseTimeCeilingMs)) {
+  // Response-time band (ADR-011 anti-gaming): the gate requires at least
+  // `consecutiveCorrectAtHardestTier` timed submissions whose median is in-band.
+  // Missing timings do NOT pass by default — a client that omits `responseTimeMs`
+  // (or hasn't submitted enough timed items yet) is blocked, closing the bypass
+  // where a scripted client skips timings to dodge the floor.
+  if (state.responseTimesMs.length < config.consecutiveCorrectAtHardestTier) {
     blockers.push('response_time_out_of_band');
+  } else {
+    const med = median(state.responseTimesMs);
+    if (med < config.responseTimeFloorMs || med > config.responseTimeCeilingMs) {
+      blockers.push('response_time_out_of_band');
+    }
   }
   if (state.hintRatio > config.hintRatioMax) blockers.push('hint_ratio_exceeded');
   if (state.retryRatio > config.retryRatioMax) blockers.push('retry_ratio_exceeded');

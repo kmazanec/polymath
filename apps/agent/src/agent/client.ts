@@ -41,6 +41,10 @@ export interface AgentInput {
    *  refusal (ADR-005 #2) extends to hints server-side, not just the disabled
    *  button (F-06 criterion 8, defense in depth). */
   inTransferProbe?: boolean;
+  /** Server-derived hints served per item this session (the authoritative source
+   *  for the hint ladder's level — `recentHistory` is a capped window that can
+   *  mis-count). The hint arm reads this, not the recent history. */
+  hintsByItem?: Record<string, number>;
 }
 
 /** A held-out transfer item the agent may fire as a probe. Mirrors the

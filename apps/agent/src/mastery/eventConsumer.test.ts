@@ -50,14 +50,28 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
     const d2 = deriveState(
       [
         { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and },
-        { kind: 'request_hint', itemId: 'l1-and' },
+        { kind: 'request_hint', itemId: 'l1-and', hintMounted: true }, // a SERVED hint
         { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and },
       ],
       content,
       masteryConfig,
     );
-    expect(d2.consecutiveCorrect).toBe(1); // the hint reset the streak
+    expect(d2.consecutiveCorrect).toBe(1); // the served hint reset the streak
     expect(d2.hintsUsed).toBe(1);
+  });
+
+  it('a request_hint that was REFUSED (no HintCard mounted) does not count', () => {
+    const d = deriveState(
+      [
+        { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and },
+        { kind: 'request_hint', itemId: 'l1-and' }, // hintMounted falsy → refused
+        { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and },
+      ],
+      content,
+      masteryConfig,
+    );
+    expect(d.hintsUsed).toBe(0); // refused hint doesn't poison the gate
+    expect(d.consecutiveCorrect).toBe(2); // streak intact
   });
 
   it('counts retries (a repeat after a miss on the same item) and a transfer pass', () => {
@@ -99,7 +113,7 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
   it('a hinty session is blocked by the hint ratio', () => {
     const events: LoggedEvent[] = [
       { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and, responseTimeMs: 5000 },
-      { kind: 'request_hint', itemId: 'l1-and' },
+      { kind: 'request_hint', itemId: 'l1-and', hintMounted: true },
       { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and, responseTimeMs: 6000 },
     ];
     const gate = evaluateRuleGate(toLearnerState(deriveState(events, content, masteryConfig)), masteryConfig);

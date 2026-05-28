@@ -78,6 +78,7 @@ function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
   const p = (payload ?? {}) as {
     event?: { itemId?: string; submission?: string; correct?: boolean; responseTimeMs?: number };
     transferVerdict?: { correct?: boolean };
+    action?: { type?: string; component?: { kind?: string } };
   };
   return {
     kind,
@@ -85,6 +86,10 @@ function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
     submission: p.event?.submission,
     responseTimeMs: p.event?.responseTimeMs,
     transferCorrect: p.transferVerdict?.correct,
+    // A served hint = the logged action mounted a HintCard (a refused request is a
+    // no_action). Only known for persisted events; the current turn's action isn't
+    // decided yet (and doesn't count toward its own level).
+    hintMounted: p.action?.type === 'mount' && p.action.component?.kind === 'HintCard',
   };
 }
 
@@ -102,7 +107,7 @@ async function updateAndReadLearnerState(
   current: ClientEvent,
   lesson: Lesson,
   transferVerdict: { itemId: string; correct: boolean } | undefined,
-): Promise<LearnerSnapshot> {
+): Promise<{ snapshot: LearnerSnapshot; hintsByItem: Record<string, number> }> {
   // Most-recent N events (bounded), then chronological for the fold.
   const priorRows = (
     await db
@@ -130,10 +135,13 @@ async function updateAndReadLearnerState(
   );
 
   return {
-    bktByKc: learnerState_.bktByKc,
-    hintsUsed: derived.hintsUsed,
-    consecutiveCorrect: derived.consecutiveCorrect,
-    ruleGatePassed: gate.passed,
+    snapshot: {
+      bktByKc: learnerState_.bktByKc,
+      hintsUsed: derived.hintsUsed,
+      consecutiveCorrect: derived.consecutiveCorrect,
+      ruleGatePassed: gate.passed,
+    },
+    hintsByItem: derived.hintsByItem,
   };
 }
 
@@ -311,6 +319,28 @@ async function isInTransferProbe(db: Db, sessionId: string): Promise<boolean> {
   return false;
 }
 
+/** Reject an outbound `TransferProbe` mount the learner hasn't earned or that the
+ *  agent forged. Returns a rejection reason (→ downgrade to `no_action`) or null if
+ *  the probe is authorized. A probe is authorized only when the rule gate passed and
+ *  the mounted component exactly matches an allowed unseen `transfer_bank` row. */
+function rejectUnauthorizedProbe(
+  action: Action,
+  learner: LearnerSnapshot,
+  candidates: TransferProbeItem[] | undefined,
+): string | null {
+  if (action.type !== 'mount' || action.component.kind !== 'TransferProbe') return null;
+  if (!learner.ruleGatePassed) return 'transfer probe before the rule gate passed';
+  const c = action.component;
+  const match = (candidates ?? []).find(
+    (b) =>
+      b.itemId === c.itemId &&
+      b.targetExpression === c.expression &&
+      b.targetRep === c.targetRep &&
+      JSON.stringify([...b.hiddenReps].sort()) === JSON.stringify([...c.hiddenReps].sort()),
+  );
+  return match ? null : 'transfer probe does not match an allowed unseen bank item';
+}
+
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
 async function proposeWithTimeout(agent: AgentClient, input: AgentInput): Promise<Action> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -381,7 +411,7 @@ export async function handleClientFrame(
   // The transfer verdict (server-computed) must be known before deriving learner
   // state, so a passed transfer sets the gate's transfer condition this turn.
   const transferVerdict = await computeTransferVerdict(deps.db, event);
-  const [learner, recentHistory, transferCandidates, inTransferProbe] = await Promise.all([
+  const [learnerDerived, recentHistory, transferCandidates, inTransferProbe] = await Promise.all([
     updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict),
     readRecentHistory(deps.db, event.sessionId),
     readTransferCandidates(deps.db, event.sessionId, lesson.content.lessonId),
@@ -390,11 +420,12 @@ export async function handleClientFrame(
   const input: AgentInput = {
     event,
     lesson,
-    learnerState: learner,
+    learnerState: learnerDerived.snapshot,
     recentHistory,
     transferCandidates,
     transferVerdict,
     inTransferProbe,
+    hintsByItem: learnerDerived.hintsByItem,
   };
 
   // Propose an action (under a timeout), then validate it server-side before it
@@ -406,9 +437,16 @@ export async function handleClientFrame(
   const proposed = await proposeWithTimeout(deps.agent, input);
   const { action: shaped, downgraded } = validateOutboundAction(proposed);
   const layer2 = validateLayer2(shaped);
-  const action: Action = layer2.ok
-    ? shaped
-    : noAction('agent_unsure', `outbound Layer-2 rejection: ${layer2.detail}`);
+  // Outbound transfer-probe gate (server never trusts the agent — matters once an
+  // LLM provider is live and could fire an early/forged probe): a TransferProbe
+  // mount is downgraded unless the rule gate passed AND its fields exactly match an
+  // allowed unseen `transfer_bank` row for the session.
+  const probeRejection = rejectUnauthorizedProbe(shaped, learnerDerived.snapshot, transferCandidates);
+  const action: Action = !layer2.ok
+    ? noAction('agent_unsure', `outbound Layer-2 rejection: ${layer2.detail}`)
+    : probeRejection
+      ? noAction('agent_unsure', probeRejection)
+      : shaped;
 
   // ADR-010 Layer 3: a HintCard level-3 mount is logged as unverified_prose.
   // All other mounts go through the Layer-2 validator (layer 2); non-mounts
@@ -431,7 +469,7 @@ export async function handleClientFrame(
     payload: {
       event,
       action,
-      learnerSnapshot: learner,
+      learnerSnapshot: learnerDerived.snapshot,
       // The transfer verdict (when this turn is a transfer_submitted) is recorded
       // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
       ...(transferVerdict ? { transferVerdict } : {}),

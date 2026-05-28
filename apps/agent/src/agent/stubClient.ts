@@ -26,6 +26,19 @@ export class HeuristicMoveProvider implements MoveProvider {
     const ev = input.event;
 
     if (ev.kind === 'session_start') {
+      // Idempotent: only mount the first item on a FRESH session. A reconnect
+      // re-sends session_start (the socket re-announces on open); if the learner
+      // has already been practicing, remounting item 0 would reset their progress.
+      const alreadyStarted = input.recentHistory.some(
+        (t) => t.eventKind === 'submit' || t.eventKind === 'request_hint' || t.eventKind === 'transfer_submitted',
+      );
+      if (alreadyStarted) {
+        return Promise.resolve({
+          move: 'no_action',
+          reason: 'wait_for_learner',
+          rationale: 'session already in progress — not remounting the first item (heuristic provider)',
+        });
+      }
       const first = firstLessonItem(input);
       if (first) return Promise.resolve(first);
       return Promise.resolve({
@@ -55,9 +68,10 @@ export class HeuristicMoveProvider implements MoveProvider {
       }
 
       // Rule gate ready → fire a transfer probe from the held-out bank (an unseen
-      // item). Mastery is not proposed directly from practice — it requires a
-      // passed transfer probe first (ADR-005 refusal #3 / ADR-010 Layer 5). Only
-      // when no unseen candidate remains does the agent propose mastery.
+      // item). Mastery is NOT proposed from practice — it requires a passed transfer
+      // probe AND the remaining mastery conditions (ADR-005 refusal #3 / ADR-011).
+      // If the bank is exhausted we still cannot declare mastery here (a missing
+      // probe is a degraded state, not a pass) — fail closed.
       if (input.learnerState.ruleGatePassed) {
         const candidate = input.transferCandidates?.[0];
         if (candidate) {
@@ -71,8 +85,9 @@ export class HeuristicMoveProvider implements MoveProvider {
           });
         }
         return Promise.resolve({
-          move: 'propose_mastery_transition',
-          rationale: 'rule-gate passed and transfer bank exhausted (heuristic provider)',
+          move: 'no_action',
+          reason: 'wait_for_learner',
+          rationale: 'rule-gate passed but no unseen transfer item available — cannot declare mastery (heuristic provider)',
         });
       }
       const next = pickLessonItem(input);
@@ -85,15 +100,25 @@ export class HeuristicMoveProvider implements MoveProvider {
     }
 
     if (ev.kind === 'transfer_submitted') {
-      // The transfer probe's verdict gates the next move: a pass → propose mastery
-      // (the rule gate already held); a fail → drop back into practice with a
-      // simpler item (remediate). Correctness is computed server-side
-      // (booleans.equivalent) and threaded via `transferVerdict`.
+      // The transfer probe's verdict gates the next move. A pass clears the rule +
+      // transfer conditions, but mastery ALSO requires explain-back when the lesson
+      // config demands it (ADR-011) — and explain-back lands in F-11/F-12. So a
+      // passed transfer in I1 does NOT declare mastery: it records the pass (the
+      // server logs the verdict) and waits. Only when no further condition is
+      // required does the agent propose mastery. A fail remediates with a simpler
+      // item. Correctness is computed server-side and threaded via `transferVerdict`.
       const passed = input.transferVerdict?.correct ?? false;
       if (passed) {
+        if (input.lesson.masteryConfig.requireExplainBackPass) {
+          return Promise.resolve({
+            move: 'no_action',
+            reason: 'wait_for_learner',
+            rationale: 'transfer passed; awaiting explain-back before mastery (F-11/F-12) (heuristic provider)',
+          });
+        }
         return Promise.resolve({
           move: 'propose_mastery_transition',
-          rationale: 'transfer probe passed — proposing mastery (heuristic provider)',
+          rationale: 'transfer passed and no further mastery condition required (heuristic provider)',
         });
       }
       const items = [...input.lesson.content.items].sort((a, b) => a.difficultyTier - b.difficultyTier);
@@ -149,20 +174,24 @@ export class HeuristicMoveProvider implements MoveProvider {
 }
 
 /**
- * Propose the appropriate hint level for the given item, based on how many
- * prior hints have been used on THIS item in the recent history.
+ * Propose the appropriate hint level for the given item, based on how many hints
+ * have ALREADY been served on THIS item this session.
  *
  * Level selection (ADR-010 Layer 3):
- *   0 prior request_hint turns for item → L1
- *   1 prior                             → L2
- *   2 prior                             → L3
- *   3+                                  → no_action (affordance is disabled)
+ *   0 prior served hints for item → L1
+ *   1 prior                       → L2
+ *   2 prior                       → L3
+ *   3+                            → no_action (affordance is disabled)
+ *
+ * The count comes from the server-derived `hintsByItem` (the full session), not the
+ * capped `recentHistory` window — a window-based count could reset the ladder when
+ * other events push earlier hints out of view.
  */
 function proposeHint(itemId: string, input: AgentInput): TacticalMove {
-  // Count request_hint turns for this specific item in the recent history
-  const priorHints = input.recentHistory.filter(
-    (t) => t.eventKind === 'request_hint' && t.itemId === itemId,
-  ).length;
+  const priorHints =
+    input.hintsByItem?.[itemId] ??
+    // Fallback only if the server didn't supply the derived map.
+    input.recentHistory.filter((t) => t.eventKind === 'request_hint' && t.itemId === itemId).length;
 
   if (priorHints >= 3) {
     return {

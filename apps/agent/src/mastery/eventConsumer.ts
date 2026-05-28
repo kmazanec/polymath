@@ -1,7 +1,13 @@
 import { type BKTConfig, type BKTParams, initBKT, updateBKT } from '@polymath/bkt';
-import { equivalent } from '@polymath/booleans';
+import { equivalent, parse, variables } from '@polymath/booleans';
 import type { LessonContent, MasteryConfig } from '@polymath/contract';
 import type { LearnerState } from './gate.js';
+
+/** Distinct-variable cap before the 2^n enumeration inside `equivalent` — the same
+ *  guard `computeTransferVerdict` uses. Every server-side `equivalent` call on a
+ *  client-controlled submission must apply it, or a wide expression blocks the
+ *  event loop. */
+const MAX_SUBMIT_VARS = 10;
 
 /**
  * The single writer of derived learner state (ADR-009/011). It folds a session's
@@ -25,6 +31,10 @@ export interface LoggedEvent {
   transferCorrect?: boolean;
   /** Milliseconds the learner took (when available). */
   responseTimeMs?: number;
+  /** For a `request_hint`: whether the agent actually mounted a HintCard (vs.
+   *  refusing with no_action, e.g. during a transfer probe). Only a served hint
+   *  counts toward `hintsUsed`/`hintsByItem`. */
+  hintMounted?: boolean;
 }
 
 /** The derived per-session state: one BKT per KC + the session-level aggregates
@@ -33,6 +43,9 @@ export interface DerivedState {
   bktByKc: Record<string, BKTParams>;
   consecutiveCorrect: number;
   hintsUsed: number;
+  /** Hints requested per item this session — the authoritative hint-level source
+   *  (a capped recent-history window can mis-count and reset the ladder). */
+  hintsByItem: Record<string, number>;
   submits: number;
   retries: number;
   responseTimesMs: number[];
@@ -72,6 +85,9 @@ export function deriveState(
     const target = exprByItem.get(itemId);
     if (!target) return false;
     try {
+      // Cap distinct vars before enumerating (DoS guard) — an over-wide submission
+      // is simply wrong, never an event-loop-blocking 2^n enumeration.
+      if (variables(parse(submission)).length > MAX_SUBMIT_VARS) return false;
       return equivalent(submission, target);
     } catch {
       return false;
@@ -82,6 +98,7 @@ export function deriveState(
     bktByKc: {},
     consecutiveCorrect: 0,
     hintsUsed: 0,
+    hintsByItem: {},
     submits: 0,
     retries: 0,
     responseTimesMs: [],
@@ -109,8 +126,14 @@ export function deriveState(
       if (typeof ev.responseTimeMs === 'number') state.responseTimesMs.push(ev.responseTimeMs);
       state.consecutiveCorrect = correct ? state.consecutiveCorrect + 1 : 0;
     } else if (ev.kind === 'request_hint') {
-      state.hintsUsed++;
-      state.consecutiveCorrect = 0; // a hinted item doesn't count toward the streak
+      // Only count a hint the agent actually SERVED (mounted a HintCard). A
+      // request refused during a transfer probe (no_action) must not poison the
+      // gate — it neither increments hintsUsed nor breaks the streak.
+      if (ev.hintMounted) {
+        state.hintsUsed++;
+        if (ev.itemId) state.hintsByItem[ev.itemId] = (state.hintsByItem[ev.itemId] ?? 0) + 1;
+        state.consecutiveCorrect = 0; // a hinted item doesn't count toward the streak
+      }
     } else if (ev.kind === 'transfer_submitted') {
       if (ev.transferCorrect === true) state.transferPassed = true;
     }

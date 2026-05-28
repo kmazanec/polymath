@@ -19,6 +19,7 @@ interface Scenario {
   id: string;
   event: Record<string, unknown>;
   learnerState: { consecutiveCorrect: number; hintsUsed: number; ruleGatePassed: boolean };
+  transferCandidates?: AgentInput['transferCandidates'];
   expectMove?: string;
   expectMoveOneOf?: string[];
   expectTopic?: 'on_topic' | 'off_topic';
@@ -37,6 +38,7 @@ function inputFor(s: Scenario): AgentInput {
     lesson,
     learnerState: { bktByKc: {}, ...s.learnerState },
     recentHistory: [],
+    transferCandidates: s.transferCandidates,
   };
 }
 

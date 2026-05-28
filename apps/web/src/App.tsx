@@ -17,11 +17,13 @@ const REP_PHRASES: Record<Rep, RegExp> = {
   pseudocode: /pseudo\s*code|\bcode\b/i,
 };
 
-/** If a question during a transfer probe is asking to reveal one of the held-out
- *  reps ("can I see the truth table again?"), return that rep; else null. */
-function wantsHiddenRep(question: string, hiddenReps: readonly Rep[]): Rep | null {
-  const asksToReveal = /\b(see|show|bring back|reveal|look at|go back to)\b/i.test(question);
-  if (!asksToReveal) return null;
+/** During a transfer probe, any question that *mentions* an active hidden rep is
+ *  refused — not just ones with a reveal verb. "What's the truth table for this?"
+ *  or "fill the table for me" would leak the held-out rep just as much as "show me
+ *  the truth table", so mention alone is the bar (the integrity boundary beats a
+ *  few false-refusals on an incidental mention). Returns the mentioned hidden rep,
+ *  else null. */
+export function wantsHiddenRep(question: string, hiddenReps: readonly Rep[]): Rep | null {
   return hiddenReps.find((rep) => REP_PHRASES[rep].test(question)) ?? null;
 }
 
@@ -41,6 +43,9 @@ export function App(): ReactElement {
   const [mounted, setMounted] = useState<ComponentSpec>(LESSON_1_INTRO);
   /** The agent's most recent answer to a learner question (ADR-003 Q&A). */
   const [answer, setAnswer] = useState<ComponentSpec | null>(null);
+  /** The current hint, shown in a side slot — NOT in the main workspace, so the
+   *  practice item the learner is solving stays mounted and answerable. */
+  const [hint, setHint] = useState<ComponentSpec | null>(null);
   /** The id of the item currently mounted, echoed on submit. */
   const currentItemId = useRef<string>('l1-and');
   /** When the current item was mounted (for the submit's response-time report). */
@@ -85,10 +90,18 @@ export function App(): ReactElement {
             if (r.refused) return;
             if (r.lessonEvents) for (const e of r.lessonEvents) send(e);
             if (r.mount) {
-              setMounted(r.mount);
-              if (r.mount.kind === 'TransferProbe') {
-                currentProbeItemId.current = r.mount.itemId;
-                activeHiddenReps.current = r.mount.hiddenReps;
+              // A HintCard renders in the side hint slot, leaving the practice item
+              // mounted (the learner keeps solving). Everything else is the main
+              // workspace.
+              if (r.mount.kind === 'HintCard') {
+                setHint(r.mount);
+              } else {
+                setMounted(r.mount);
+                setHint(null); // a new workspace clears any stale hint
+                if (r.mount.kind === 'TransferProbe') {
+                  currentProbeItemId.current = r.mount.itemId;
+                  activeHiddenReps.current = r.mount.hiddenReps;
+                }
               }
             }
             if (r.answer) {
@@ -198,6 +211,8 @@ export function App(): ReactElement {
   return (
     <main>
       <AnimateOrNot phase={phase}>{renderComponent(mounted, { onSubmit })}</AnimateOrNot>
+
+      {hint && <aside className="hint-slot">{renderComponent(hint)}</aside>}
 
       {answer && <div className="agent-answer-slot">{renderComponent(answer)}</div>}
 

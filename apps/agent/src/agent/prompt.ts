@@ -44,13 +44,21 @@ Rules:
 - Every move carries a one-sentence rationale (logged, never shown to the learner).`;
 
 export function buildUserPrompt(input: AgentInput): string {
-  const { event, lesson, learnerState, recentHistory } = input;
+  const { event, lesson, learnerState, recentHistory, transferCandidates, transferVerdict, inTransferProbe } = input;
   const items = lesson.content.items
     .map((i) => `  - ${i.itemId} (tier ${i.difficultyTier}, KC ${i.kc}): ${i.targetExpression} => ${JSON.stringify(i.truthTable)}`)
     .join('\n');
   const history = recentHistory.length
     ? recentHistory.map((t) => `  - ${t.eventKind} → ${t.actionType}: ${t.rationale}`).join('\n')
     : '  (none)';
+  // The held-out transfer items the agent may draw a probe from. A
+  // propose_transfer_probe MUST copy one of these verbatim (the server rejects a
+  // probe that doesn't match an allowed item).
+  const candidates = transferCandidates?.length
+    ? transferCandidates
+        .map((c) => `  - itemId=${c.itemId} targetRep=${c.targetRep} hiddenReps=${JSON.stringify(c.hiddenReps)} expression=${c.targetExpression}`)
+        .join('\n')
+    : '  (none available — do not propose a transfer probe)';
   return `Lesson ${lesson.content.lessonId} — "${lesson.content.title}".
 Knowledge components: ${lesson.content.knowledgeComponents.join(', ')}.
 Lesson items (your source for valid expressions + answer keys):
@@ -61,6 +69,11 @@ Learner-state snapshot:
   hints used: ${learnerState.hintsUsed}
   consecutive correct: ${learnerState.consecutiveCorrect}
   rule gate passed (transfer-ready): ${learnerState.ruleGatePassed}
+  in transfer probe (refuse hints + don't reveal hidden reps): ${inTransferProbe ? 'yes' : 'no'}
+  last transfer verdict: ${transferVerdict ? (transferVerdict.correct ? 'passed' : 'failed') : 'none'}
+
+Held-out transfer items (copy one VERBATIM for a propose_transfer_probe):
+${candidates}
 
 Recent turns (newest last):
 ${history}

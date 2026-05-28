@@ -281,10 +281,12 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     // consecutive correct on the AND KC, no hints, no retries). The first submits
     // don't pass the gate; once it does, the agent fires the probe. Drive correct
     // AND submits until a TransferProbe mounts.
+    // Each submit carries an in-band responseTimeMs — the gate now requires enough
+    // timed submissions (a scripted client that omits timings is blocked).
     const actions = await driveSequence(sessionId, [
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
     ]);
     const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     expect(probe, 'a transfer probe should fire once the rule gate passes').toBeTruthy();
@@ -292,12 +294,14 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     expect(probedItemId).toBeTruthy();
 
-    // Submit a correct transfer answer (equivalent to the probed expression).
+    // Submit a correct transfer answer (equivalent to the probed expression). The
+    // rule + transfer conditions are now met, but L1 config requires explain-back
+    // (F-11/F-12) — so the agent does NOT declare mastery; it waits. Mastery in I1
+    // is deliberately unreachable until the voice explain-back ships.
     const [afterTransfer] = await driveSequence(sessionId, [
       { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
     ]);
-    expect(afterTransfer!.type).toBe('transition');
-    expect(afterTransfer!.type === 'transition' && afterTransfer!.to).toBe('mastered');
+    expect(afterTransfer!.type).toBe('no_action');
 
     // The transfer verdict is recorded in the replay log (criterion 5), and the
     // replay shows the per-turn BKT trajectory rising toward mastery (F-09 crit 8).
