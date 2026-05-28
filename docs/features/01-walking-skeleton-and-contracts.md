@@ -128,7 +128,7 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
 - [ ] **Chunk 1 — Monorepo scaffold.** pnpm workspaces, root `package.json`,
       `pnpm-workspace.yaml`, `tsconfig.base.json`, `.gitignore` (incl. `.worktrees/`),
       `.nvmrc`, vitest workspace. Verify `pnpm install`.
-- [ ] **Chunk 2 — `@polymath/booleans`** (test-first, 100% cov). `parse`, `evaluate`,
+- [x] **Chunk 2 — `@polymath/booleans`** (test-first, 100% cov). `parse`, `evaluate`,
       `truthTable`, `equivalent`; recursive-descent, AND/OR/NOT, precedence NOT>AND>OR.
       Verify acceptance criterion 6 expression equivalence + 8-assignment truth table.
 - [ ] **Chunk 3 — `@polymath/contract`.** Zod `ComponentSpec` (12 ADR-005 variants, with
@@ -158,3 +158,21 @@ secrets deferred to a manual follow-up; acceptance criteria 9–10 live verifica
       open PR.
 
 ### Decisions & evidence (appended as chunks complete)
+
+**Chunk 2 — `@polymath/booleans`.**
+- Locked API: `parse(expr): Ast`, `evaluate(ast, env): boolean`, `variables(ast): string[]`,
+  `truthTable(expr): {vars, rows, out}`, `equivalent(a, b): boolean`, plus `BooleanParseError`
+  and the `Ast` type. Recursive-descent parser (no peg dep); grammar = single-letter
+  variables (canonicalised uppercase), NOT/AND/OR (case-insensitive input), parens;
+  precedence NOT>AND>OR; AND/OR left-associative.
+- **Decision — truth-table row order:** first variable is the MSB, rows enumerate a binary
+  counter (`000,001,…`). Locked so F-02 (TruthTable rep) and ADR-010 Layer-2
+  `claimedTruthTable` agree on ordering. `out` is the boolean vector in that order.
+- **Decision — `equivalent` over differing variable sets:** compares both expressions over
+  the *union* of their variables, so a tautological no-op variable (e.g. `B AND NOT B`)
+  compares equal. Matches the "shape preserved, alphabet grows" contract note.
+- **Verification (criterion 6, compiled package):** `equivalent('(A AND B) OR (NOT C)',
+  '(NOT C) OR (B AND A)')` → `true`; `truthTable('(A AND B) OR (NOT C)').out` →
+  `[true,false,true,false,true,false,true,true]` (matches hand-computed `!C | (A&B)`).
+- **Tests:** 40 tests, **100% coverage** (statements/branches/functions/lines), gated in the
+  package `test` script via `vitest run --coverage` with a 100% threshold.
