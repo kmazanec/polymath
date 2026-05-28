@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# git worktrees live inside the repo root
+.worktrees/
+
+# env / secrets — never commit
+.env
+.env.*
+!.env.example
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# drizzle generated artifacts kept; local pg data not
+pgdata/

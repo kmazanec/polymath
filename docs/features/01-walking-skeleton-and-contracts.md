@@ -117,3 +117,44 @@ If a downstream iteration discovers a contract bug (e.g., a field that should ha
 ## Implementation notes (filled in by the building agent)
 
 > The agent implementing this feature records implementation decisions and rationale here as it builds — chosen libraries/patterns within the architecture's constraints, trade-offs made, deviations from assumptions and why, and anything the next agent or the integrator needs to know.
+
+### Approved plan (checklist)
+
+Branch `feat/f-01-walking-skeleton`, worktree at `<repo>/.worktrees/f-01-walking-skeleton`.
+Built on `@polymath/*` scoped package names, minimal real LangGraph stub (no LLM call),
+infra configs authored + locally verified but **not deployed** (live deploy + DNS + droplet
+secrets deferred to a manual follow-up; acceptance criteria 9–10 live verification deferred).
+
+- [ ] **Chunk 1 — Monorepo scaffold.** pnpm workspaces, root `package.json`,
+      `pnpm-workspace.yaml`, `tsconfig.base.json`, `.gitignore` (incl. `.worktrees/`),
+      `.nvmrc`, vitest workspace. Verify `pnpm install`.
+- [ ] **Chunk 2 — `@polymath/booleans`** (test-first, 100% cov). `parse`, `evaluate`,
+      `truthTable`, `equivalent`; recursive-descent, AND/OR/NOT, precedence NOT>AND>OR.
+      Verify acceptance criterion 6 expression equivalence + 8-assignment truth table.
+- [ ] **Chunk 3 — `@polymath/contract`.** Zod `ComponentSpec` (12 ADR-005 variants, with
+      `claimedTruthTable` on item variants), `Action` (4 variants), wire protocol events,
+      shared `Rep`/`Gate`/`PhaseName`. Round-trip test every variant.
+- [ ] **Chunk 4 — `@polymath/statechart`.** XState v5 `lesson_1` spine with locked phases
+      `introducing → practicing → {hint, transferring} → assessed → {mastered, remediating}`,
+      stub (constant) guards. Transition tests (incl. `introducing→practicing`, criterion 7).
+- [ ] **Chunk 5 — `lessons/1/`.** `mastery_config.json` (full ADR-011 param set) +
+      `content.json` (3 stub items, one per L1 KC). Zod config schema + contract test.
+- [ ] **Chunk 6 — `apps/agent`.** Drizzle schema + migrations (`sessions`, `events`,
+      `learner_state`, `transfer_bank` empty, `validated_distractors`); REST
+      (`GET /api/health`, `POST /api/session`, `GET /api/session/:id/replay` stub); `ws`
+      server at `/agent`; LangGraph `StateGraph` no_action node behind `AgentClient` seam;
+      **server-side Zod validation of every Action before send** (criterion 5). In-process
+      integration test: boot → WS `submit` → valid `no_action` + `events` row written.
+- [ ] **Chunk 7 — `apps/web`.** Vite + React + React Router + XState; typed WS client;
+      exhaustive `registry.ts` switch on `ComponentSpec.kind` (TS `never` check); `LessonIntro`
+      "Lesson 1 — Basic operators" + `Submit`; `<AnimateOrNot>` reduced-motion stub. Verify
+      `pnpm build` → `dist`; Submit round-trips `no_action`.
+- [ ] **Chunk 8 — `infra`.** `apps/agent/Dockerfile`, `docker-compose.yml` (web+agent+pg,
+      healthchecks), `infra/caddy/polymath.caddyfile` (WS upgrade on `/agent`),
+      `infra/deploy.sh`, `infra/smoke.sh`, `.github/workflows/ci.yml`. Verify
+      `docker compose up` healthy locally + `smoke.sh` against localhost + `caddy validate`.
+- [ ] **Step 6 — Adversarial review** (spec-compliance + security on Opus; robustness +
+      efficiency on Sonnet), triage-fix, **Step 6.5 retro**, rebase onto local main, push,
+      open PR.
+
+### Decisions & evidence (appended as chunks complete)
