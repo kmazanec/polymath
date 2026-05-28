@@ -290,7 +290,3 @@ deflection. No console errors.
    **no itemId**, so the web names the mounted item by its *expression* — any agent logic that
    identifies "which item" must match on itemId/expression, never on the learner's `submission`
    (that's the answer; wrong on a miss). Both noted for F-06/F-07.
-
----
-
-**Delivered in MR:** https://labs.gauntletai.com/keithmazanec/polymath/-/merge_requests/4 (unified I1 inner-loop batch: F-05/06/07/09).

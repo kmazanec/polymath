@@ -204,7 +204,3 @@ I1, **on the critical path**. Concurrent with F-06 after F-05 lands. Blocks F-09
   mounted) scores `correct:false`. New integration test covers the forgery case.
 - The `transferring` readiness guard remains permissive for F-09 to tighten (recorded as a
   convergence flag).
-
----
-
-**Delivered in MR:** https://labs.gauntletai.com/keithmazanec/polymath/-/merge_requests/4 (unified I1 inner-loop batch: F-05/06/07/09).
