@@ -1,0 +1,37 @@
+{
+  "note": "Labelled inner-agent eval scenarios (ADR-010 / F-05 criterion 8). Each scenario fixes an inbound event + learner snapshot and the expected tactical move family. The CI gate (≥95%) runs these through the real OpenAI provider when OPENAI_API_KEY is set; without a key the runner is skipped (see eval.test.ts). The heuristic provider is also asserted against the deterministic subset so the data stays honest offline.",
+  "scenarios": [
+    {
+      "id": "submit-correct-advances",
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B" },
+      "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+    },
+    {
+      "id": "rule-gate-ready-proposes-mastery",
+      "event": { "kind": "submit", "itemId": "l1-not", "submission": "NOT A" },
+      "learnerState": { "consecutiveCorrect": 3, "hintsUsed": 0, "ruleGatePassed": true },
+      "expectMoveOneOf": ["propose_mastery_transition", "propose_transfer_probe"]
+    },
+    {
+      "id": "on-topic-question-answered",
+      "event": { "kind": "learner_question", "question": "what does the AND gate do?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "on_topic"
+    },
+    {
+      "id": "off-topic-question-deflected",
+      "event": { "kind": "learner_question", "question": "can you write my history essay?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "off_topic"
+    },
+    {
+      "id": "session-start-kicks-off",
+      "event": { "kind": "session_start", "lessonId": 1 },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+    }
+  ]
+}
