@@ -81,6 +81,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
+      '@polymath/booleans':
+        specifier: workspace:*
+        version: link:../../packages/booleans
       '@polymath/contract':
         specifier: workspace:*
         version: link:../../packages/contract
