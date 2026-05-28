@@ -70,7 +70,9 @@ export async function proposeAction(provider: MoveProvider, input: AgentInput): 
   );
 }
 
-/** Build the compiled inner-agent graph for a given provider. */
+/** Build the compiled inner-agent graph for a given provider. Compile once per
+ *  provider (the provider is stable for the client's lifetime); `FlowAgentClient`
+ *  caches the compiled graph and invokes it per turn. */
 export function buildAgentGraph(provider: MoveProvider) {
   return new StateGraph(FlowState)
     .addNode('propose', async (state) => ({
@@ -79,11 +81,4 @@ export function buildAgentGraph(provider: MoveProvider) {
     .addEdge('__start__', 'propose')
     .addEdge('propose', '__end__')
     .compile();
-}
-
-/** Run one turn of the inner-agent graph. */
-export async function runAgentTurn(provider: MoveProvider, input: AgentInput): Promise<Action> {
-  const graph = buildAgentGraph(provider);
-  const result = await graph.invoke({ input });
-  return result.action ?? noAction('agent_unsure', 'graph produced no action');
 }

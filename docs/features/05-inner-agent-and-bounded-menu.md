@@ -237,3 +237,34 @@ External: OpenAI API key with GPT-5 and GPT-5-mini access. LangSmith API key.
 - **Postgres LangGraph checkpointer** — the graph runs in-memory; no criterion needs durable
   checkpoints in F-05 (replay is reconstructed from the `events` log). Noted for F-11's
   multi-step subgraph.
+
+### Adversarial review (Step 6)
+
+**Wave 1 (Opus × 2):** spec-compliance + security.
+- *Spec:* 9/10 criteria MET; **criterion 3 MISSED** — the heuristic always advanced on submit
+  and ignored correctness. *Fix:* added an optional append-only `correct` field to the `submit`
+  wire event; a wrong submit now re-presents the item (`rephrase`) and a repeated miss on the
+  same item drops to `simpler_item`. Re-verified MET (unit + integration + eval scenario + UI).
+- *Security:* no high/medium. One low — unbounded learner-text fields — fixed by `.max()` on
+  `submit.submission` / `transfer_submitted.submission` / `learner_question.question`.
+- Also fixed F-3 (low, defense-in-depth): the wire boundary now downgrades a Layer-2-failing
+  mount to `no_action` instead of logging-and-forwarding.
+
+**Wave 2 (Sonnet × 2):** robustness + efficiency.
+- *Robustness (important):* the criterion-3 fix was fragile — the web names the mounted item by
+  its *expression* (the ComponentSpec carries no itemId), and `currentItem`/`pickLessonItem`
+  were matching the *answer* (`submission`) instead, so a wrong answer misidentified the item
+  and advanced anyway. Reproduced with a failing test, then fixed: items are identified by
+  `itemId` (matched against both the lesson itemId and the targetExpression), never by the
+  learner's answer. Verified end-to-end in the browser (a wrong AND submit re-presented
+  "A AND B").
+- *Efficiency (medium):* the LangGraph graph was recompiled every turn; now compiled once in
+  `FlowAgentClient`'s constructor and invoked per turn (removed the now-dead `runAgentTurn`).
+  Double-parse in Layer 2 noted as negligible at L1 scale (LLM dominates) — not changed.
+
+### Step 7 smoke (post-fix, real stack via Chrome DevTools MCP)
+
+`docker compose up` on :8091, heuristic agent: load → `region "Truth table for A AND B"`;
+correct submit → advanced to `"A OR B"`; **wrong submit → re-presented "A AND B"** (criterion
+3 confirmed in the real UI); on-topic question → answer; off-topic → "Off-topic redirect"
+deflection. No console errors.

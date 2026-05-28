@@ -104,13 +104,18 @@ function firstLessonItem(input: AgentInput): TacticalMove | null {
   };
 }
 
-/** The lesson item the current submit concerns, as a `ProposedItem` (matched by
- *  itemId or canonical expression). Null if the submit names no known item. */
+/** The lesson item the current submit concerns, as a `ProposedItem`. Identified by
+ *  the submit's `itemId` only — matched against both the lesson `itemId` (e.g.
+ *  "l1-and") and the item's `targetExpression` (e.g. "A AND B"), since the web
+ *  client names the mounted item by its expression (the rep ComponentSpec carries
+ *  no itemId). Crucially we do NOT identify by `ev.submission` — that's the
+ *  learner's *answer*, which is wrong on a wrong submit and would misidentify the
+ *  item. Null if the submit names no known item. */
 function currentItem(input: AgentInput): ProposedItem | null {
   const ev = input.event;
   if (ev.kind !== 'submit') return null;
   const item = input.lesson.content.items.find(
-    (i) => i.itemId === ev.itemId || i.targetExpression === ev.submission,
+    (i) => i.itemId === ev.itemId || i.targetExpression === ev.itemId,
   );
   if (!item) return null;
   const rep = ev.repSubmission ? ev.repSubmission.rep : 'truth_table';
@@ -137,16 +142,17 @@ function simplerVariant(current: ProposedItem, input: AgentInput): ProposedItem 
 }
 
 /** Pick the next lesson item as a `next_practice_item` move, cycling through the
- *  lesson's items. The submit names the current item by `itemId`; we also match on
- *  the canonical `submission` expression so a caller that only knows the expression
- *  (the rep ComponentSpecs don't carry an itemId) still advances correctly. */
+ *  lesson's items. The current item is identified by the submit's `itemId`,
+ *  matched against both the lesson `itemId` and the `targetExpression` (the web
+ *  names the item by its expression). Identifying by `itemId` (not the learner's
+ *  answer `submission`) keeps advancing correct even on a near-miss answer. An
+ *  unrecognised item starts the lesson from item 0. */
 function pickLessonItem(input: AgentInput): TacticalMove | null {
   const items = input.lesson.content.items;
   if (items.length === 0) return null;
   const ev = input.event;
   const currentId = ev.kind === 'submit' ? ev.itemId : undefined;
-  const currentExpr = ev.kind === 'submit' ? ev.submission : undefined;
-  const idx = items.findIndex((i) => i.itemId === currentId || i.targetExpression === currentExpr);
+  const idx = items.findIndex((i) => i.itemId === currentId || i.targetExpression === currentId);
   const next = items[(idx + 1 + items.length) % items.length]!;
   const rep = ev.kind === 'submit' && ev.repSubmission ? ev.repSubmission.rep : 'truth_table';
   return {

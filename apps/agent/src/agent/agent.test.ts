@@ -57,6 +57,19 @@ describe('inner-agent flow (heuristic, key-free)', () => {
     }
   });
 
+  it('a wrong submit does not advance even when the web names the item by EXPRESSION, not itemId (criterion 3 regression)', async () => {
+    // The web sets `itemId` to the mounted item's expression (the ComponentSpec
+    // carries no itemId) and `submission` to the learner's (wrong) answer. The item
+    // must be identified by itemId, never by the wrong submission, or it advances.
+    const action = await new StubAgentClient().propose(
+      input({ kind: 'submit', sessionId: SID, itemId: 'A AND B', submission: 'A OR B', correct: false }),
+    );
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
+      expect(action.component.expression).toBe('A AND B'); // re-presents the item, not the answer's item
+    }
+  });
+
   it('a second wrong submit on the same item drops to a simpler item (criterion 3)', async () => {
     const inp = input({ kind: 'submit', sessionId: SID, itemId: 'l1-or', submission: 'A OR B', correct: false });
     inp.recentHistory = [
