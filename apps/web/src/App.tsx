@@ -40,6 +40,10 @@ function mountKey(spec: ComponentSpec): string {
       return `pseudo:${spec.targetExpression}`;
     case 'TransferProbe':
       return `probe:${spec.itemId}`;
+    case 'ExplainBackPrompt':
+      // Keyed by item + prompt body so a retry re-mount (same item, new stock copy)
+      // remounts fresh — a new countdown + recording window, not a stale instance.
+      return `explain:${spec.targetItemId}:${spec.promptBody}`;
     default:
       return spec.kind;
   }
@@ -214,6 +218,44 @@ export function App(): ReactElement {
     });
   }, [sessionId]);
 
+  // F-11: when the explain-back window closes, dispatch the completion signal to
+  // the server (the deterministic reflex's input). Per the approved design the
+  // learner's transcript + prosody arrive SERVER-SIDE via the F-10 WebRTC bridge;
+  // the client sends the bare completion signal + measured durationMs (the server
+  // CLAMPS the window regardless, AC#9). An empty transcript here means "no
+  // client-side capture" — the server-side bridge/preconditions decide, fail closed.
+  const onExplainBackEnd = useCallback(
+    (payload: { targetItemId: string; transcript: string; durationMs: number }): void => {
+      if (!sessionId) return;
+      socketRef.current?.send({
+        kind: 'explain_back_recording_ended',
+        sessionId,
+        targetItemId: payload.targetItemId,
+        transcript: payload.transcript,
+        durationMs: payload.durationMs,
+      });
+    },
+    [sessionId],
+  );
+
+  // F-11: the TTS seam for the explain-back prompt (the ~3s read). Best-effort via
+  // the Web Speech API; wrapped so an unavailable/throwing synth (iOS Safari quirk)
+  // degrades silently — the recording window still opens. The WebRTC-bridge capture
+  // is server-side; the client recorder yields '' (the server is the truth-maker).
+  const explainBackDeps = useRef<import('./components/registry.js').RenderOptions['explainBackDeps']>({
+    speak: (text: string) => {
+      try {
+        const synth = globalThis.speechSynthesis;
+        if (!synth) return;
+        synth.cancel();
+        synth.speak(new SpeechSynthesisUtterance(text));
+      } catch {
+        // iOS-Safari / unavailable synth — degrade silently.
+      }
+    },
+    startRecording: () => () => '', // server-side bridge captures the transcript
+  }).current;
+
   const phase = currentPhase(snapshot.value);
 
   // Mirror the phase into a ref for the WS closure, and clear the active probe's
@@ -233,7 +275,9 @@ export function App(): ReactElement {
           React reuses the instance and the prior item's submitted/cells state (and
           its disabled submit button) would bleed into the new item, blocking it. */}
       <AnimateOrNot phase={phase}>
-        <div key={mountKey(mounted)}>{renderComponent(mounted, { onSubmit })}</div>
+        <div key={mountKey(mounted)}>
+          {renderComponent(mounted, { onSubmit, explainBackDeps, onExplainBackEnd })}
+        </div>
       </AnimateOrNot>
 
       {hint && <aside className="hint-slot">{renderComponent(hint)}</aside>}

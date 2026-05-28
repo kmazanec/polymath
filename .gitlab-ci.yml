@@ -40,6 +40,13 @@ workflow:
 
 # Typecheck + unit tests + the package suites + the build. Pure-node work, no DB.
 # pnpm via corepack; everything written under the throwaway /work copy.
+#
+# F-11 explain-back eval gate (AC#6): `@polymath/graph`'s eval.test.ts runs here
+# (the checkout copy includes `evals/`). The ALWAYS-ON offline preconditions-vs-labels
+# assertion is a hard block on every pipeline. The key-gated `liveIt` LLM-judge
+# ≥90%-agreement gate auto-runs when the `OPENAI_API_KEY` CI variable is set (same
+# skip-offline/run-on-key pattern as the F-05 inner-agent eval) — set it as a masked
+# project CI/CD variable to enforce the live agreement gate on MRs.
 verify:
   stage: verify
   needs: []
@@ -48,6 +55,7 @@ verify:
     - >
       docker run --rm
       -v "$CI_PROJECT_DIR":/src:ro
+      -e OPENAI_API_KEY="$OPENAI_API_KEY"
       node:22-bookworm-slim
       bash -c "set -e &&
         cp -a /src /work && cd /work &&

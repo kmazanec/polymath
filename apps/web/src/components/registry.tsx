@@ -7,6 +7,11 @@ import { TruthTable } from './TruthTable.js';
 import { AgentAnswer } from './AgentAnswer.js';
 import { TransferProbe } from './TransferProbe.js';
 import { HintCard } from './HintCard.js';
+import {
+  ExplainBackPrompt,
+  type ExplainBackPromptDeps,
+  type ExplainBackEndPayload,
+} from './ExplainBackPrompt.js';
 
 /**
  * The curated component registry renderer (ADR-005). A single exhaustive switch
@@ -32,7 +37,22 @@ export interface RepSubmitPayload {
 export interface RenderOptions {
   onSubmit?: (payload: RepSubmitPayload) => void;
   hiddenReps?: Rep[];
+  /** F-11: the TTS + recording seams for `ExplainBackPrompt`. App supplies the
+   *  real F-10 voice-client-backed seam; absent → a safe no-op (no TTS, an empty
+   *  transcript on close, which the server treats as a fail-closed precondition
+   *  miss — never a crash). */
+  explainBackDeps?: ExplainBackPromptDeps;
+  /** F-11: dispatch the `explain_back_recording_ended` event when the window closes. */
+  onExplainBackEnd?: (payload: ExplainBackEndPayload) => void;
 }
+
+/** A safe no-op explain-back seam for when no real voice client is wired (tests,
+ *  the registry default). TTS is a no-op; the recorder yields an empty transcript
+ *  → the server's precondition #3 fails CLOSED. */
+const NOOP_EXPLAIN_BACK_DEPS: ExplainBackPromptDeps = {
+  speak: () => undefined,
+  startRecording: () => () => '',
+};
 
 function Tbd({ kind }: { kind: string }): ReactElement {
   return (
@@ -74,9 +94,16 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
       return <TransferProbe spec={spec} onSubmit={onSubmit} />;
     case 'HintCard':
       return <HintCard spec={spec} />;
+    case 'ExplainBackPrompt':
+      return (
+        <ExplainBackPrompt
+          spec={spec}
+          deps={opts.explainBackDeps ?? NOOP_EXPLAIN_BACK_DEPS}
+          onExplainBackEnd={opts.onExplainBackEnd}
+        />
+      );
     case 'IntroExplanation':
     case 'WorkedExample':
-    case 'ExplainBackPrompt':
     case 'ConfidenceCheck':
     case 'MasteryCelebration':
       return <Tbd kind={spec.kind} />;

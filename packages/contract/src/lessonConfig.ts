@@ -25,6 +25,12 @@ export const MasteryConfig = z.object({
   requireHandCuratedTransfer: z.boolean(),
   requireDifferentRepresentation: z.boolean(),
   requireExplainBackPass: z.boolean(),
+
+  /** F-11 (append-only, OPTIONAL): the LangSmith eval bank's required pass-rate vs
+   *  hand labels — the CI hard-block agreement threshold (default 0.9 when unset).
+   *  Single agreed key name; F-12 reads the same key. Optional so existing lessons
+   *  validate unchanged. */
+  explainBackJudgeAgreementThreshold: z.number().min(0).max(1).optional(),
 });
 export type MasteryConfig = z.infer<typeof MasteryConfig>;
 

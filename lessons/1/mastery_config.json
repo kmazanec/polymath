@@ -16,5 +16,7 @@
 
   "requireHandCuratedTransfer": true,
   "requireDifferentRepresentation": true,
-  "requireExplainBackPass": true
+  "requireExplainBackPass": true,
+
+  "explainBackJudgeAgreementThreshold": 0.9
 }
