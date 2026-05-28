@@ -82,6 +82,102 @@ None.
 
 ⚠ **Mastery config** schema is consumed by F-12. F-12 extends with explain-back-specific keys but does not change F-09's keys. Coordinate at file-edit level if F-09 and F-12 land close together (they don't — F-12 is in I2).
 
+## Implementation plan (approved)
+
+> Built off F-07 (the merge sink). Consumes the event log F-05/06/07 write. The
+> `lessons/1/mastery_config.json` is already fully populated (F-01); F-09 only
+> consumes it via the existing `loadLesson`. `learner_state` was created empty in
+> F-01; F-09 is its **single writer**.
+
+- [x] **`packages/bkt`** (new pure package): `updateBKT(prior, correct, config)`
+      (Corbett-Anderson) + `isMastered(params, threshold)`. Hand-computed unit cases +
+      property test (probability always in [0,1]). Add to the workspace + tsconfig refs.
+- [x] **Event-log consumer** — `apps/agent/src/mastery/eventConsumer.ts`: the **single
+      writer** of `learner_state`. On `submit` (with `correct`), `request_hint`,
+      `transfer_submitted`: update the affected KC's BKT, bump hint/retry counters, recompute
+      behavioral aggregates (hint ratio, retry ratio, response-time band), persist. Pure
+      "compute next state" core (unit-testable) + a thin DB-write wrapper.
+- [x] **Rule-gate predicate** — extend `apps/agent/src/mastery/gate.ts`:
+      `evaluateRuleGate(learnerState, config): { passed, blockers[] }` implementing the full
+      ADR-011 predicate (consecutive-correct ≥3, hints ≤0 in last N, median RT in band, hint
+      ratio ≤0.20, retry ratio ≤0.30, BKT ≥0.95). Returns the blocker reason set. `isMastered`
+      stays the F-12 seam (rule + transfer recorded; explain-back later).
+- [x] **Wire the gate into the snapshot** — the server's `readLearnerSnapshot` computes
+      `ruleGatePassed` from `evaluateRuleGate` over the persisted `learner_state` (replacing
+      F-05's signals-flag read), so the agent fires a transfer probe exactly when the gate
+      passes (criterion 4).
+- [x] **Statechart readiness guard** — replace F-07's permissive `practicing → transferring`
+      edge with a `canEnterTransfer` guard backed by the rule-gate result (coordinate with
+      F-07's phase; F-09 rebases on it).
+- [x] **Consume `mastery_config.json`** via `loadLesson` (already wired in the server).
+- [x] **Tests** — `packages/bkt` unit + property; rule-gate returns `passed:true` for a
+      synthesized clean history and `passed:false` w/ `blockers:['hint_ratio_exceeded']` for a
+      hinty one; integration: synthesize a session of events, assert the gate flips at the
+      right point + the replay shows the per-turn BKT trajectory.
+
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+### As built
+
+- **`packages/bkt`** (new pure package): `updateBKT` (Corbett-Anderson Bayes update +
+  learning transition), `isMastered`, `initBKT`, `updateBKTSequence`. Probability is provably
+  kept in [0,1]; hand-computed unit cases (0.776 after one correct from prior 0.30) + a
+  property test over adversarial param/observation streams.
+- **Rule gate** (`mastery/gate.ts`): `evaluateRuleGate(state, config): {passed, blockers[]}`
+  implements the full ADR-011 predicate (consecutive-correct, hints-in-window, median RT band,
+  hint ratio, retry ratio, BKT ≥ threshold) and names each blocker. `isMastered` now composes
+  rule-gate + transfer + explain-back + topic-guardrail (F-12 fills the explain-back input).
+  Added `hintRatio`/`retryRatio` to the `LearnerState` interface (the gate's input — distinct
+  from F-05's `LearnerSnapshot`).
+- **Single-writer event consumer** (`mastery/eventConsumer.ts`): a pure `deriveState` reducer
+  folds the session's event log (+ the just-arrived event) into per-KC BKT + behavioral
+  aggregates; `toLearnerState` projects it for the gate. The server's
+  `updateAndReadLearnerState` runs it before the agent proposes, **persists `learner_state`
+  (one row per KC, upsert) as the sole writer**, and returns the snapshot with the *real*
+  `ruleGatePassed` (replacing F-05's placeholder flag). So the agent fires a transfer probe
+  exactly when the gate passes (criterion 4), proven end-to-end.
+- **Retry semantics:** a "retry" is a repeat submit on an item previously gotten *wrong* (a
+  correct attempt clears the miss) — re-seeing an already-correct item is spaced practice, not
+  a retry. This keeps the retry ratio meaningful.
+- **Statechart guard** (`canEnterTransfer`): F-07's permissive `practicing → transferring` edge
+  is now guarded on `context.transferReady`, set via a new `set_transfer_ready` event +
+  `assign` action. The web emits `set_transfer_ready(true)` then `enter_transfer` when the
+  agent (server-gated) mounts a probe — so the spine *declaratively refuses* an early transfer
+  (the demoable ADR-005 named guard), with the server gate as the enforcing layer.
+
+### Deviations / honest gaps
+
+- **Criterion 6 (hot-reloadable `mastery_config.json` in dev) — NOT met.** The lesson +
+  mastery config are cached per-process (`lessonCache` in `server.ts`, added in F-05 to avoid
+  re-reading JSON every frame). Changing a threshold requires an agent restart. The config
+  *is* externalized to JSON and loaded via `loadLesson` (the tuning surface ADR-011 wants);
+  only the live hot-reload is deferred. Flagged for the batch retro; cheap to add later (a dev
+  cache-bust or file-watch) but out of F-09's load-bearing scope.
+- **`hintsUsedInLastN`** uses the session-total hint count as a conservative proxy for the
+  "last N items" window — at L1 scale the session is short enough that total ≈ window, and a
+  conservative (higher) count only makes the gate stricter. A true sliding window is a later
+  refinement.
+
+### Convergence flags for integration
+
+- `packages/statechart/src/lesson.ts`: F-09 added `transferReady` to context/input, the
+  `set_transfer_ready` event + `setTransferReady` action, and the `canEnterTransfer` guard on
+  `enter_transfer`. F-07 owns the `transferring` phase + `isHiddenRepMountRefused`; these are
+  additive on top.
+- `apps/web/src/ws/actionAdapter.ts`: a TransferProbe mount now emits
+  `[set_transfer_ready(true), enter_transfer]` (was just `enter_transfer`). Tests updated.
+- `apps/agent/src/server.ts`: F-09 replaced `readLearnerSnapshot` with
+  `updateAndReadLearnerState` (single writer) and reordered the verdict computation before it.
+  This is the same `handleClientFrame` block F-06 (L3 logging) + F-07 (transfer verdict) touch
+  — reconcile all three at integration.
+
+### Verification
+
+- `pnpm typecheck` clean (6 packages incl. new `@polymath/bkt`); bkt 6 tests, gate 11,
+  eventConsumer 5, statechart 16, web 105, agent 76 (+5 skipped).
+- End-to-end (real Postgres): 3 correct AND submits drive BKT past 0.95, the gate passes, the
+  agent fires the probe, a correct transfer → mastery; the replay shows the rising per-KC BKT
+  trajectory (criterion 8) and the transfer verdict (criterion 5).
+- Rule-gate unit tests cover `passed:true` for a clean history and `passed:false` with
+  `blockers:['hint_ratio_exceeded']` (criteria 2, 3); BKT matches hand-computed values
+  (criterion 7).
