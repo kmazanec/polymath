@@ -5,7 +5,7 @@ import { WebSocket } from 'ws';
 import { Action } from '@polymath/contract';
 import { createDb, type Db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
-import { events, sessions } from './db/schema.js';
+import { events, learnerState, sessions } from './db/schema.js';
 import { StubAgentClient } from './agent/stubClient.js';
 import { createServer, type PolymathServer } from './server.js';
 import { eq } from 'drizzle-orm';
@@ -271,5 +271,40 @@ describe.skipIf(!CAN_RUN)('agent server end-to-end', () => {
       { kind: 'learner_question', sessionId, question: 'can you book me a flight to Paris?' },
     ]);
     expect(offTopic!.type === 'answer_question' && offTopic!.topicClassification).toBe('off_topic');
+  });
+
+  it('fires a transfer probe when ready, then a correct transfer leads to mastery (F-07 criteria 1,5,7)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // Mark the learner ready so the heuristic fires a probe (F-09 wires the real
+    // gate; here we set masteryReady-equivalent via a learner_state row).
+    await db
+      .insert(learnerState)
+      .values({ sessionId, kc: 'AND', bktProbability: 0.99, signals: { ruleGatePassed: true, consecutiveCorrect: 3 } })
+      .onConflictDoNothing();
+
+    const [probe] = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
+    ]);
+    expect(probe!.type).toBe('mount');
+    expect(probe!.type === 'mount' && probe!.component.kind).toBe('TransferProbe');
+    const probedItemId = probe!.type === 'mount' && probe!.component.kind === 'TransferProbe' ? probe!.component.itemId : '';
+    const probedExpr = probe!.type === 'mount' && probe!.component.kind === 'TransferProbe' ? probe!.component.expression : '';
+    expect(probedItemId).toBeTruthy();
+
+    // Submit a correct transfer answer (equivalent to the probed expression).
+    const [afterTransfer] = await driveSequence(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+    ]);
+    expect(afterTransfer!.type).toBe('transition');
+    expect(afterTransfer!.type === 'transition' && afterTransfer!.to).toBe('mastered');
+
+    // The transfer verdict is recorded in the replay log (criterion 5).
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { transferVerdict?: { correct: boolean } } }[];
+    };
+    expect(replay.events.some((e) => e.payload.transferVerdict?.correct === true)).toBe(true);
   });
 });

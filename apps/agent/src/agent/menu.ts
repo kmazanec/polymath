@@ -48,6 +48,15 @@ export type TacticalMove =
     }
   | { move: 'propose_mastery_transition'; rationale: string }
   | {
+      move: 'propose_transfer_probe';
+      /** The held-out transfer item the learner must reproduce in `targetRep`. */
+      expression: string;
+      targetRep: Rep;
+      hiddenReps: Rep[];
+      itemId: string;
+      rationale: string;
+    }
+  | {
       move: 'no_action';
       reason: 'wait_for_learner' | 'thinking' | 'agent_unsure';
       rationale: string;
@@ -63,6 +72,7 @@ export const F05_MENU = [
   'alt_representation',
   'answer_question',
   'propose_mastery_transition',
+  'propose_transfer_probe',
   'no_action',
 ] as const;
 
@@ -136,6 +146,18 @@ export function compileMove(move: TacticalMove): Action {
       };
     case 'propose_mastery_transition':
       return { type: 'transition', to: 'mastered', rationale: move.rationale };
+    case 'propose_transfer_probe':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'TransferProbe',
+          expression: move.expression,
+          targetRep: move.targetRep,
+          hiddenReps: move.hiddenReps,
+          itemId: move.itemId,
+        },
+        rationale: move.rationale,
+      };
     case 'no_action':
       return { type: 'no_action', reason: move.reason, rationale: move.rationale };
   }

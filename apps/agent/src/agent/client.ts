@@ -28,6 +28,23 @@ export interface AgentInput {
   learnerState: LearnerSnapshot;
   /** Most-recent turns (event + action) for short context; newest last. */
   recentHistory: TurnSummary[];
+  /** Held-out transfer items the learner has NOT yet seen this session, for the
+   *  agent to draw a probe from (ADR-010 Layer 5). The server populates this from
+   *  `transfer_bank` minus session-seen ids; empty when the bank is unavailable. */
+  transferCandidates?: TransferProbeItem[];
+  /** On a `transfer_submitted` turn: the server-computed verdict for the probed
+   *  item (correctness is decided server-side via `booleans.equivalent` against the
+   *  bank's canonical expression — the agent never re-derives it). */
+  transferVerdict?: { itemId: string; correct: boolean };
+}
+
+/** A held-out transfer item the agent may fire as a probe. Mirrors the
+ *  `transfer_bank` row shape the server reads (read-only at runtime). */
+export interface TransferProbeItem {
+  itemId: string;
+  targetExpression: string;
+  targetRep: 'truth_table' | 'circuit' | 'pseudocode';
+  hiddenReps: ('truth_table' | 'circuit' | 'pseudocode')[];
 }
 
 export interface LearnerSnapshot {

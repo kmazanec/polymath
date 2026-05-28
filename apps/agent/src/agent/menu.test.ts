@@ -103,6 +103,24 @@ describe('compileMove', () => {
     expect(a.type === 'transition' && a.to).toBe('mastered');
   });
 
+  it('propose_transfer_probe → mount of a TransferProbe carrying targetRep + hiddenReps', () => {
+    const a = assertValidAction({
+      move: 'propose_transfer_probe',
+      expression: 'A AND B',
+      targetRep: 'circuit',
+      hiddenReps: ['truth_table'],
+      itemId: 'L1-01-and',
+      rationale: 'rule gate passed',
+    });
+    expect(a.type).toBe('mount');
+    if (a.type !== 'mount') throw new Error('unreachable');
+    expect(a.component.kind).toBe('TransferProbe');
+    if (a.component.kind !== 'TransferProbe') throw new Error('unreachable');
+    expect(a.component.targetRep).toBe('circuit');
+    expect(a.component.hiddenReps).toEqual(['truth_table']);
+    expect(a.component.itemId).toBe('L1-01-and');
+  });
+
   it('no_action → no_action with reason preserved', () => {
     const a = assertValidAction({
       move: 'no_action',

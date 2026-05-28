@@ -1,14 +1,29 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { useMachine } from '@xstate/react';
 import { lessonMachine } from '@polymath/statechart';
-import type { ComponentSpec, ServerMessage } from '@polymath/contract';
+import type { ComponentSpec, Rep, ServerMessage } from '@polymath/contract';
 import { AgentSocket } from './ws/client.js';
 import { adaptAction } from './ws/actionAdapter.js';
 import { AnimateOrNot } from './motion/AnimateOrNot.js';
 import { renderComponent, type RepSubmitPayload } from './components/registry.js';
+import { transferRepRefusal } from './copy/refusals.js';
 import { LESSON_1_INTRO } from './lessonIntroContent.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
+
+const REP_PHRASES: Record<Rep, RegExp> = {
+  truth_table: /truth\s*table/i,
+  circuit: /\bcircuit\b/i,
+  pseudocode: /pseudo\s*code|\bcode\b/i,
+};
+
+/** If a question during a transfer probe is asking to reveal one of the held-out
+ *  reps ("can I see the truth table again?"), return that rep; else null. */
+function wantsHiddenRep(question: string, hiddenReps: readonly Rep[]): Rep | null {
+  const asksToReveal = /\b(see|show|bring back|reveal|look at|go back to)\b/i.test(question);
+  if (!asksToReveal) return null;
+  return hiddenReps.find((rep) => REP_PHRASES[rep].test(question)) ?? null;
+}
 
 /** Map the lesson sub-statechart's current state value to the contract PhaseName
  *  the motion wrapper expects. The spine's state ids ARE the PhaseNames. */
@@ -30,6 +45,14 @@ export function App(): ReactElement {
   const currentItemId = useRef<string>('l1-and');
   const socketRef = useRef<AgentSocket | null>(null);
   const [question, setQuestion] = useState('');
+  /** The active transfer probe's id + held-out reps, tracked in refs so the WS
+   *  message closure reads the current value (not a stale capture). Set when a
+   *  TransferProbe mounts; cleared when the phase leaves `transferring`. */
+  const currentProbeItemId = useRef<string | null>(null);
+  const activeHiddenReps = useRef<Rep[]>([]);
+  /** The current phase, mirrored into a ref for the WS closure (the adapter needs
+   *  it to enforce the transfer-probe hidden-rep refusal). */
+  const phaseRef = useRef<string>('introducing');
 
   useEffect(() => {
     let cancelled = false;
@@ -51,9 +74,21 @@ export function App(): ReactElement {
           onClose: () => setConn('closed'),
           onMessage: (msg: ServerMessage) => {
             if (msg.kind !== 'action') return;
-            const r = adaptAction(msg.action);
+            const r = adaptAction(msg.action, {
+              phase: phaseRef.current,
+              hiddenReps: activeHiddenReps.current,
+            });
+            // A mount refused by the transfer-probe guard is simply dropped — the
+            // held-out rep is never revealed (ADR-005 refusal #2).
+            if (r.refused) return;
             if (r.lessonEvent) send(r.lessonEvent);
-            if (r.mount) setMounted(r.mount);
+            if (r.mount) {
+              setMounted(r.mount);
+              if (r.mount.kind === 'TransferProbe') {
+                currentProbeItemId.current = r.mount.itemId;
+                activeHiddenReps.current = r.mount.hiddenReps;
+              }
+            }
             if (r.answer) {
               setAnswer({
                 kind: 'AgentAnswer',
@@ -88,6 +123,18 @@ export function App(): ReactElement {
   const onSubmit = useCallback(
     (payload: RepSubmitPayload): void => {
       if (!sessionId) return;
+      // During a transfer probe, the learner's submission is a `transfer_submitted`
+      // event (validated server-side against the held-out bank item), not a regular
+      // practice `submit`.
+      if (mounted.kind === 'TransferProbe' && currentProbeItemId.current) {
+        socketRef.current?.send({
+          kind: 'transfer_submitted',
+          sessionId,
+          itemId: currentProbeItemId.current,
+          submission: payload.submission,
+        });
+        return;
+      }
       socketRef.current?.send({
         kind: 'submit',
         sessionId,
@@ -97,17 +144,43 @@ export function App(): ReactElement {
         correct: payload.correct,
       });
     },
-    [sessionId],
+    [sessionId, mounted.kind],
   );
 
   const onAskQuestion = useCallback((): void => {
     const q = question.trim();
     if (!sessionId || q.length === 0) return;
+    // ADR-005 refusal #2: during a transfer probe, a request to bring back a
+    // held-out rep is refused by the interface itself — even before asking the
+    // agent. The learner sees the warm stock refusal, not the hidden rep.
+    if (phaseRef.current === 'transferring' && activeHiddenReps.current.length > 0) {
+      const asked = wantsHiddenRep(q, activeHiddenReps.current);
+      if (asked) {
+        setAnswer({
+          kind: 'AgentAnswer',
+          question: q,
+          answer: transferRepRefusal(asked),
+          topicClassification: 'on_topic',
+        });
+        setQuestion('');
+        return;
+      }
+    }
     socketRef.current?.send({ kind: 'learner_question', sessionId, question: q });
     setQuestion('');
   }, [question, sessionId]);
 
   const phase = currentPhase(snapshot.value);
+
+  // Mirror the phase into a ref for the WS closure, and clear the active probe's
+  // held-out reps once we leave the transferring phase (nothing hidden otherwise).
+  useEffect(() => {
+    phaseRef.current = phase;
+    if (phase !== 'transferring') {
+      activeHiddenReps.current = [];
+      currentProbeItemId.current = null;
+    }
+  }, [phase]);
 
   return (
     <main>

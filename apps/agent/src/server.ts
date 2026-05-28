@@ -2,6 +2,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { desc, eq } from 'drizzle-orm';
+import { equivalent } from '@polymath/booleans';
 import {
   ClientEvent,
   noAction,
@@ -9,8 +10,14 @@ import {
   type ServerMessage,
 } from '@polymath/contract';
 import type { Db } from './db/client.js';
-import { events, learnerState, sessions } from './db/schema.js';
-import type { AgentClient, AgentInput, LearnerSnapshot, TurnSummary } from './agent/client.js';
+import { events, learnerState, sessions, transferBank } from './db/schema.js';
+import type {
+  AgentClient,
+  AgentInput,
+  LearnerSnapshot,
+  TransferProbeItem,
+  TurnSummary,
+} from './agent/client.js';
 import { validateLayer2 } from './agent/layer2.js';
 import { validateOutboundAction } from './agent/validateAction.js';
 import { loadLesson, type Lesson } from './lessons/loader.js';
@@ -101,6 +108,64 @@ async function readRecentHistory(db: Db, sessionId: string, limit = 5): Promise<
     });
 }
 
+/** Held-out transfer items for the lesson the learner has NOT yet seen this
+ *  session (ADR-010 Layer 5: never repeat a probed item). "Seen" = any item id
+ *  that appeared in a prior `transfer_submitted` event or a mounted `TransferProbe`
+ *  for this session. Read-only — the bank is never written at runtime. */
+async function readTransferCandidates(
+  db: Db,
+  sessionId: string,
+  lessonId: number,
+): Promise<TransferProbeItem[]> {
+  const [bank, prior] = await Promise.all([
+    db.select().from(transferBank).where(eq(transferBank.lessonId, lessonId)),
+    db.select({ payload: events.payload }).from(events).where(eq(events.sessionId, sessionId)),
+  ]);
+  const seen = new Set<string>();
+  for (const row of prior) {
+    const p = (row.payload ?? {}) as {
+      event?: { kind?: string; itemId?: string };
+      action?: { type?: string; component?: { kind?: string; itemId?: string } };
+    };
+    if (p.event?.kind === 'transfer_submitted' && p.event.itemId) seen.add(p.event.itemId);
+    if (p.action?.component?.kind === 'TransferProbe' && p.action.component.itemId) {
+      seen.add(p.action.component.itemId);
+    }
+  }
+  return bank
+    .filter((b) => !seen.has(b.itemId))
+    .map((b) => ({
+      itemId: b.itemId,
+      targetExpression: b.targetExpression,
+      targetRep: b.targetRep as TransferProbeItem['targetRep'],
+      hiddenReps: b.hiddenReps as TransferProbeItem['hiddenReps'],
+    }));
+}
+
+/** Validate a `transfer_submitted` event against the probed bank item's canonical
+ *  expression via `@polymath/booleans.equivalent` (ADR-010: the validator is the
+ *  source of truth; the server decides the transfer verdict, not the agent). */
+async function computeTransferVerdict(
+  db: Db,
+  event: ClientEvent,
+): Promise<{ itemId: string; correct: boolean } | undefined> {
+  if (event.kind !== 'transfer_submitted') return undefined;
+  const rows = await db
+    .select({ expr: transferBank.targetExpression })
+    .from(transferBank)
+    .where(eq(transferBank.itemId, event.itemId))
+    .limit(1);
+  const canonical = rows[0]?.expr;
+  if (!canonical) return { itemId: event.itemId, correct: false };
+  let correct = false;
+  try {
+    correct = equivalent(event.submission, canonical);
+  } catch {
+    correct = false; // an unparseable submission is simply wrong, never a crash
+  }
+  return { itemId: event.itemId, correct };
+}
+
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
 async function proposeWithTimeout(agent: AgentClient, input: AgentInput): Promise<Action> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -168,11 +233,20 @@ export async function handleClientFrame(
   // Assemble the turn input the agent reasons over: lesson content, the learner
   // snapshot, and recent history (ADR-003: fresh-per-turn, structured state only).
   const lesson = getLesson(lessonIdForEvent(event));
-  const [learner, recentHistory] = await Promise.all([
+  const [learner, recentHistory, transferCandidates, transferVerdict] = await Promise.all([
     readLearnerSnapshot(deps.db, event.sessionId),
     readRecentHistory(deps.db, event.sessionId),
+    readTransferCandidates(deps.db, event.sessionId, lesson.content.lessonId),
+    computeTransferVerdict(deps.db, event),
   ]);
-  const input: AgentInput = { event, lesson, learnerState: learner, recentHistory };
+  const input: AgentInput = {
+    event,
+    lesson,
+    learnerState: learner,
+    recentHistory,
+    transferCandidates,
+    transferVerdict,
+  };
 
   // Propose an action (under a timeout), then validate it server-side before it
   // crosses the wire (ADR-005 / criterion 5). The agent's own flow already ran
@@ -194,6 +268,9 @@ export async function handleClientFrame(
       event,
       action,
       learnerSnapshot: learner,
+      // The transfer verdict (when this turn is a transfer_submitted) is recorded
+      // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
+      ...(transferVerdict ? { transferVerdict } : {}),
       validation: {
         layer: shaped.type === 'mount' ? 2 : 1,
         status: layer2.ok ? 'pass' : 'reject',

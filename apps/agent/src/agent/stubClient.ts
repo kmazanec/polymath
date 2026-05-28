@@ -51,10 +51,25 @@ export class HeuristicMoveProvider implements MoveProvider {
         }
       }
 
+      // Rule gate ready → fire a transfer probe from the held-out bank (an unseen
+      // item). Mastery is not proposed directly from practice — it requires a
+      // passed transfer probe first (ADR-005 refusal #3 / ADR-010 Layer 5). Only
+      // when no unseen candidate remains does the agent propose mastery.
       if (input.learnerState.ruleGatePassed) {
+        const candidate = input.transferCandidates?.[0];
+        if (candidate) {
+          return Promise.resolve({
+            move: 'propose_transfer_probe',
+            expression: candidate.targetExpression,
+            targetRep: candidate.targetRep,
+            hiddenReps: candidate.hiddenReps,
+            itemId: candidate.itemId,
+            rationale: 'rule-gate passed — firing a held-out transfer probe (heuristic provider)',
+          });
+        }
         return Promise.resolve({
           move: 'propose_mastery_transition',
-          rationale: 'rule-gate reports the learner is ready (heuristic provider)',
+          rationale: 'rule-gate passed and transfer bank exhausted (heuristic provider)',
         });
       }
       const next = pickLessonItem(input);
@@ -64,6 +79,35 @@ export class HeuristicMoveProvider implements MoveProvider {
         reason: 'wait_for_learner',
         rationale: 'no further lesson items (heuristic provider)',
       });
+    }
+
+    if (ev.kind === 'transfer_submitted') {
+      // The transfer probe's verdict gates the next move: a pass → propose mastery
+      // (the rule gate already held); a fail → drop back into practice with a
+      // simpler item (remediate). Correctness is computed by the server's
+      // transfer_submitted handler (booleans.equivalent) and threaded via `correct`.
+      const passed = input.transferVerdict?.correct ?? false;
+      if (passed) {
+        return Promise.resolve({
+          move: 'propose_mastery_transition',
+          rationale: 'transfer probe passed — proposing mastery (heuristic provider)',
+        });
+      }
+      const items = [...input.lesson.content.items].sort((a, b) => a.difficultyTier - b.difficultyTier);
+      const easiest = items[0];
+      if (easiest) {
+        return Promise.resolve({
+          move: 'simpler_item',
+          item: {
+            rep: 'truth_table',
+            targetExpression: easiest.targetExpression,
+            claimedTruthTable: easiest.truthTable,
+            visibleReps: ['truth_table'],
+          },
+          rationale: 'transfer probe failed — remediating with a simpler item (heuristic provider)',
+        });
+      }
+      return Promise.resolve({ move: 'no_action', reason: 'wait_for_learner', rationale: 'transfer failed, no item to remediate' });
     }
 
     if (ev.kind === 'learner_question') {

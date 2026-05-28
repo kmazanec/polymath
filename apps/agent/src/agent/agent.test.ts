@@ -16,6 +16,59 @@ function input(event: AgentInput['event'], ruleGatePassed = false): AgentInput {
   };
 }
 
+const PROBE = {
+  itemId: 'L1-01-and',
+  targetExpression: 'A AND B',
+  targetRep: 'circuit' as const,
+  hiddenReps: ['truth_table' as const],
+};
+
+describe('inner-agent flow — transfer probe (F-07)', () => {
+  it('on a correct submit with the rule gate passed, fires a transfer probe from an unseen bank item', async () => {
+    const inp = input(
+      { kind: 'submit', sessionId: SID, itemId: 'l1-and', submission: 'A AND B', correct: true },
+      true,
+    );
+    inp.transferCandidates = [PROBE];
+    const action = await new StubAgentClient().propose(inp);
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount') {
+      expect(action.component.kind).toBe('TransferProbe');
+      if (action.component.kind === 'TransferProbe') {
+        expect(action.component.targetRep).toBe('circuit');
+        expect(action.component.hiddenReps).toEqual(['truth_table']);
+      }
+    }
+  });
+
+  it('proposes mastery when the rule gate passed but the transfer bank is exhausted', async () => {
+    const inp = input(
+      { kind: 'submit', sessionId: SID, itemId: 'l1-and', submission: 'A AND B', correct: true },
+      true,
+    );
+    inp.transferCandidates = [];
+    const action = await new StubAgentClient().propose(inp);
+    expect(action.type).toBe('transition');
+    expect(action.type === 'transition' && action.to).toBe('mastered');
+  });
+
+  it('on a passed transfer (server verdict correct), proposes the mastery transition', async () => {
+    const inp = input({ kind: 'transfer_submitted', sessionId: SID, itemId: PROBE.itemId, submission: 'A AND B' });
+    inp.transferVerdict = { itemId: PROBE.itemId, correct: true };
+    const action = await new StubAgentClient().propose(inp);
+    expect(action.type).toBe('transition');
+    expect(action.type === 'transition' && action.to).toBe('mastered');
+  });
+
+  it('on a failed transfer, remediates with a simpler item rather than advancing', async () => {
+    const inp = input({ kind: 'transfer_submitted', sessionId: SID, itemId: PROBE.itemId, submission: 'A OR B' });
+    inp.transferVerdict = { itemId: PROBE.itemId, correct: false };
+    const action = await new StubAgentClient().propose(inp);
+    expect(action.type).toBe('mount');
+    expect(action.type === 'mount' && ['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'].includes(action.component.kind)).toBe(true);
+  });
+});
+
 describe('inner-agent flow (heuristic, key-free)', () => {
   it('on submit, the key-free StubAgentClient mounts the next practice item', async () => {
     const action = await new StubAgentClient().propose(
