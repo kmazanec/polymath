@@ -16,6 +16,7 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/contract/package.json packages/contract/
 COPY packages/booleans/package.json packages/booleans/
 COPY packages/statechart/package.json packages/statechart/
+COPY packages/bkt/package.json packages/bkt/
 COPY apps/agent/package.json apps/agent/
 COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --filter @polymath/agent...
@@ -29,6 +30,7 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/contract packages/contract
 COPY packages/booleans packages/booleans
 COPY packages/statechart packages/statechart
+COPY packages/bkt packages/bkt
 COPY apps/agent apps/agent
 COPY lessons lessons
 # seedTransferBank reads seed_data/transfer_items.json (repo root) at boot.
