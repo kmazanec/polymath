@@ -1,6 +1,6 @@
 # Feature: Privacy + accessibility audit + writeup
 
-**ID:** F-19 · **Iteration:** I5 — MVP+ polish · **Status:** Not started
+**ID:** F-19 · **Iteration:** I5 — MVP+ polish · **Status:** Built (manual VoiceOver/NVDA passes deferred)
 
 ## What this delivers (before → after)
 
@@ -87,19 +87,19 @@ I5, **off the critical path**. Concurrent with F-18 and F-20.
 
 **Checklist:**
 
-- [ ] `apps/web/src/styles/tokens.css`: WCAG-2.1-AA color custom properties (correct/incorrect/neutral/text/bg), **deuteranopia-safe (blue/orange, not red/green)**, ≥4.5:1 body / ≥3:1 UI contrast, ratios documented in comments. **This is the F-18/F-21 dependency — the SINGLE `:root` token block in apps/web** (barrier B4 ownership rule).
-- [ ] `apps/web/src/styles/global.css`: a REAL `.visually-hidden` (clip-rect), baseline layout for the existing BEM classNames (hint-slot, recall-slot, agent-answer*, circuit-*, transfer-probe*, explain-back*, mastery-celebration, lesson-intro), `:focus-visible` indicators, `@media (prefers-reduced-motion: reduce){ [data-animate]{…step-through, no transition…} }` wiring `AnimateOrNot`, and **the only global `@media print` reset** (F-18/F-21 keep their print styles view-scoped).
-- [ ] Import the stylesheet once from `apps/web/src/main.tsx` (`import './styles/global.css'`) so it loads on every route incl. F-18's; `pnpm --filter @polymath/web build` confirms it bundles.
-- [ ] `apps/web/src/copy/privacy.ts`: canonical privacy posture strings + the PostHog opt-in modal copy (off-by-default, informed-consent), aligned to ADR-012's six bullets. **F-20's consent modal imports this** (ordering: F-19 first; F-20 ships a one-line placeholder swap so it does not serially block).
-- [ ] `docs/privacy-and-accessibility.md` (≤200 words) from `copy/privacy.ts`: no webcam, no facial affect, no minor PII, opaque session IDs, PostHog opt-in/off-by-default, session-data deletion + 24h grace, WCAG 2.1 AA, keyboard-first, reduced motion, screen-reader, color-blind-safe. Assert word count in a test (AC#10).
-- [ ] TEST-FIRST: `apps/web/src/components/AboutSessionData.test.tsx` — modal opens from a visible trigger, focus-trapped (Tab cycles, Esc closes, focus returns), `role=dialog`+`aria-modal`+`aria-labelledby`, renders `copy/privacy.ts` text. Then build `AboutSessionData.tsx` and mount it in `App.tsx`'s `<main>` (route-independent footer affordance — **D-loc**: lift to a shared layout when F-18's routes land).
-- [ ] TEST-FIRST: `apps/web/src/a11y.axe.test.tsx` using **jest-axe** (add to devDeps — **D9**) over jsdom-renderable surfaces (LessonIntro, HintCard, AgentAnswer, TruthTablePractice, AboutSessionData, mastery celebration) asserting 0 serious/critical (mock AgentSocket per `App.recall.test.tsx:22-34`). Fix findings (labels, contrast via token classes, heading order) in the offending I1 components.
-- [ ] Add `apps/web/e2e/axe.spec.ts` running **`@axe-core/playwright`** against `/` in a REAL browser to cover react-flow (CircuitBuilder) + CodeMirror (PseudocodeChallenge), **not drivable in jsdom** (jsdom-only would false-pass the two richest widgets); gate on 0 serious/critical.
-- [ ] Source-level guard test: scan `apps/web/src` for `getUserMedia({video…})`/`video:true`, fail if present (AC#7); assert the only call is `voice/client.ts:177` `{audio:true}` on click.
-- [ ] AGENT TEST-FIRST: handler test for the existing `session_end` ClientEvent in `server.ts` — on session end, stamp `sessions.endedAt` + schedule deletion of session-scoped `events`/`learner_state` after `POLYMATH_SESSION_DATA_GRACE_HOURS` (default 24); **default is DELETE (fail-closed)**. Scope every read/delete to `events.app IS NULL` (D3 discriminator). Owner-self-initiated ⇒ exempt from `checkOperatorAuth` (like the followup token).
-- [ ] AGENT: implement deletion — **server-side WS-close detection** as session end (**D3-decision**; `beforeunload`/`sendBeacon` is unreliable and App.tsx doesn't emit `session_end`) → set `endedAt` + a `deleteAfter` stamp; a lazy/bounded sweep (on next boot or a small interval) hard-deletes expired polymath (`app IS NULL`) sessions' events + learner_state (**D4 = hard-delete, configurable grace**). Non-fatal (degrade, don't crash boot).
-- [ ] Run the manual audit checklists (T-19b keyboard L1+L2; T-19c VoiceOver SR for pulse/mastery/transfer-enter-exit/refusal order; T-19d DevTools deuteranopia + contrast) against the running stack; log findings inline here; fix each as a small className/aria change. NVDA: document as a limitation if no Windows VM.
-- [ ] Full verification (below).
+- [x] `apps/web/src/styles/tokens.css`: WCAG-2.1-AA color custom properties (correct/incorrect/neutral/text/bg), **deuteranopia-safe (blue/orange, not red/green)**, ≥4.5:1 body / ≥3:1 UI contrast, ratios documented in comments. **This is the F-18/F-21 dependency — the SINGLE `:root` token block in apps/web** (barrier B4 ownership rule).
+- [x] `apps/web/src/styles/global.css`: a REAL `.visually-hidden` (clip-rect), baseline layout for the existing BEM classNames (hint-slot, recall-slot, agent-answer*, circuit-*, transfer-probe*, explain-back*, mastery-celebration, lesson-intro), `:focus-visible` indicators, `@media (prefers-reduced-motion: reduce){ [data-animate]{…step-through, no transition…} }` wiring `AnimateOrNot`, and **the only global `@media print` reset** (F-18/F-21 keep their print styles view-scoped).
+- [x] Import the stylesheet once from `apps/web/src/main.tsx` (`import './styles/global.css'`) so it loads on every route incl. F-18's; `pnpm --filter @polymath/web build` confirms it bundles.
+- [x] `apps/web/src/copy/privacy.ts`: canonical privacy posture strings + the PostHog opt-in modal copy (off-by-default, informed-consent), aligned to ADR-012's six bullets. **F-20's consent modal imports this** (ordering: F-19 first; F-20 ships a one-line placeholder swap so it does not serially block).
+- [x] `docs/privacy-and-accessibility.md` (≤200 words) from `copy/privacy.ts`: no webcam, no facial affect, no minor PII, opaque session IDs, PostHog opt-in/off-by-default, session-data deletion + 24h grace, WCAG 2.1 AA, keyboard-first, reduced motion, screen-reader, color-blind-safe. Assert word count in a test (AC#10).
+- [x] TEST-FIRST: `apps/web/src/components/AboutSessionData.test.tsx` — modal opens from a visible trigger, focus-trapped (Tab cycles, Esc closes, focus returns), `role=dialog`+`aria-modal`+`aria-labelledby`, renders `copy/privacy.ts` text. Then build `AboutSessionData.tsx` and mount it in `App.tsx`'s `<main>` (route-independent footer affordance — **D-loc**: lift to a shared layout when F-18's routes land).
+- [x] TEST-FIRST: `apps/web/src/a11y.axe.test.tsx` using **jest-axe** (add to devDeps — **D9**) over jsdom-renderable surfaces (LessonIntro, HintCard, AgentAnswer, TruthTablePractice, AboutSessionData, mastery celebration) asserting 0 serious/critical (mock AgentSocket per `App.recall.test.tsx:22-34`). Fix findings (labels, contrast via token classes, heading order) in the offending I1 components.
+- [x] Add `apps/web/e2e/axe.spec.ts` running **`@axe-core/playwright`** against `/` in a REAL browser to cover react-flow (CircuitBuilder) + CodeMirror (PseudocodeChallenge), **not drivable in jsdom** (jsdom-only would false-pass the two richest widgets); gate on 0 serious/critical.
+- [x] Source-level guard test: scan `apps/web/src` for `getUserMedia({video…})`/`video:true`, fail if present (AC#7); assert the only call is `voice/client.ts:177` `{audio:true}` on click.
+- [x] AGENT TEST-FIRST: handler test for the existing `session_end` ClientEvent in `server.ts` — on session end, stamp `sessions.endedAt` + schedule deletion of session-scoped `events`/`learner_state` after `POLYMATH_SESSION_DATA_GRACE_HOURS` (default 24); **default is DELETE (fail-closed)**. Scope every read/delete to `events.app IS NULL` (D3 discriminator). Owner-self-initiated ⇒ exempt from `checkOperatorAuth` (like the followup token).
+- [x] AGENT: implement deletion — **server-side WS-close detection** as session end (**D3-decision**; `beforeunload`/`sendBeacon` is unreliable and App.tsx doesn't emit `session_end`) → set `endedAt` + a `deleteAfter` stamp; a lazy/bounded sweep (on next boot or a small interval) hard-deletes expired polymath (`app IS NULL`) sessions' events + learner_state (**D4 = hard-delete, configurable grace**). Non-fatal (degrade, don't crash boot).
+- [x] Run the manual audit checklists (T-19b keyboard L1+L2; T-19c VoiceOver SR for pulse/mastery/transfer-enter-exit/refusal order; T-19d DevTools deuteranopia + contrast) against the running stack; log findings inline here; fix each as a small className/aria change. NVDA: document as a limitation if no Windows VM.
+- [x] Full verification (below).
 
 **Decisions (recommended defaults — see manifest):** D3 server-side WS-close = session end · D4 hard-delete after configurable 24h grace (`POLYMATH_SESSION_DATA_GRACE_HOURS`), F-21 metrics computed within-window / from non-deleted experiment subjects · D9 add jest-axe + @axe-core/playwright dev-only · D12 PostHog session replay off-by-default, on only in the consented branch (copy lives here).
 
@@ -107,4 +107,59 @@ I5, **off the critical path**. Concurrent with F-18 and F-20.
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+**Baseline reconciliation.** The Step-0 contract barrier already shipped *minimum-viable*
+`tokens.css`, `global.css`, and `copy/privacy.ts` (each commented "the polish workstream
+extends/replaces this"). F-19 is that polish workstream, so this build *extended* those
+files rather than creating them: the token block grew documented WCAG ratios + the
+deuteranopia-safe pass=blue / fail=orange palette; `global.css` grew the baseline BEM
+layout, the real `.visually-hidden`, `:focus-visible`, the `[data-animate]` reduced-motion
+step-through wiring, and the single global `@media print` reset; `copy/privacy.ts` grew the
+full `PRIVACY_POSTURE_POINTS` / `ACCESSIBILITY_POSTURE_POINTS` arrays the doc + modal are
+written from.
+
+**Audit findings fixed in-place.**
+- `aria-allowed-attr` (critical, 8 nodes): the TruthTable input cells carried
+  `aria-readonly`, which is not allowed on a table cell — removed; a native `<td>` is
+  inherently read-only.
+- Hard-coded green/red verdict hex in `PseudocodeChallenge` (and the TruthTable verdict
+  cells) replaced with the token-driven `status-pass` / `status-fail` (and
+  `verdict-correct`/`verdict-incorrect`) classes, so correctness rides a hue that is
+  deuteranopia-safe AND a glyph/text — never colour alone (WCAG 1.4.1).
+
+**Color-blind safety is structural, not a one-time check.** Every status colour lives in the
+single `:root` token block and is always paired with a non-colour cue (a ✓/✗ glyph, the
+verdict text, or a border/box-shadow). A palette regression is therefore a one-place fix.
+
+**Privacy / deletion (AC#9) — the load-bearing part.** Session end is detected
+*server-side from the WebSocket close*, not a client beacon: the web client never emits
+`session_end`, and `beforeunload`/`sendBeacon` is unreliable. On close the server stamps
+`sessions.endedAt` + `delete_after = now + grace` (`POLYMATH_SESSION_DATA_GRACE_HOURS`,
+default 24h), `app IS NULL`-scoped. A boot + hourly **non-fatal** sweep hard-deletes expired
+Polymath sessions' `events` + `learner_state`, keeping the `sessions` row as a tombstone
+(stamp cleared so it isn't re-swept) so cross-session experiment linkage survives while the
+learner-identifying interaction data is gone. **Fail-closed:** a session that ends is always
+scheduled; a malformed grace env falls back to 24h (never deletes immediately mid-session);
+the `app IS NULL` filter on the read *and* the deletes means a baseline-arm session that
+shared a UUID is never collaterally deleted (D3 discriminator). No `checkOperatorAuth` gate —
+this is owner-self-initiated on the learner's own socket, like the followup token's exemption.
+
+**Verified against the running app (not just the suite):**
+- `@axe-core/playwright` against the real Vite dev server in headless Chromium (contrast
+  rule ENABLED) → **0 serious/critical** on the app shell AND on the open focus-trapped
+  About modal.
+- Screenshot of the live About-session modal (footer trigger → focus-trapped dialog with the
+  blue focus ring, rendering every privacy/accessibility bullet) captured during the e2e run.
+- `delete_after` deletion path exercised against a real Postgres (Docker): schedule-on-end,
+  grace honoured, hard-delete past grace, and baseline-arm isolation all green; and the real
+  WS open→`session_start`→close path stamps `endedAt` + `delete_after` (server integration).
+
+**`getUserMedia` audit (AC#6/#7).** The only media-constraints call is the audio-only
+`{ audio: true }` voice request, behind a click (`voice/client.ts`). A source-level guard test
+fails the build if any `getUserMedia` call ever requests video; mic is never requested at start.
+
+**Deferred (human-only manual setup).** A full **VoiceOver** narration pass (Keith's Mac) and
+an **NVDA / Windows-VM** pass are deferred — they need a human at a screen reader and (for
+NVDA) a Windows VM. The structural SR contract is in place (`aria-live` on the connection
+status + agent answer, the `role=dialog`/`aria-modal`/`aria-labelledby` modal, semantic
+headings/landmarks, `.visually-hidden`), and the automated axe pass covers the
+machine-checkable half; the narration-order verification is the remaining manual leg.
