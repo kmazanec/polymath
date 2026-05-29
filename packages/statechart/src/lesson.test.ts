@@ -209,6 +209,71 @@ describe('createLessonMachine (F-13 lesson factory — parameterised spine)', ()
   });
 });
 
+// Lesson 4 (De Morgan's law, ADR-012 stretch) is the second non-L1 lesson. Like
+// L2/L3 it REUSES the locked phase shape via `createLessonMachine({lessonId:4})` —
+// the only per-lesson difference is the machine id (`lesson_4`). The L3→L4 advance
+// is the same session-level re-instantiation the L1→L2 / L2→L3 advances use, so the
+// spine itself needs no L4-specific change; this asserts the parameterised machine
+// behaves identically for lesson 4 (AC#1: a learner mastering L3 can continue into L4).
+describe('createLessonMachine — lesson_4 (De Morgan, ADR-012 stretch)', () => {
+  function startL4(masteryReady = false) {
+    const actor = createActor(createLessonMachine({ lessonId: 4 }), {
+      input: { lessonId: 4, masteryReady },
+    });
+    actor.start();
+    return actor;
+  }
+
+  it('builds a machine whose id reflects lessonId 4', () => {
+    expect(createLessonMachine({ lessonId: 4 }).id).toBe('lesson_4');
+  });
+
+  it('L4 starts in introducing with lessonId 4 in context', () => {
+    const actor = startL4();
+    expect(actor.getSnapshot().value).toBe('introducing');
+    expect(actor.getSnapshot().context.lessonId).toBe(4);
+  });
+
+  it('L4 drives the SAME introducing → practicing → assessed arc as L1', () => {
+    const actor = startL4();
+    actor.send({ type: 'start_practice' });
+    expect(actor.getSnapshot().value).toBe('practicing');
+    actor.send({ type: 'submit' });
+    expect(actor.getSnapshot().value).toBe('assessed');
+  });
+
+  it('L4 REFUSES early transfer until the rule gate sets transferReady', () => {
+    const actor = startL4();
+    actor.send({ type: 'start_practice' });
+    actor.send({ type: 'enter_transfer' });
+    expect(actor.getSnapshot().value).toBe('practicing');
+    actor.send({ type: 'set_transfer_ready', ready: true });
+    actor.send({ type: 'enter_transfer' });
+    expect(actor.getSnapshot().value).toBe('transferring');
+  });
+
+  it('L4 REFUSES mastery while the gate is unsatisfied, reaches mastered when satisfied', () => {
+    const refused = startL4(false);
+    refused.send({ type: 'start_practice' });
+    refused.send({ type: 'submit' });
+    refused.send({ type: 'mastery_ok' });
+    expect(refused.getSnapshot().value).toBe('assessed');
+
+    const ok = startL4(true);
+    ok.send({ type: 'start_practice' });
+    ok.send({ type: 'submit' });
+    ok.send({ type: 'mastery_ok' });
+    expect(ok.getSnapshot().value).toBe('mastered');
+    expect(ok.getSnapshot().status).toBe('done');
+  });
+
+  it('L4 has the SAME locked phase set as the contract enum', () => {
+    const l4 = createLessonMachine({ lessonId: 4 });
+    expect(Object.keys(l4.states).sort()).toEqual([...PhaseName.options].sort());
+    expect(l4.states.mastered.type).toBe('final');
+  });
+});
+
 describe('lesson_2 re-instantiation parity (F-15 L1→L2 advance)', () => {
   // F-15's macro transition is session-level RE-INSTANTIATION, not a parent machine:
   // the client unmounts the L1 `LessonSession` (a `final` mastered state) and re-mounts
