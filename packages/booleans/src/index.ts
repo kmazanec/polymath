@@ -21,13 +21,20 @@ export type Ast =
   | { kind: 'var'; name: string }
   | { kind: 'not'; operand: Ast }
   | { kind: 'and'; left: Ast; right: Ast }
-  | { kind: 'or'; left: Ast; right: Ast };
+  | { kind: 'or'; left: Ast; right: Ast }
+  // Additive primitives (ADR-012 stretch grammar): NAND sits at AND-precedence,
+  // NOR at OR-precedence. Strictly additive — the locked signatures
+  // (parse/evaluate/variables/truthTable/equivalent) are unchanged.
+  | { kind: 'nand'; left: Ast; right: Ast }
+  | { kind: 'nor'; left: Ast; right: Ast };
 
 type Token =
   | { type: 'var'; name: string }
   | { type: 'not' }
   | { type: 'and' }
   | { type: 'or' }
+  | { type: 'nand' }
+  | { type: 'nor' }
   | { type: 'lparen' }
   | { type: 'rparen' };
 
@@ -35,6 +42,8 @@ const KEYWORDS: Record<string, Token['type']> = {
   NOT: 'not',
   AND: 'and',
   OR: 'or',
+  NAND: 'nand',
+  NOR: 'nor',
 };
 
 function tokenize(input: string): Token[] {
@@ -107,20 +116,26 @@ class Parser {
 
   private parseOr(): Ast {
     let left = this.parseAnd();
-    while (this.peek()?.type === 'or') {
+    let tok = this.peek()?.type;
+    // NOR shares OR-precedence (ADR-012 additive grammar).
+    while (tok === 'or' || tok === 'nor') {
       this.pos++;
       const right = this.parseAnd();
-      left = { kind: 'or', left, right };
+      left = tok === 'nor' ? { kind: 'nor', left, right } : { kind: 'or', left, right };
+      tok = this.peek()?.type;
     }
     return left;
   }
 
   private parseAnd(): Ast {
     let left = this.parseNot();
-    while (this.peek()?.type === 'and') {
+    let tok = this.peek()?.type;
+    // NAND shares AND-precedence (ADR-012 additive grammar).
+    while (tok === 'and' || tok === 'nand') {
       this.pos++;
       const right = this.parseNot();
-      left = { kind: 'and', left, right };
+      left = tok === 'nand' ? { kind: 'nand', left, right } : { kind: 'and', left, right };
+      tok = this.peek()?.type;
     }
     return left;
   }
@@ -175,6 +190,10 @@ export function evaluate(ast: Ast, env: Record<string, boolean>): boolean {
       return evaluate(ast.left, env) && evaluate(ast.right, env);
     case 'or':
       return evaluate(ast.left, env) || evaluate(ast.right, env);
+    case 'nand':
+      return !(evaluate(ast.left, env) && evaluate(ast.right, env));
+    case 'nor':
+      return !(evaluate(ast.left, env) || evaluate(ast.right, env));
   }
 }
 
@@ -190,6 +209,8 @@ export function variables(ast: Ast): string[] {
         return;
       case 'and':
       case 'or':
+      case 'nand':
+      case 'nor':
         walk(node.left);
         walk(node.right);
         return;
@@ -275,20 +296,33 @@ export function astToExpression(ast: Ast): string {
     case 'not':
       return `NOT (${astToExpression(ast.operand)})`;
     case 'and': {
-      const l =
-        ast.left.kind === 'or'
-          ? `(${astToExpression(ast.left)})`
-          : astToExpression(ast.left);
-      const r =
-        ast.right.kind === 'or'
-          ? `(${astToExpression(ast.right)})`
-          : astToExpression(ast.right);
+      const l = parenIfOrLevel(ast.left);
+      const r = parenIfOrLevel(ast.right);
       return `${l} AND ${r}`;
+    }
+    case 'nand': {
+      // NAND sits at AND-precedence; parenthesise OR-level children so it
+      // re-parses unambiguously (ADR-012 additive grammar).
+      const l = parenIfOrLevel(ast.left);
+      const r = parenIfOrLevel(ast.right);
+      return `${l} NAND ${r}`;
     }
     case 'or': {
       return `${astToExpression(ast.left)} OR ${astToExpression(ast.right)}`;
     }
+    case 'nor': {
+      // NOR sits at OR-precedence; same flat shape as OR.
+      return `${astToExpression(ast.left)} NOR ${astToExpression(ast.right)}`;
+    }
   }
+}
+
+/** Parenthesise a child when it is an OR-precedence node (`or`/`nor`), so an
+ *  AND-precedence parent (`and`/`nand`) re-parses to the same tree. */
+function parenIfOrLevel(node: Ast): string {
+  return node.kind === 'or' || node.kind === 'nor'
+    ? `(${astToExpression(node)})`
+    : astToExpression(node);
 }
 
 /**
@@ -339,6 +373,8 @@ type PseudoToken =
   | { type: 'not'; pos: number }
   | { type: 'and'; pos: number }
   | { type: 'or'; pos: number }
+  | { type: 'nand'; pos: number }
+  | { type: 'nor'; pos: number }
   | { type: 'if'; pos: number }
   | { type: 'then'; pos: number }
   | { type: 'lparen'; pos: number }
@@ -348,6 +384,8 @@ const PSEUDO_KEYWORDS: Record<string, PseudoToken['type']> = {
   NOT: 'not',
   AND: 'and',
   OR: 'or',
+  NAND: 'nand',
+  NOR: 'nor',
   IF: 'if',
   THEN: 'then',
 };
@@ -472,10 +510,13 @@ class PseudoParser {
     this.enterDepth();
     try {
       let left = this.parseAnd();
-      while (this.peek()?.type === 'or') {
+      let tok = this.peek()?.type;
+      // NOR shares OR-precedence (ADR-012 additive grammar).
+      while (tok === 'or' || tok === 'nor') {
         this.pos++;
         const right = this.parseAnd();
-        left = { kind: 'or', left, right };
+        left = tok === 'nor' ? { kind: 'nor', left, right } : { kind: 'or', left, right };
+        tok = this.peek()?.type;
       }
       return left;
     } finally {
@@ -487,10 +528,13 @@ class PseudoParser {
     this.enterDepth();
     try {
       let left = this.parseNot();
-      while (this.peek()?.type === 'and') {
+      let tok = this.peek()?.type;
+      // NAND shares AND-precedence (ADR-012 additive grammar).
+      while (tok === 'and' || tok === 'nand') {
         this.pos++;
         const right = this.parseNot();
-        left = { kind: 'and', left, right };
+        left = tok === 'nand' ? { kind: 'nand', left, right } : { kind: 'and', left, right };
+        tok = this.peek()?.type;
       }
       return left;
     } finally {
@@ -540,3 +584,13 @@ class PseudoParser {
 // ---------------------------------------------------------------------------
 
 export { MAX_EQUIVALENCE_VARS, scoreEquivalence } from './scoreEquivalence.js';
+
+// ---------------------------------------------------------------------------
+// ADR-012 stretch — the free-build playground equivalence scorer (caps BOTH
+// sides). Strictly additive; the locked signatures above are unchanged.
+// ---------------------------------------------------------------------------
+
+export {
+  playgroundEquivalence,
+  type PlaygroundEquivalenceResult,
+} from './playgroundEquivalence.js';

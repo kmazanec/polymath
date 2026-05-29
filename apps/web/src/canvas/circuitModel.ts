@@ -11,7 +11,9 @@ import { type Ast, evaluate, variables } from '@polymath/booleans';
  * schedule's determinism (acceptance criterion 4) is a pure-function property.
  */
 
-export type GateKind = 'AND' | 'OR' | 'NOT';
+// Additive gate alphabet (ADR-012 stretch). NAND (L3) and NOR (L4-if-used) join
+// the original AND/OR/NOT. Web-internal type, NOT the cross-package contract.
+export type GateKind = 'AND' | 'OR' | 'NOT' | 'NAND' | 'NOR';
 
 export type CircuitNode =
   | { id: string; type: 'input'; name: string }
@@ -51,6 +53,52 @@ export type CircuitBuildResult = CircuitOk | CircuitError;
 
 /** L1 expressions are ≤3 vars; cap well below the 2^n cliff (F-01 build note). */
 const MAX_VARIABLES = 10;
+
+/** The two-input gate kinds (everything except the unary NOT). */
+type BinaryGateKind = Exclude<GateKind, 'NOT'>;
+
+/** Build the AST for a two-input gate. Exhaustive over BinaryGateKind so adding
+ *  a gate to GateKind without handling it here is a compile error. */
+function binaryGateAst(gate: BinaryGateKind, left: Ast, right: Ast): Ast {
+  switch (gate) {
+    case 'AND':
+      return { kind: 'and', left, right };
+    case 'OR':
+      return { kind: 'or', left, right };
+    case 'NAND':
+      return { kind: 'nand', left, right };
+    case 'NOR':
+      return { kind: 'nor', left, right };
+  }
+}
+
+/** Evaluate a two-input gate's boolean output. Exhaustive over BinaryGateKind. */
+function binaryGateValue(gate: BinaryGateKind, a: boolean, b: boolean): boolean {
+  switch (gate) {
+    case 'AND':
+      return a && b;
+    case 'OR':
+      return a || b;
+    case 'NAND':
+      return !(a && b);
+    case 'NOR':
+      return !(a || b);
+  }
+}
+
+/** Human-readable infix operator word for a two-input gate's a11y label. */
+function binaryGateWord(gate: BinaryGateKind): string {
+  switch (gate) {
+    case 'AND':
+      return 'and';
+    case 'OR':
+      return 'or';
+    case 'NAND':
+      return 'nand';
+    case 'NOR':
+      return 'nor';
+  }
+}
 
 function incomingByPort(edges: CircuitEdge[], nodeId: string): Map<string, string> {
   const m = new Map<string, string>();
@@ -138,9 +186,7 @@ export function buildCircuit(circuit: Circuit): CircuitBuildResult {
 
     building.delete(nodeId);
     order.push(nodeId);
-    const ast: Ast = node.gate === 'AND'
-      ? { kind: 'and', left, right }
-      : { kind: 'or', left, right };
+    const ast: Ast = binaryGateAst(node.gate, left, right);
     built.set(nodeId, ast);
     return ast;
   };
@@ -241,7 +287,7 @@ export function pulseSchedule(
     }
     const a = valueOf(incoming?.get('a'));
     const b = valueOf(incoming?.get('b'));
-    const v = node.gate === 'AND' ? a && b : a || b;
+    const v = binaryGateValue(node.gate, a, b);
     value.set(nodeId, v);
     return v;
   };
@@ -258,7 +304,7 @@ export function pulseSchedule(
       return `NOT gate evaluates: not ${bool(a)} equals ${bool(value)}.`;
     }
     const b = valueOf(ports?.get('b'));
-    const op = node.gate === 'AND' ? 'and' : 'or';
+    const op = binaryGateWord(node.gate);
     return `${node.gate} gate evaluates: ${bool(a)} ${op} ${bool(b)} equals ${bool(value)}.`;
   };
 

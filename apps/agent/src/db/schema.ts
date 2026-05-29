@@ -40,6 +40,12 @@ export const sessions = pgTable('sessions', {
    *  hand-pasted UUIDs). Nullable; a soft reference (F-17 owns the
    *  `experiment_subjects` table + may add the FK when it creates it). */
   subjectId: uuid('subject_id'),
+  /** ADR-012 stretch: a random, unguessable token for the public tutor-handoff
+   *  share URL (the `followup_token` precedent — a per-request-random token, NOT the
+   *  session id, so the share route is exempt from operator auth and an id is never
+   *  enumerable). Nullable + additive (minted only when a handoff is shared); a
+   *  missing/invalid token fails closed at the route. UNIQUE. */
+  shareToken: text('share_token').unique(),
 });
 
 export const events = pgTable('events', {

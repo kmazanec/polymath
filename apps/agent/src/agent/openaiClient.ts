@@ -1,7 +1,7 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
 import type { AgentInput, MoveProvider } from './client.js';
-import { F06_MENU, type ProposedItem, type TacticalMove } from './menu.js';
+import { F26_MENU, type ProposedItem, type TacticalMove } from './menu.js';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompt.js';
 
 /**
@@ -28,11 +28,11 @@ const ItemSchema = z.object({
  *  Flat (not a discriminated union of disjoint shapes) so OpenAI strict JSON-schema
  *  mode accepts it; we narrow by `move` and read the relevant fields. */
 const MoveSchema = z.object({
-  // The enum is the agent's full internal menu (F06_MENU = F05 moves + the F-06
-  // hint). Sourcing it from the menu module keeps the LLM's option set in lockstep
-  // with the TacticalMove union — adding a menu move can't silently leave the
-  // keyed path unable to emit it.
-  move: z.enum(F06_MENU),
+  // The enum is the agent's full internal menu (F26_MENU = the prior menu + the
+  // scaffold-only playground move). Sourcing it from the menu module keeps the LLM's
+  // option set in lockstep with the TacticalMove union — adding a menu move can't
+  // silently leave the keyed path unable to emit it.
+  move: z.enum(F26_MENU),
   rationale: z.string(),
   item: ItemSchema.nullable(),
   tier: z.number().nullable(),
@@ -54,6 +54,9 @@ const MoveSchema = z.object({
   probeTargetRep: Rep.nullable(),
   probeHiddenReps: z.array(Rep).nullable(),
   probeItemId: z.string().nullable(),
+  /** ADR-012 stretch: optional scaffold text for the scaffold-only playground
+   *  move (`verify_playground_equivalence`). */
+  scaffold: z.string().nullable(),
 });
 type RawMove = z.infer<typeof MoveSchema>;
 
@@ -108,6 +111,12 @@ function toTacticalMove(raw: RawMove): TacticalMove {
         move: 'propose_hint',
         level: raw.hintLevel ?? 1,
         body: raw.hintBody ?? '',
+        rationale: r,
+      };
+    case 'verify_playground_equivalence':
+      return {
+        move: 'verify_playground_equivalence',
+        ...(raw.scaffold ? { scaffold: raw.scaffold } : {}),
         rationale: r,
       };
     case 'no_action':

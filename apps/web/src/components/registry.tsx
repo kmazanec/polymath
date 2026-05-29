@@ -122,6 +122,9 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
     case 'IntroExplanation':
     case 'WorkedExample':
     case 'ConfidenceCheck':
+    // ADR-012 stretch: the free-build playground. Contract shape + exhaustive
+    // case land here; the interactive canvas is built by the owning feature.
+    case 'PlaygroundCanvas':
       return <Tbd kind={spec.kind} />;
     default: {
       // Exhaustiveness: if a new ComponentSpec variant is added without a case

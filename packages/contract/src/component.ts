@@ -126,6 +126,14 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     priorBktAtRegression: z.number(),
     reminderBody: z.string(),
   }),
+  // ADR-012 stretch: the free-build playground. The learner builds an arbitrary
+  // target across the visible reps; there is no authored answer key, so there is
+  // NO `claimedTruthTable` (correctness is the learner's own `target` vs. their
+  // rep submissions, scored via `playgroundEquivalence`, not a Layer-2 recompute).
+  z.object({
+    kind: z.literal('PlaygroundCanvas'),
+    visibleReps: z.array(Rep),
+  }),
 ]);
 export type ComponentSpec = z.infer<typeof ComponentSpec>;
 
@@ -145,5 +153,6 @@ export const COMPONENT_KINDS = [
   'MasteryCelebration',
   'AgentAnswer',
   'CrossLessonRecall',
+  'PlaygroundCanvas',
 ] as const;
 export type ComponentKind = (typeof COMPONENT_KINDS)[number];

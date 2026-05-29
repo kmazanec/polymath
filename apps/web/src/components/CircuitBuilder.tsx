@@ -172,7 +172,10 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
       >
         <div className="circuit-palette" role="toolbar" aria-label="Gate palette">
           {spec.allowedGates
-            .filter((g): g is GateKind => g === 'AND' || g === 'OR' || g === 'NOT')
+            .filter(
+              (g): g is GateKind =>
+                g === 'AND' || g === 'OR' || g === 'NOT' || g === 'NAND' || g === 'NOR',
+            )
             .map((g) => (
               <button key={g} type="button" onClick={() => addGate(g)} data-gate={g}>
                 Add {g} gate

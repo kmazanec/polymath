@@ -57,6 +57,11 @@ export type TacticalMove =
       rationale: string;
     }
   | { move: 'propose_hint'; level: 1 | 2 | 3; body: string; rationale: string }
+  // ADR-012 stretch — the free-build playground. A SCAFFOLD-ONLY move: it offers
+  // optional help while the learner free-builds. It is NEVER a mastery/lesson
+  // transition (the playground is ungraded) — it compiles to an on-topic answer
+  // carrying the scaffold, or to `no_action` when there is nothing to add.
+  | { move: 'verify_playground_equivalence'; scaffold?: string; rationale: string }
   | {
       move: 'no_action';
       reason: 'wait_for_learner' | 'thinking' | 'agent_unsure';
@@ -79,6 +84,11 @@ export const F05_MENU = [
 
 /** Extended menu including the F-06 hint ladder. */
 export const F06_MENU = [...F05_MENU, 'propose_hint'] as const;
+
+/** ADR-012 stretch menu: the then-current menu plus the scaffold-only playground
+ *  move. The `[...PREV_MENU, 'new_move']` pattern keeps the LLM provider's enum in
+ *  lockstep with the `TacticalMove` union. */
+export const F26_MENU = [...F06_MENU, 'verify_playground_equivalence'] as const;
 
 const DEFAULT_GATES: Gate[] = ['AND', 'OR', 'NOT'];
 
@@ -168,6 +178,19 @@ export function compileMove(move: TacticalMove): Action {
         component: { kind: 'HintCard', level: move.level, body: move.body },
         rationale: move.rationale,
       };
+    case 'verify_playground_equivalence':
+      // Scaffold-only: surface the optional scaffold as an on-topic answer; with no
+      // scaffold there is nothing to mount, so wait for the learner. Never a
+      // transition (the playground is ungraded).
+      return move.scaffold
+        ? {
+            type: 'answer_question',
+            question: '',
+            answer: move.scaffold,
+            topicClassification: 'on_topic',
+            rationale: move.rationale,
+          }
+        : { type: 'no_action', reason: 'wait_for_learner', rationale: move.rationale };
     case 'no_action':
       return { type: 'no_action', reason: move.reason, rationale: move.rationale };
   }

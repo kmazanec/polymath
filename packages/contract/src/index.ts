@@ -6,3 +6,4 @@ export * from './sessionReport.js';
 export * from './lessonConfig.js';
 export * from './explainBack.js';
 export * from './explainBack.fixture.js';
+export * from './handoff.js';

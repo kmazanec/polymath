@@ -15,6 +15,10 @@ export function astToExpression(ast: Ast): string {
       return `(${astToExpression(ast.left)} AND ${astToExpression(ast.right)})`;
     case 'or':
       return `(${astToExpression(ast.left)} OR ${astToExpression(ast.right)})`;
+    case 'nand':
+      return `(${astToExpression(ast.left)} NAND ${astToExpression(ast.right)})`;
+    case 'nor':
+      return `(${astToExpression(ast.left)} NOR ${astToExpression(ast.right)})`;
   }
 }
 
@@ -66,6 +70,10 @@ function evalAst(ast: Ast, env: Record<string, boolean>): boolean {
       return evalAst(ast.left, env) && evalAst(ast.right, env);
     case 'or':
       return evalAst(ast.left, env) || evalAst(ast.right, env);
+    case 'nand':
+      return !(evalAst(ast.left, env) && evalAst(ast.right, env));
+    case 'nor':
+      return !(evalAst(ast.left, env) || evalAst(ast.right, env));
   }
 }
 

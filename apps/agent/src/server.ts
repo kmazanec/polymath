@@ -1425,6 +1425,22 @@ export async function handleClientFrame(
     await handleAdvanceLessonTurn(deps, ws, event, lesson);
     return;
   }
+
+  // ADR-012 stretch — the free-build playground. These four event kinds are NOT
+  // graded practice: they carry no authored answer key, must never fold into the
+  // BKT/streak or transfer path, and never reach the menu/`proposeMove`. The
+  // contract shape + this routing land here; the owning feature fills in the
+  // scaffold/equivalence behavior. Acknowledge and return so a playground frame
+  // can't be misrouted into the practice turn below.
+  if (
+    event.kind === 'enter_playground' ||
+    event.kind === 'playground_submit' ||
+    event.kind === 'playground_request_scaffold' ||
+    event.kind === 'exit_playground'
+  ) {
+    send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+    return;
+  }
   // The transfer verdict (server-computed) must be known before deriving learner
   // state, so a passed transfer sets the gate's transfer condition this turn.
   const transferVerdict = await computeTransferVerdict(deps.db, event);

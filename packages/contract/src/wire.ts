@@ -175,6 +175,39 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     sessionId: SessionId,
     toLessonId: z.number(),
   }),
+  // ADR-012 stretch — the free-build playground. Four APPEND-ONLY new event kinds
+  // (no existing kind's payload is reshaped). The playground has no authored answer
+  // key: the learner supplies a `targetExpression` and rep-native submissions, scored
+  // server-side via `playgroundEquivalence` (caps BOTH sides).
+  z.object({
+    kind: z.literal('enter_playground'),
+    sessionId: SessionId,
+  }),
+  z.object({
+    kind: z.literal('playground_submit'),
+    sessionId: SessionId,
+    /** The learner's chosen target expression. Capped like every learner string. */
+    targetExpression: z.string().max(MAX_EXPRESSION_LEN),
+    /** The rep-native submissions the learner built; each rep is optional (the
+     *  learner may work in a subset of the visible reps). Reuses the existing
+     *  `RepSubmission` shapes (bounded cells / nodes / source). */
+    submissions: z.object({
+      truth_table: RepSubmission.optional(),
+      circuit: RepSubmission.optional(),
+      pseudocode: RepSubmission.optional(),
+    }),
+  }),
+  z.object({
+    kind: z.literal('playground_request_scaffold'),
+    sessionId: SessionId,
+    targetExpression: z.string().max(MAX_EXPRESSION_LEN),
+    /** An optional free-text question the learner asks while building. */
+    learnerQuestion: z.string().max(MAX_SOURCE_LEN).optional(),
+  }),
+  z.object({
+    kind: z.literal('exit_playground'),
+    sessionId: SessionId,
+  }),
 ]);
 export type ClientEvent = z.infer<typeof ClientEvent>;
 

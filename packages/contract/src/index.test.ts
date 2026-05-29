@@ -82,6 +82,10 @@ const componentSamples: Record<ComponentKind, ComponentSpec> = {
     priorBktAtRegression: 0.72,
     reminderBody: 'Remember: AND is true only when both inputs are true.',
   },
+  PlaygroundCanvas: {
+    kind: 'PlaygroundCanvas',
+    visibleReps: ['truth_table', 'circuit', 'pseudocode'],
+  },
 };
 
 describe('ComponentSpec', () => {
@@ -89,7 +93,7 @@ describe('ComponentSpec', () => {
     // If a variant is added to the union without updating COMPONENT_KINDS (or
     // vice versa), this object literal stops type-checking — compile-time guard.
     expect(new Set(COMPONENT_KINDS)).toEqual(new Set(Object.keys(componentSamples)));
-    expect(COMPONENT_KINDS.length).toBe(13);
+    expect(COMPONENT_KINDS.length).toBe(14);
   });
 
   it('round-trips every variant through Zod', () => {
