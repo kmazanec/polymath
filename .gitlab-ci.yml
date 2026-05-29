@@ -41,16 +41,53 @@ workflow:
 # Typecheck + unit tests + the package suites + the build. Pure-node work, no DB.
 # pnpm via corepack; everything written under the throwaway /work copy.
 #
-# F-11 explain-back eval gate (AC#6): `@polymath/graph`'s eval.test.ts runs here
-# (the checkout copy includes `evals/`). The ALWAYS-ON offline preconditions-vs-labels
-# assertion is a hard block on every pipeline. The key-gated `liveIt` LLM-judge
-# ≥90%-agreement gate auto-runs when the `OPENAI_API_KEY` CI variable is set (same
-# skip-offline/run-on-key pattern as the F-05 inner-agent eval) — set it as a masked
-# project CI/CD variable to enforce the live agreement gate on MRs.
+# SECRET-EXPOSURE DEFENSE (review thread 1): this job runs on EVERY merge_request_event,
+# including same-project MRs that can run arbitrary scripts/tests from the MR branch. It
+# therefore MUST stay OFFLINE-ONLY — it does NOT receive `OPENAI_API_KEY` (a malicious MR
+# could otherwise exfiltrate it from this container). The F-11 explain-back eval's
+# ALWAYS-ON offline preconditions-vs-labels assertion (`@polymath/graph`'s eval.test.ts;
+# the checkout copy includes `evals/`) is a hard block here and needs no key — the
+# `liveIt` LLM-judge run self-skips without `OPENAI_API_KEY`. The live ≥90%-agreement
+# judge gate moves to `explain_back_live_eval` below (protected-branch / manual,
+# maintainer-only), where the protected variable is exposed only to trusted code.
 verify:
   stage: verify
   needs: []
   resource_group: heavy-droplet # serialize w/ other heavy jobs (7.8G droplet)
+  script:
+    - >
+      docker run --rm
+      -v "$CI_PROJECT_DIR":/src:ro
+      node:22-bookworm-slim
+      bash -c "set -e &&
+        cp -a /src /work && cd /work &&
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm -r typecheck &&
+        pnpm -r --filter '!@polymath/agent' test &&
+        pnpm build"
+
+# The live LLM-judge ≥90%-agreement eval (F-11 AC#6) — the ONLY job that touches
+# `OPENAI_API_KEY`. Kept OFF MR pipelines so an untrusted same-project MR can never see
+# the key (review thread 1). It runs:
+#   - automatically on a push to `main` (protected branch → the protected `OPENAI_API_KEY`
+#     variable is available only to code that already landed on the trusted branch), and
+#   - manually otherwise, gated on a protected variable a maintainer triggers — so the
+#     key is exposed only to code a maintainer has reviewed, never to arbitrary MR scripts.
+# It re-runs `@polymath/graph`'s eval.test.ts WITH the key, so the `liveIt` gate fires.
+explain_back_live_eval:
+  stage: verify
+  needs: []
+  resource_group: heavy-droplet
+  rules:
+    # Protected branch (main): auto-run with the protected variable.
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+    # Never on merge-request pipelines (the secret-exposure vector). Otherwise allow a
+    # maintainer to trigger it manually (web/API), non-blocking.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - when: manual
+      allow_failure: true
   script:
     - >
       docker run --rm
@@ -61,9 +98,7 @@ verify:
         cp -a /src /work && cd /work &&
         corepack enable &&
         pnpm install --frozen-lockfile &&
-        pnpm -r typecheck &&
-        pnpm -r --filter '!@polymath/agent' test &&
-        pnpm build"
+        pnpm --filter @polymath/graph exec vitest run src/explainback/eval.test.ts"
 
 # The agent suite incl. the WS+Postgres integration test. The integration test
 # connects to TEST_POSTGRES_URL (a sibling container) instead of spawning its own
