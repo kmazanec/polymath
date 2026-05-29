@@ -543,6 +543,97 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
   }
 
   /**
+   * Playground capstone helper (MR !10 review): drive a fresh session to mastery on the
+   * TERMINAL lesson L4 (lessons/1..4 exist; no lessons/5). The playground entry gate now
+   * requires BOTH the mastery gate AND a terminal lesson, so the playground happy-path
+   * tests must master L4, not L1 (L1 has L2/L3/L4 ahead → `not_terminal_lesson`).
+   *
+   * Mirrors `driveToL1Mastery` exactly — the mechanism is lesson-generic (the heuristic
+   * provider reads `input.lesson.content.items`, the transfer bank is keyed by lessonId,
+   * the mastery gate's BKT condition is `max KC ≥ threshold`). Only the lesson binding,
+   * item ids, and the KC-appropriate explain-back transcript differ:
+   *   - BIND the session to L4 first via the `?lesson=4` seam on a `session_start`
+   *     (persists `lessonProgress.currentLessonId=4`; subsequent turns read that durable
+   *     binding via `lessonIdForEvent`, so they fold against L4).
+   *   - Drive 3 correct submits on an L4 de_morgan item (`l4-nand2-trap` = `NOT (A AND B)`)
+   *     with in-band response times → consecutiveCorrect=3 + de_morgan BKT ≥ 0.95 → rule gate.
+   *   - The probe fires from the L4 bank (captured dynamically); a correct transfer + a
+   *     De-Morgan-specific explain-back transcript (clears preconditions #4 KC-vocab and
+   *     #5 item-tokens for the probed item) drive the synthetic PASS to the full gate.
+   * Returns the L4-mastered session + its mounted MasteryCelebration.
+   */
+  async function driveToL4Mastery(): Promise<{ sessionId: string; celebration: Action }> {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const l4Ws = `${wsUrl}?lesson=4`;
+    // BIND to L4 (durable lessonProgress write), then drive 3 correct de_morgan submits
+    // on ONE socket. The `?lesson=4` seam is honored only on `session_start`; subsequent
+    // turns read the durable binding (so they fold against L4 even over a plain socket).
+    const ws1 = new WebSocket(l4Ws);
+    const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
+      const frames: Record<string, unknown>[] = [
+        { kind: 'session_start', sessionId, lessonId: 4 },
+        { kind: 'submit', sessionId, itemId: 'l4-nand2-trap', submission: 'NOT (A AND B)', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l4-nand2-trap', submission: 'NOT (A AND B)', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l4-nand2-trap', submission: 'NOT (A AND B)', correct: true, responseTimeMs: 4000 },
+      ];
+      const out: Action[] = [];
+      let sent = 0;
+      ws1.on('open', () => ws1.send(JSON.stringify(frames[sent++])));
+      ws1.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          out.push(Action.parse(msg.action));
+          if (sent < frames.length) ws1.send(JSON.stringify(frames[sent++]));
+          else resolve(out);
+        }
+      });
+      ws1.on('error', reject);
+      setTimeout(() => reject(new Error('L4 drive timed out')), 8000);
+    });
+    ws1.close();
+    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+    if (!probedItemId) throw new Error('no L4 transfer probe fired');
+
+    await driveSequence(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+    ]);
+    // A genuine De-Morgan explanation that references THIS item's tokens (vars A/B and
+    // the NOT/AND operators of the probed L4 bank items) and the generic KC vocab
+    // ("De Morgan", "truth table") — clears preconditions #3/#4/#5 for the probed item.
+    server.explainBackCaptureRegistry.setTranscript(
+      sessionId,
+      probedItemId,
+      'By De Morgan, NOT of A AND B equals NOT A OR NOT B, so the truth table output is false only when both A and B are true.',
+    );
+    const wsEb = new WebSocket(`${wsUrl}?testExplainBackVerdict=pass`);
+    const celebration = await new Promise<Action>((resolve, reject) => {
+      wsEb.on('open', () =>
+        wsEb.send(
+          JSON.stringify({
+            kind: 'explain_back_recording_ended',
+            sessionId,
+            targetItemId: probedItemId,
+            transcript: 'De Morgan turns NOT of A AND B into NOT A OR NOT B across the truth table.',
+            durationMs: 20000,
+          }),
+        ),
+      );
+      wsEb.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') resolve(Action.parse(msg.action));
+      });
+      wsEb.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    wsEb.close();
+    return { sessionId, celebration };
+  }
+
+  /**
    * F-15 AC#2/AC#6 — the celebration's "continue to Lesson 2" affordance is REAL: the
    * server-minted MasteryCelebration carries `nextLessonId:2` (guarded by the non-fatal
    * `loadLesson(2)` existence check; the placeholder L2 makes it load). Without a next
@@ -1611,10 +1702,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(entry?.payload.statechartDecision).toBe('reject');
     });
 
-    it('full arc: L1 mastered → enter (earned) → submit (recompute, no BKT write) → exit (celebration)', async () => {
-      const { sessionId } = await driveToL1Mastery();
+    it('full arc: L4 (terminal) mastered → enter (earned) → submit (recompute, no BKT write) → exit (celebration)', async () => {
+      const { sessionId } = await driveToL4Mastery();
 
-      // ENTER: now earned — the server acks (the client mounts the canvas).
+      // ENTER: now earned (mastery + terminal lesson L4) — the server acks (the client mounts the canvas).
       const enter = await sendOne({ kind: 'enter_playground', sessionId });
       expect(enter.kind).toBe('ack');
       expect(enter.event).toBe('enter_playground');
@@ -1658,13 +1749,14 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       if (action.type === 'mount') {
         expect(action.component.kind).toBe('MasteryCelebration');
         if (action.component.kind === 'MasteryCelebration') {
-          expect(action.component.conceptsMastered).toContain('AND');
+          // L4's mastered KC is de_morgan (server-sourced from the derived BKT, not a client claim).
+          expect(action.component.conceptsMastered).toContain('de_morgan');
         }
       }
     });
 
     it('a non-equivalent rep submission records a mismatch verdict (still no BKT write)', async () => {
-      const { sessionId } = await driveToL1Mastery();
+      const { sessionId } = await driveToL4Mastery();
       await sendOne({ kind: 'enter_playground', sessionId });
       const submit = await sendOne({
         kind: 'playground_submit',
@@ -1685,7 +1777,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     });
 
     it('DELIVERS a scaffold action on request (AC#5) — scaffold-only, never a transition', async () => {
-      const { sessionId } = await driveToL1Mastery();
+      const { sessionId } = await driveToL4Mastery();
       await sendOne({ kind: 'enter_playground', sessionId });
       const reply = await sendOne({
         kind: 'playground_request_scaffold',
@@ -1712,6 +1804,139 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       };
       const rec = replay.events.find((e) => e.kind === 'playground_request_scaffold');
       expect(rec?.payload.action?.type).toBe('answer_question');
+    });
+
+    // ── MR !10 review — the four handlers ALL gate on `playgroundEntryEarned` ──────
+    // (mastery + terminal lesson). Finding 200cef3 + the security findings: a privileged
+    // playground frame from an UNEARNED session must be refused fail-closed, and exit must
+    // NOT mint a celebration (the metric-corruption guard).
+
+    it('REFUSES playground_submit on an unearned session — no verdict record, no celebration (200cef3)', async () => {
+      // A fresh session never mastered anything → the submit handler's earned-it gate refuses.
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const submit = await sendOne({
+        kind: 'playground_submit',
+        sessionId,
+        targetExpression: 'A OR B',
+        submissions: { truth_table: { rep: 'truth_table', cells: [0, 1, 1, 1] } },
+      });
+      expect(submit.kind).toBe('error');
+      expect(String(submit.message)).toMatch(/playground locked/i);
+
+      // No verdict record persisted (the recompute never ran) and no celebration mounted.
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { verdict?: unknown; action?: { component?: { kind?: string } } } }[];
+      };
+      const sub = replay.events.find((e) => e.kind === 'playground_submit');
+      expect(sub?.payload.verdict).toBeUndefined();
+      const mintedCelebration = replay.events.some(
+        (e) => e.payload.action?.component?.kind === 'MasteryCelebration',
+      );
+      expect(mintedCelebration).toBe(false);
+    });
+
+    it('REFUSES exit_playground on an unearned session — NO MasteryCelebration persisted (metric-corruption guard)', async () => {
+      // The highest-impact gap: exit mints the production "declared mastered" signal
+      // (a persisted `mount MasteryCelebration` action buildReport/metric-6 read). A
+      // known UNMASTERED session forging exit must NOT produce that signal.
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const exit = await sendOne({ kind: 'exit_playground', sessionId });
+      expect(exit.kind).toBe('error');
+      expect(String(exit.message)).toMatch(/playground locked/i);
+
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { statechartDecision?: string; action?: { type?: string; component?: { kind?: string } } } }[];
+      };
+      // The refusal is persisted as a reject decision …
+      const exitRow = replay.events.find((e) => e.kind === 'exit_playground');
+      expect(exitRow?.payload.statechartDecision).toBe('reject');
+      // … and crucially NO MasteryCelebration was minted on this session (no metric poison).
+      const mintedCelebration = replay.events.some(
+        (e) => e.payload.action?.type === 'mount' && e.payload.action.component?.kind === 'MasteryCelebration',
+      );
+      expect(mintedCelebration).toBe(false);
+    });
+
+    it('REFUSES playground_request_scaffold on an unearned session — no scaffold action', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const reply = await sendOne({
+        kind: 'playground_request_scaffold',
+        sessionId,
+        targetExpression: 'A NAND B',
+        learnerQuestion: 'How do I express NAND?',
+      });
+      expect(reply.kind).toBe('error');
+      expect(String(reply.message)).toMatch(/playground locked/i);
+
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { action?: unknown } }[];
+      };
+      const rec = replay.events.find((e) => e.kind === 'playground_request_scaffold');
+      // No scaffold action was compiled/persisted (the gate refused before the move).
+      expect(rec?.payload.action).toBeUndefined();
+    });
+
+    it('REFUSES enter_playground for a NON-terminal mastered lesson (L1) with not_terminal_lesson blocker', async () => {
+      // L1 mastery is genuinely earned (the gate passes), but L1 is NOT terminal (L2/L3/L4
+      // exist) — so the terminal-lesson rule refuses entry and names `not_terminal_lesson`.
+      const { sessionId } = await driveToL1Mastery();
+      const msg = await sendOne({ kind: 'enter_playground', sessionId });
+      expect(msg.kind).toBe('error');
+      expect(String(msg.message)).toMatch(/playground locked/i);
+      expect(String(msg.message)).toContain('not_terminal_lesson');
+
+      // The persisted reject decision records the blocker (no celebration, no BKT write).
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { statechartDecision?: string; gateEvaluation?: { blockers?: string[] } } }[];
+      };
+      const entry = replay.events.find((e) => e.kind === 'enter_playground');
+      expect(entry?.payload.statechartDecision).toBe('reject');
+      expect(entry?.payload.gateEvaluation?.blockers).toContain('not_terminal_lesson');
+    });
+
+    it('caps the playground_submit truth_table recompute at MAX_EQUIVALENCE_VARS (DoS guard)', async () => {
+      // An EARNED (L4-mastered, terminal) session submits a target with > 10 distinct
+      // variables plus a truth_table submission. The server recompute MUST refuse to
+      // enumerate 2^n (over-cap → truth_table:false), and the turn must complete fast.
+      const { sessionId } = await driveToL4Mastery();
+      await sendOne({ kind: 'enter_playground', sessionId });
+
+      const overCapTarget = 'A AND B AND C AND D AND E AND F AND G AND H AND I AND J AND K'; // 11 distinct vars
+      const t0 = Date.now();
+      const submit = await sendOne({
+        kind: 'playground_submit',
+        sessionId,
+        targetExpression: overCapTarget,
+        submissions: {
+          // A plausible (but irrelevant) cell vector — the cap trips before any compare.
+          truth_table: { rep: 'truth_table', cells: [1, 0] },
+        },
+      });
+      const elapsed = Date.now() - t0;
+      expect(submit.kind).toBe('ack'); // earned → the record lands
+      // No 2^11 enumeration on the event loop: the turn returns quickly.
+      expect(elapsed).toBeLessThan(2000);
+
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { verdict?: { byKey: Record<string, boolean>; allEquivalent: boolean } } }[];
+      };
+      // The most recent playground_submit (this over-cap one) marks truth_table false
+      // WITHOUT enumerating — over-cap input is simply "not equivalent".
+      const subs = replay.events.filter((e) => e.kind === 'playground_submit');
+      const last = subs.at(-1);
+      expect(last?.payload.verdict?.byKey.truth_table).toBe(false);
+      expect(last?.payload.verdict?.allEquivalent).toBe(false);
     });
   });
 });

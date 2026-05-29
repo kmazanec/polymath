@@ -2,7 +2,14 @@ import http from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { scoreEquivalence, playgroundEquivalence, truthTable } from '@polymath/booleans';
+import {
+  scoreEquivalence,
+  playgroundEquivalence,
+  truthTable,
+  parse,
+  variables,
+  MAX_EQUIVALENCE_VARS,
+} from '@polymath/booleans';
 import {
   ClientEvent,
   noAction,
@@ -1329,13 +1336,23 @@ async function deriveMasteryReadOnly(
 
 /** The mastery gate the playground entry earns against — re-derived server-side
  *  from the persisted log (the earned-it guard), never trusted from the client. */
+/** The full playground-entry earned-it check (MR !10 review): the current lesson's
+ *  mastery gate passes AND the lesson is TERMINAL (no next lesson). The playground is
+ *  the post-curriculum capstone, so opening it mid-curriculum — even with the current
+ *  lesson mastered — is refused (a forged enter_playground can't skip ahead). Mirrors
+ *  the masteryCelebration affordance (`loadLessonIfExists(lessonId+1) === undefined`).
+ *  Returns the gate result plus an explicit `terminal` flag and a combined `passed`. */
 async function playgroundEntryEarned(
   db: Db,
   sessionId: string,
   lesson: Lesson,
-): Promise<MasteryGateResult> {
+): Promise<{ passed: boolean; blockers: string[] }> {
   const masteryState = await deriveMasteryReadOnly(db, sessionId, lesson);
-  return evaluateMasteryGate(masteryState, lesson.masteryConfig);
+  const gate = evaluateMasteryGate(masteryState, lesson.masteryConfig);
+  const isTerminal = loadLessonIfExists(lesson.content.lessonId + 1) === undefined;
+  const blockers: string[] = [...gate.blockers];
+  if (!isTerminal) blockers.push('not_terminal_lesson');
+  return { passed: gate.passed && isTerminal, blockers };
 }
 
 /** Server-side recompute of the playground verdict for the persisted record
@@ -1358,10 +1375,18 @@ function recomputePlaygroundVerdict(
   if (tt?.rep === 'truth_table') {
     let ttOk = false;
     try {
-      const expected = truthTable(targetExpression).out;
-      ttOk =
-        tt.cells.length === expected.length &&
-        expected.every((b, i) => (b ? 1 : 0) === tt.cells[i]);
+      // DoS cap (MR !10 review): the truth_table path calls truthTable() on the
+      // learner-controlled targetExpression — it MUST honor the distinct-variable cap
+      // (the same one playgroundEquivalence applies to the expression reps), or a
+      // forged high-arity target forces synchronous 2^n enumeration on the WS turn.
+      // Over-cap → ttOk=false, never enumerate (per the repo invariant; over-cap input
+      // is simply "not equivalent").
+      if (variables(parse(targetExpression)).length <= MAX_EQUIVALENCE_VARS) {
+        const expected = truthTable(targetExpression).out;
+        ttOk =
+          tt.cells.length === expected.length &&
+          expected.every((b, i) => (b ? 1 : 0) === tt.cells[i]);
+      }
     } catch {
       ttOk = false;
     }
@@ -1410,7 +1435,21 @@ async function handlePlaygroundSubmitTurn(
   deps: ServerDeps,
   ws: WebSocket,
   event: Extract<ClientEvent, { kind: 'playground_submit' }>,
+  lesson: Lesson,
 ): Promise<void> {
+  // Earned-it gate (MR !10 review): a playground frame is a privileged capstone action;
+  // refuse it unless the session has earned entry (mastery + terminal lesson). Without
+  // this, a forged frame (or the optimistic UI after a refused enter) gets full ungraded
+  // playground use without earning the capstone. Fail closed.
+  const gate = await playgroundEntryEarned(deps.db, event.sessionId, lesson);
+  if (!gate.passed) {
+    send(ws, {
+      kind: 'error',
+      sessionId: event.sessionId,
+      message: `playground locked: mastery not yet earned (${gate.blockers.join(',')})`,
+    });
+    return;
+  }
   const verdict = recomputePlaygroundVerdict(event);
   await deps.db.insert(events).values({
     sessionId: event.sessionId,
@@ -1457,7 +1496,20 @@ async function handlePlaygroundRequestScaffoldTurn(
   deps: ServerDeps,
   ws: WebSocket,
   event: Extract<ClientEvent, { kind: 'playground_request_scaffold' }>,
+  lesson: Lesson,
 ): Promise<void> {
+  // Earned-it gate (MR !10 review): the scaffold is a playground privilege — refuse it
+  // for a session that hasn't earned entry, so a known session id can't farm tutor
+  // scaffolds without mastering/entering the playground. Fail closed.
+  const gate = await playgroundEntryEarned(deps.db, event.sessionId, lesson);
+  if (!gate.passed) {
+    send(ws, {
+      kind: 'error',
+      sessionId: event.sessionId,
+      message: `playground locked: mastery not yet earned (${gate.blockers.join(',')})`,
+    });
+    return;
+  }
   const move: TacticalMove = {
     move: 'verify_playground_equivalence',
     scaffold: playgroundScaffoldText(event),
@@ -1482,6 +1534,30 @@ async function handleExitPlaygroundTurn(
   event: Extract<ClientEvent, { kind: 'exit_playground' }>,
   lesson: Lesson,
 ): Promise<void> {
+  // Earned-it gate (MR !10 review — the highest-impact of this cluster): exit mints a
+  // `mount MasteryCelebration` action, which buildReport + the counter-metrics treat as
+  // the PRODUCTION "declared mastered" signal. So a known UNMASTERED session forging
+  // exit_playground would otherwise persist a false mastery signal and poison metric-6.
+  // Refuse unless entry was earned (mastery + terminal lesson); never mount a celebration
+  // for an unmastered session.
+  const gate = await playgroundEntryEarned(deps.db, event.sessionId, lesson);
+  if (!gate.passed) {
+    await deps.db.insert(events).values({
+      sessionId: event.sessionId,
+      kind: event.kind,
+      payload: {
+        event,
+        statechartDecision: 'reject',
+        statechartReason: `playground_not_earned: ${gate.blockers.join(',')}`,
+      },
+    });
+    send(ws, {
+      kind: 'error',
+      sessionId: event.sessionId,
+      message: `playground locked: mastery not yet earned (${gate.blockers.join(',')})`,
+    });
+    return;
+  }
   const masteryState = await deriveMasteryReadOnly(deps.db, event.sessionId, lesson);
   const action = masteryCelebrationAction(masteryState, lesson);
   await deps.db.insert(events).values({
@@ -1646,11 +1722,11 @@ export async function handleClientFrame(
   }
   if (event.kind === 'playground_submit') {
     // Recompute the verdict for the persisted record only — no BKT/mastery write.
-    await handlePlaygroundSubmitTurn(deps, ws, event);
+    await handlePlaygroundSubmitTurn(deps, ws, event, lesson);
     return;
   }
   if (event.kind === 'playground_request_scaffold') {
-    await handlePlaygroundRequestScaffoldTurn(deps, ws, event);
+    await handlePlaygroundRequestScaffoldTurn(deps, ws, event, lesson);
     return;
   }
   if (event.kind === 'exit_playground') {

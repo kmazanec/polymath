@@ -290,6 +290,23 @@ export function App(): ReactElement {
           },
           onClose: () => setConn('closed'),
           onMessage: (msg: ServerMessage) => {
+            // ADR-013 (MR !10 review): mount the playground ONLY after the server's
+            // earned-it gate accepts `enter_playground` (its ack) — never optimistically.
+            // The server fails the gate closed for an unmastered/non-terminal session, so
+            // an optimistic mount would show the capstone UI even when the wire refused it.
+            if (msg.kind === 'ack' && msg.event === 'enter_playground') {
+              setPlayground({
+                kind: 'PlaygroundCanvas',
+                visibleReps: ['truth_table', 'circuit', 'pseudocode'],
+              });
+              return;
+            }
+            // A refused playground entry (or any playground frame) leaves the canvas
+            // unmounted / rolls it back — the learner stays in the lesson view.
+            if (msg.kind === 'error') {
+              setPlayground(null);
+              return;
+            }
             if (msg.kind !== 'action') return;
             const r = adaptAction(msg.action, {
               phase: phaseRef.current,
@@ -565,14 +582,14 @@ export function App(): ReactElement {
   );
 
   // ADR-013 stretch: the "Try the Playground" affordance on the final lesson's
-  // MasteryCelebration. Send `enter_playground` (the server re-derives mastery as the
-  // earned-it guard and acks; a forged frame on an unmastered session gets an error and
-  // no canvas) and optimistically mount the PlaygroundCanvas. visibleReps is all three
-  // — the playground is a free build, nothing held out.
+  // MasteryCelebration. Send `enter_playground`; the server re-derives mastery + the
+  // terminal-lesson check as the earned-it guard and acks on a pass. The canvas mounts
+  // only on that ack (in the message handler above) — NOT optimistically (MR !10
+  // review), so a refused entry never flashes the capstone UI. A forged/unmastered
+  // session gets an error and no canvas.
   const onTryPlayground = useCallback((): void => {
     if (!sessionId) return;
     socketRef.current?.send({ kind: 'enter_playground', sessionId });
-    setPlayground({ kind: 'PlaygroundCanvas', visibleReps: ['truth_table', 'circuit', 'pseudocode'] });
   }, [sessionId]);
 
   const onPlaygroundSubmit = useCallback(
