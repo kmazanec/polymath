@@ -156,11 +156,13 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
             const cellValue = cells[rowIdx] ?? 0;
             return (
               <tr key={rowIdx} role="row">
-                {/* Input columns — read-only */}
+                {/* Input columns — static, non-interactive text. A native <td>
+                    already conveys cell semantics; `aria-readonly` is NOT a supported
+                    attribute on role="cell" (axe `aria-allowed-attr`, an a11y audit
+                    finding) — these cells are inherently read-only, so no attribute
+                    is needed to say so. */}
                 {inputRow.map((val, colIdx) => (
-                  <td key={colIdx} role="cell" aria-readonly="true">
-                    {val ? '1' : '0'}
-                  </td>
+                  <td key={colIdx}>{val ? '1' : '0'}</td>
                 ))}
                 {/* Output cell — interactive button */}
                 <td role="cell">
