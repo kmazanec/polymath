@@ -17,9 +17,14 @@ export * from './explainback/preconditions.js';
 export * from './explainback/retryPrompts.js';
 export * from './explainback/judge.js';
 export * from './explainback/subgraph.js';
+// F-18 summary pipeline (I5).
 export * from './summary/growth.js';
 export * from './summary/subgraph.js';
 // Re-export the locked summary shape so a caller can `import { SessionSummary }`
 // from @polymath/graph alongside the pipeline (mirrors the ExplainBackVerdict
 // re-export above; the schema itself stays owned by @polymath/contract).
 export type { SessionSummary } from '@polymath/contract';
+
+// ADR-012 stretch (I6): the tutor-handoff questions node (deterministic templates +
+// optional fail-soft LLM rephrase).
+export * from './handoff/questions.js';
