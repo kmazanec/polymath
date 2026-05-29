@@ -54,6 +54,24 @@ describe('CircuitBuilder', () => {
     expect(screen.getByText('Submit')).toBeDefined();
   });
 
+  it('renders a NAND palette button when allowedGates is NAND-only (Lesson 3, AC#3)', () => {
+    const nandSpec: CircuitSpec = {
+      kind: 'CircuitBuilder',
+      targetExpression: 'NOT A',
+      claimedTruthTable: [1, 0],
+      allowedGates: ['NAND'],
+      visibleReps: ['circuit'],
+    };
+    render(<CircuitBuilder spec={nandSpec} />);
+    const nandBtn = screen.getByRole('button', { name: /Add NAND gate/i });
+    expect(nandBtn).toBeDefined();
+    expect(nandBtn.getAttribute('data-gate')).toBe('NAND');
+    // A NAND-only workspace offers NO AND/OR/NOT palette buttons.
+    expect(screen.queryByRole('button', { name: /Add AND gate/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add OR gate/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add NOT gate/i })).toBeNull();
+  });
+
   it('renders nothing when its rep is hidden during a transfer probe (AC9)', () => {
     const { container } = render(<CircuitBuilder spec={spec} hiddenReps={['circuit']} />);
     expect(container.firstChild).toBeNull();
