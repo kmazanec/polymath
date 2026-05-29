@@ -25,6 +25,13 @@ polymath.biograph.dev {
 		reverse_proxy polymath-agent:8080
 	}
 
+	# F-16 chat-baseline SPA (static bundle served under /baseline/). Its REST
+	# routes are /api/baseline/* on the agent (matched by the /api/* handle above);
+	# only the static assets route here. Matched before the catch-all SPA handle.
+	handle /baseline* {
+		reverse_proxy polymath-baseline:80
+	}
+
 	# Everything else: the static SPA.
 	handle {
 		reverse_proxy polymath-web:80

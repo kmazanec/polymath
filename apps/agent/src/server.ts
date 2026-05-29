@@ -44,6 +44,9 @@ import type { TransferBankItemRef } from './explainback/itemTokens.js';
 import type { ExplainBackJudge, ProsodyFeatures } from '@polymath/graph';
 import { makeExplainBackJudge } from '@polymath/graph';
 import { ExplainBackCaptureRegistry } from './voice/explainBackRegistry.js';
+import { tryHandleBaselineRoute } from './baseline/route.js';
+import type { BaselineChatProvider } from './baseline/chatProvider.js';
+import { makeOpenAiBaselineChatProvider } from './baseline/openaiChatProvider.js';
 
 export interface ServerDeps {
   db: Db;
@@ -75,6 +78,11 @@ export interface ServerDeps {
    *  a fresh registry; populating it from a live device session is the deferred
    *  cross-platform smoke (see explainBackRegistry.ts). */
   explainBackCaptureRegistry?: ExplainBackCaptureRegistry;
+  /** F-16 baseline chat provider (the GPT-5 chat-baseline arm). Injectable for
+   *  tests (a deterministic stub; CI is offline); defaults to the key-gated GPT-5
+   *  provider when `OPENAI_API_KEY` is set, else `undefined` → the `/api/baseline/*`
+   *  write routes fail CLOSED with a 503 (the `/api/realtime/session` pattern). */
+  baselineChat?: BaselineChatProvider;
 }
 
 /** Cap inbound WS frames — protocol messages are small JSON. Prevents a single
@@ -1458,9 +1466,17 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     rawDeps.explainBackProsodyFor ??
     ((sessionId: string, targetItemId: string) => captureRegistry.prosodyFor(sessionId, targetItemId));
 
+  // F-16: default the baseline chat provider from the key-gated GPT-5 impl when the
+  // caller didn't inject one (tests inject a deterministic stub; production never
+  // constructs it). `makeOpenAiBaselineChatProvider` self-gates on `OPENAI_API_KEY`
+  // and returns `undefined` without a key — so a key-less deploy's baseline write
+  // routes fail CLOSED (503), and a keyed deploy actually runs GPT-5 (fairness).
+  const defaultedBaselineChat = rawDeps.baselineChat ?? makeOpenAiBaselineChatProvider();
+
   const deps: ServerDeps = {
     ...rawDeps,
     ...(defaultedJudge ? { explainBackJudge: defaultedJudge } : {}),
+    ...(defaultedBaselineChat ? { baselineChat: defaultedBaselineChat } : {}),
     explainBackCaptureRegistry: captureRegistry,
     explainBackTranscriptFor: transcriptFor,
     explainBackProsodyFor: prosodyFor,
@@ -1508,6 +1524,22 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
         .orderBy(events.ts)
         .then((rows) => sendJson(res, 200, { sessionId, events: rows }))
         .catch(() => sendJson(res, 500, { error: 'failed to load replay' }));
+      return;
+    }
+
+    // F-16 baseline routes (purely additive; topology D2). Returns true once it
+    // has matched + responded; falls through to 404 otherwise.
+    if (
+      tryHandleBaselineRoute(
+        {
+          db: deps.db,
+          ...(deps.baselineChat ? { chat: deps.baselineChat } : {}),
+        },
+        req,
+        res,
+        url,
+      )
+    ) {
       return;
     }
 

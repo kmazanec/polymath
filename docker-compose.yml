@@ -58,12 +58,23 @@ services:
     expose:
       - '80'
 
+  # F-16 chat-baseline SPA, served under /baseline/. Its REST routes live on the
+  # agent (/api/baseline/*, topology D2); this is a static bundle only.
+  baseline:
+    build:
+      context: .
+      dockerfile: apps/baseline/Dockerfile
+    expose:
+      - '80'
+
   caddy:
     image: caddy:2-alpine
     depends_on:
       agent:
         condition: service_healthy
       web:
+        condition: service_started
+      baseline:
         condition: service_started
     volumes:
       - ./infra/caddy/polymath.caddyfile:/etc/caddy/Caddyfile:ro

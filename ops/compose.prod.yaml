@@ -72,6 +72,19 @@ services:
     networks:
       - openemr_default
 
+  # F-16 chat-baseline SPA (static bundle, served under /baseline/). Its REST
+  # routes live on the agent (/api/baseline/*, topology D2); this is static only.
+  # Joined to openemr_default so the shared host Caddy reaches it by name.
+  baseline:
+    build:
+      context: /srv/polymath/current
+      dockerfile: apps/baseline/Dockerfile
+    image: polymath-baseline:${GIT_SHA:-latest}
+    container_name: polymath-baseline
+    restart: unless-stopped
+    networks:
+      - openemr_default
+
 networks:
   # Private network for agent <-> postgres; no host exposure.
   internal:
