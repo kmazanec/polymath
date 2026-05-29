@@ -66,3 +66,77 @@ I6, **second stretch priority** per [ADR-012](../adrs/ADR-012-stretch-features-f
 ## Implementation notes (filled in by the building agent)
 
 > Empty.
+
+---
+
+## Build plan (approved)
+
+**Planned:** 2026-05-29 (kmaz-plan-iteration, one opus pass: architect/reuse/contrarian) · **Manifest:** [BUILD-PLAN-i6-stretch](../BUILD-PLAN-i6-stretch.md) · **Build tier:** Opus (novel misconception-detector logic + locked-package edit), Sonnet for lesson-data authoring.
+
+> **Cross-cutting decision D-A (Keith, 2026-05-29):** NOR is a real `@polymath/booleans` primitive (additive infix token at OR-precedence), consistent with NAND in F-22. **F-23 rebases on F-22's grammar change** — both edit the same `packages/booleans/src/index.ts` parser regions (NAND vs NOR), so build the NOR diff *on top of* F-22's NAND diff, not in a parallel branch; re-run the full booleans suite after the combined change.
+>
+> **Decision D23-1 (planner, approved): the misconception is matched SEMANTICALLY, never by string/regex.** The spec's AC#3 example string is ambiguous; the detector computes the "halfway" expression (negation pushed in over operands **without** dualizing the connective: `NOT(A op B) → (NOT A) op (NOT B)`, `op` unchanged) and compares truth tables via `equivalent()`. This is load-bearing for **zero false positives** across the items' many spellings. **Reuse `propose_hint`** — no new `TacticalMove`, no menu/openaiClient lockstep edit.
+
+### Summary
+Adds Lesson 4 (De Morgan's law) as pure data (`lessons/4/`), adds NOR as a strictly-additive infix primitive in `@polymath/booleans` (on top of F-22's NAND), and introduces Polymath's first misconception detector: a pure, semantic (truth-table) matcher that recognizes the "halfway De Morgan" form and surfaces a *named* targeted hint via the existing `propose_hint`/`HintCard` path — no new TacticalMove, no statechart/server changes (the L3→L4 advance reflex is already generic).
+
+### Files to create
+- `lessons/4/content.json` — 12 items, tiers 1–4, ≥4 halfway-trap targets (`NOT(A AND B)`/`NOT(A OR B)` + composites), KCs `["de_morgan","negation"]`, truthTables computed via booleans.
+- `lessons/4/mastery_config.json` — copy `lessons/2/mastery_config.json`.
+- `lessons/4/kc_vocabulary.json` — De Morgan vocab.
+- `lessons/4/misconceptions.json` — declarative per-item data: `{ items: [{ itemId, halfwayTruthTable:(0|1)[], hintBody }] }` (named-hint copy lives here).
+- `apps/agent/src/hints/misconceptions.ts` — `detectHalfwayMisconception(targetExpression, submission): boolean` (pure, semantic, var-capped) + `loadMisconceptions(lessonId)` + `halfwayHintFor(itemId, lesson): string|null`.
+- `apps/agent/src/hints/misconceptions.test.ts`.
+
+### Files to modify
+- `packages/booleans/src/index.ts` — **NOR primitive (additive, on top of F-22 NAND):** `Token` `{type:'nor'}`, `KEYWORDS.NOR`, `Ast` `{kind:'nor';left;right}`, parser arm at OR-precedence (left-assoc), `evaluate` `!(l||r)`, `variables` walk, `astToExpression` `A NOR B`. **Leave the pseudo-grammar untouched** (D23-2) unless an L4 pseudocode item needs NOR.
+- `packages/booleans/src/scoreEquivalence.ts` — verify NOR flows through (add a test).
+- `apps/agent/src/hints/templates.ts` — add `L4_DEMORGAN_HINT` (names the misconception); falls back to `misconceptions.json` per-item copy.
+- `apps/agent/src/agent/stubClient.ts` — in the wrong-`submit` branch, before `rephrase`, call `detectHalfwayMisconception`; if true return `propose_hint` with the named body. (Shared file with F-22 — append-only.)
+- `apps/web/src/canvas/circuitModel.ts` — **only if** an L4 circuit item allows NOR: add NOR to `GateKind`/`buildCircuit`/`pulseSchedule` (mirror F-22's NAND pattern). Prefer authoring L4 circuit items on AND/OR/NOT to avoid this (D23-3).
+- L4 eval scenario fixtures (offline labels half + live ≥90% half protected/manual).
+- `packages/statechart` test — `createLessonMachine({lessonId:4})` factory test.
+
+### Build sequence (test-first)
+- [ ] **(NOR test-first)** `equivalent("NOT (A AND B)","(NOT A) OR (NOT B)")===true`; `equivalent("A NOR B","NOT (A OR B)")===true`; `truthTable("A NOR B").out` MSB-first; `astToExpression(parse("A NOR B"))` round-trips. Run red.
+- [ ] Implement NOR in `packages/booleans/src/index.ts` (Token, KEYWORDS, Ast, parser arm at OR-precedence, evaluate, variables, astToExpression). Green. Re-run the full booleans suite (F-22 NAND + NOR together).
+- [ ] `scoreEquivalence` NOR test; fix only if needed.
+- [ ] `createLessonMachine({lessonId:4})` statechart test (phase shape reused, id `lesson_4`).
+- [ ] **(detector test-first)** `misconceptions.test.ts`: each authored halfway form → `true`; the correct De Morgan form, the original `NOT(A op B)`, and unrelated-wrong answers → `false`; over-cap input → `false` (no enumeration). Run red.
+- [ ] Implement `apps/agent/src/hints/misconceptions.ts`: compute the un-dualized pushdown of the target's outer `NOT(op)`, compare the learner's submission truth table to the halfway table via `equivalent()`/`truthTable()` **with the distinct-variable cap**; **guard: never flag an answer `equivalent()` to the target.** Green.
+- [ ] Author `lessons/4/{content,mastery_config,kc_vocabulary,misconceptions}.json`; compute all truthTables (incl. the per-item halfway tables) via scratch booleans calls.
+- [ ] `loadLesson(4)` validation test (recompute must not throw; halfway tables recomputed in the test too).
+- [ ] Add `L4_DEMORGAN_HINT` to `templates.ts`.
+- [ ] Wire `stubClient.ts` wrong-submit branch: misconception → `propose_hint` (named body) before `rephrase`. Test: a halfway submit yields a HintCard naming the misconception.
+- [ ] (If any L4 circuit item allows NOR) add NOR to `circuitModel.ts` + buildCircuit/pulse test. Else skip.
+- [ ] LangSmith eval: offline label assertion gates MRs; live ≥90% LLM-judge half protected/manual-only.
+- [ ] `pnpm typecheck && pnpm test`.
+
+### Contracts touched
+- **`@polymath/booleans`** — ADDITIVE: `Ast` `{kind:'nor';…}`, `Token` `{type:'nor'}`, `KEYWORDS.NOR`. Locked signatures unchanged. **Shared with F-22 (NAND) — F-23 rebases on F-22.**
+- **Lesson config JSON** — new data only; existing locked Zod (`packages/contract/src/lessonConfig.ts`). No schema change.
+- **`misconceptions.json`** — NEW lesson-adjacent file; small Zod schema in `apps/agent` (NOT in `@polymath/contract`): `{ items: { itemId; halfwayTruthTable:(0|1)[]; hintBody }[] }`.
+- **Agent menu / `TacticalMove` / `HintCard`** — **UNCHANGED** (reuse `propose_hint`; the named hint rides as a normal L1 body). This is the contrarian win — no two-place lockstep edit.
+- **COLLISION with F-22:** `packages/booleans/src/index.ts` and `apps/agent/src/agent/stubClient.ts` (+ possibly `circuitModel.ts`). Serialize — F-22 first.
+
+### Tests → AC
+- NOR unit + De Morgan equivalence → **AC#4**.
+- `createLessonMachine({lessonId:4})` + `loadLesson(4)` → **AC#1, AC#2**.
+- Misconception detector (halfway→named hint; correct/original/unrelated→no flag; over-cap→no enumeration) → **AC#3** + "zero false positives".
+- `stubClient` wrong-submit-halfway → `propose_hint` naming the misconception → **AC#3**.
+- Transfer probe uses the pre-seeded L4 bank → **AC#5** (verify a seed row is the halfway form; flag the gap if not).
+- LangSmith eval (offline gates MR; live ≥90% protected) → **AC#6**.
+
+### Risks / open decisions
+- **D23-1 — semantic (not string) misconception match.** RECOMMENDED & approved (see banner). Load-bearing for zero false positives.
+- **D23-2 — NOR in the pseudocode grammar?** RECOMMENDED: **no** — leave `parsePseudocode`/`PSEUDO_KEYWORDS` untouched, author L4 pseudocode without NOR. Smaller blast radius.
+- **D23-3 — NOR in the web circuit?** RECOMMENDED: keep L4 circuit items on AND/OR/NOT; if NOR is needed, mirror F-22's first-class `GateKind` pattern. Decide at authoring time.
+- **D23-4 — hint level for the named misconception.** RECOMMENDED: **L1** (directional). Confirm it counts via the existing `hintsByItem` ladder.
+- **Integrity/DoS (must-not-miss):** the detector calls `truthTable()`/`equivalent()` on learner-controlled `ev.submission` — it **must** apply the distinct-variable cap (over-cap = not-a-match, never enumerate).
+- **Fail-closed:** missing/un-loadable `misconceptions.json` → detector returns false (degrade to `rephrase`), never throws at boot. `lessons/4/` is picked up by the existing `lessons` Docker COPY.
+- **AC#5 seed check:** confirm the pre-seeded L4 transfer rows include a halfway-form challenge; author it into `seed_data/transfer_items.json` if missing.
+
+### Dependencies & DAG position
+- **Depends on F-22** — pedagogically (L3 unlocks L4; `loadLessonIfExists(3)` must chain) AND mechanically (shared `packages/booleans/src/index.ts` + `stubClient.ts` + possibly `circuitModel.ts`; serialize, F-22 first).
+- **Unblocks F-26** (L5 playground needs the full NAND/NOR vocabulary).
+- **No dependency on F-18/F-24/F-25.** Zero file overlap with F-25.

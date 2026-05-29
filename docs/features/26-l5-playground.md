@@ -63,3 +63,71 @@ None — F-26 is the last feature in the roadmap and runs strictly after F-23.
 ## Implementation notes (filled in by the building agent)
 
 > Empty. Note: this feature resolves Open Question 5 from ARCHITECTURE.md (playground substate vs. micro-statechart). The decision belongs in T-26a and should be reflected in the implementation notes.
+
+---
+
+## Build plan (approved)
+
+**Planned:** 2026-05-29 (kmaz-plan-iteration, 3-draft panel + synthesis) · **Manifest:** [BUILD-PLAN-i6-stretch](../BUILD-PLAN-i6-stretch.md) · **Build tier:** Opus (contract variant + new statechart + lockstep menu move + DoS-sensitive equivalence + new ADR — do not split).
+
+> **Open Question 5 → RESOLVED: playground is its OWN micro-statechart (sibling machine), documented in new ADR-013. The locked lesson spine is untouched.** A spine substate was rejected: the locked phase shape is a directed-practice grammar (every transition presumes a server-picked item + BKT/streak/transfer folds the playground has none of); a sibling machine adds **no phase** to the spine (it composes *after* the L4 machine's `mastered` final state), honoring "fill guard bodies, never re-shape the spine; new phases need a new ADR" literally. **ADR-013 is required and is the first build step.**
+
+### Summary
+A post-mastery free-build capstone. After mastering L4 the learner sees a "Try the Playground" affordance on the L4 `MasteryCelebration`; clicking it enters Playground mode driven by a new sibling XState micro-machine (`createPlaygroundMachine`) — `lesson.ts`/`LESSON_PHASES` **untouched**. The mode renders a new `PlaygroundCanvas` `ComponentSpec` variant **composing the three existing rep editors** (all visible/editable) + a learner target-expression input. On Submit, the canvas computes a **client-side** cross-rep equivalence verdict (each rep vs the target AND vs each other) via a new var-capped `playgroundEquivalence` booleans helper (<5ms, off the network). The agent flips to **scaffold-on-request only** (a new lockstep `verify_playground_equivalence` move that compiles to a scaffold mount, never a mastery transition); the server recomputes the verdict purely for the persisted record + an earned-it entry gate. Exitable to a session-end `MasteryCelebration`.
+
+### Files to create
+- `docs/adrs/ADR-013-playground-micro-statechart.md` — resolves Open Question 5; `Supersedes: none`; the sibling-machine WHY.
+- `packages/statechart/src/playground.ts` (+ `.test.ts`) — `createPlaygroundMachine()` + `PLAYGROUND_PHASES` (`proposing→building→checking→{satisfied,mismatch}→ended`; `mismatch→building`; any→`ended`). No `PhaseName`/`lesson.ts` import; the test asserts `LESSON_PHASES` unchanged.
+- `packages/booleans/src/playgroundEquivalence.ts` (+ `.test.ts`) — `playgroundEquivalence(target, submissions)` wrapping `scoreEquivalence`/`equivalent`, applying the distinct-variable cap to **both** the target and each submission; returns per-rep booleans + `allAgree`.
+- `apps/web/src/components/PlaygroundCanvas.tsx` (+ `.test.tsx`) — composite: target input + the three existing rep components (`visibleReps` = all three) + Submit (client-side verdict) + per-rep badges + scaffold-request + Finish/exit.
+
+### Files to modify
+- `packages/contract/src/component.ts` — add `PlaygroundCanvas` to the `ComponentSpec` union AND `'PlaygroundCanvas'` to `COMPONENT_KINDS` (ADDITIVE). **No `claimedTruthTable`** (the learner authors the target; Layer-2 recompute N/A).
+- `packages/contract/src/wire.ts` — append-only `ClientEvent` kinds: `enter_playground`, `playground_submit`, `playground_request_scaffold`, `exit_playground` (reuse `RepSubmission` + `MAX_EXPRESSION_LEN`).
+- `apps/web/src/components/registry.tsx` — add `case 'PlaygroundCanvas':` (the `never` default forces it) + thread new `RenderOptions` handlers.
+- `apps/agent/src/agent/menu.ts` — add `verify_playground_equivalence` to `TacticalMove` + `F26_MENU = [...<then-current menu const>, 'verify_playground_equivalence'] as const` + a `compileMove` arm (scaffold mount or `no_action`; **NEVER a mastery transition**).
+- `apps/agent/src/agent/openaiClient.ts` — **lockstep:** extend `MoveSchema` enum (source from `F26_MENU`) + add the `toTacticalMove` arm (keep exhaustive).
+- `apps/agent/src/server.ts` — `handleEnterPlaygroundTurn` (earned-it: re-derive L4 mastery from the event log, fail-closed, `events.app IS NULL`), `handlePlaygroundSubmitTurn` (server recompute via `playgroundEquivalence` for the record only — NO BKT/streak/mastery write), `handleExitPlaygroundTurn` (mount session-end `MasteryCelebration`); route the new kinds in `handleClientFrame`.
+- `apps/agent/src/agent/prompt.ts` — one paragraph: in playground the agent is verifier/scaffold, never asserts equivalence.
+- `apps/web/src/components/MasteryCelebration.tsx` — add a "Try the Playground" button when `lessonId === 4` (separate from `nextLessonId`).
+- `apps/web/src/App.tsx` — instantiate `createPlaygroundMachine`, mount `PlaygroundCanvas` on the affordance, dispatch the new events, render verdicts, exit → `MasteryCelebration`.
+- `packages/contract/src/index.test.ts` — round-trip cases for the new variants.
+
+> **No `lessons/5/` directory** — the generic advance reflex would break on `content.items[0]`; entry is the dedicated `enter_playground` event, not `advance_lesson`. **No Dockerfile COPY change** (source-only additions to existing packages).
+
+### Build sequence (test-first)
+- [ ] **T-26a (serial):** write `docs/adrs/ADR-013-playground-micro-statechart.md` (own micro-statechart; cite the locked-phase-shape invariant). Mark Open Question 5 resolved.
+- [ ] Test-first `playground.test.ts` (`proposing→building→checking→satisfied|mismatch`, `mismatch→building`, any→`ended`; assert `LESSON_PHASES` unchanged), then `createPlaygroundMachine()` + index export.
+- [ ] Test-first `playgroundEquivalence.test.ts` (3 reps ≡ target → allAgree; one wrong → that rep false; **over-cap target → all false, no enumeration**; over-cap submission → false; unparseable → false), then `playgroundEquivalence` (cap target too).
+- [ ] **Contract (coordinated):** add `PlaygroundCanvas` to the union + `COMPONENT_KINDS`; add the 4 `ClientEvent` kinds; round-trip cases in `index.test.ts`. `pnpm --filter @polymath/contract test` + `pnpm typecheck` (registry.tsx now fails exhaustiveness — proves the contract landed).
+- [ ] Web renderer: `case 'PlaygroundCanvas':` + new handlers (fixes exhaustiveness).
+- [ ] Test-first `PlaygroundCanvas.test.tsx`, then `PlaygroundCanvas.tsx` (compose three rep components, `visibleReps=['truth_table','circuit','pseudocode']`, target input, Submit client-side verdict, per-rep badges, scaffold-request, Finish).
+- [ ] Agent menu lockstep: `verify_playground_equivalence` in `TacticalMove`+`F26_MENU`+`compileMove`; extend `openaiClient.ts`; update `prompt.ts`. `pnpm --filter @polymath/agent typecheck` (a missed lockstep half = non-exhaustive-switch error).
+- [ ] Server: `handleEnterPlaygroundTurn` (earned-it, `app IS NULL`, fail-closed), `handlePlaygroundSubmitTurn` (recompute + persist, no BKT/mastery), `handleExitPlaygroundTurn`; route in `handleClientFrame`.
+- [ ] App wiring: "Try the Playground" on the L4 `MasteryCelebration` (AC#1); wire enter/submit/scaffold/exit to the socket; exit → celebration (AC#6).
+- [ ] Integration test: full L1→L4-mastered→playground→exit arc in one session (Testing #2).
+- [ ] `pnpm typecheck && pnpm test && pnpm build`; confirm the `lesson.ts` diff is **empty**; QA in-browser.
+
+### Contracts touched (all ADDITIVE)
+- **`ComponentSpec`** — new `{ kind:'PlaygroundCanvas', visibleReps: z.array(Rep) }` + `'PlaygroundCanvas'` in `COMPONENT_KINDS` (3-place coordinated change; `never` default enforces the registry case). No `claimedTruthTable`.
+- **`ClientEvent`** — append-only `enter_playground` / `playground_submit` (target + per-rep `RepSubmission` optionals, `.max(MAX_EXPRESSION_LEN)`) / `playground_request_scaffold` / `exit_playground`.
+- **Agent menu** — LOCKSTEP additive `verify_playground_equivalence` (payload `{ scaffold?: string; rationale }` — **scaffold-only**, the LLM is never the verdict authority); `F26_MENU` chains off the **then-current** menu const (F-23's, if any), not `F06_MENU`.
+- **New booleans export** `playgroundEquivalence(target, submissions)` — additive; locked signatures untouched.
+- **NOT touched:** `Action` union, `PhaseName`/`LESSON_PHASES`/`lesson.ts`, `@polymath/booleans` locked signatures, `circuitModel.ts` `GateKind` (consumes F-22/F-23's NAND/NOR, doesn't modify).
+- **Collision flags (F-26 runs LAST, rebases on top):** `component.ts`+`wire.ts`+`registry.tsx` (also F-24/F-25); `menu.ts`+`openaiClient.ts`+`prompt.ts` (also F-23 — chain `F26_MENU` off the then-current const); `server.ts` (F-24/F-25 report routes + celebration/advance machinery).
+
+### Tests → AC
+- `playground.test.ts` → Testing #1; underpins AC#3/#6 · `playgroundEquivalence.test.ts` → AC#4 + the over-cap-target DoS guard · `PlaygroundCanvas.test.tsx` → Testing #3; AC#2/#3/#4/#5/#6 · server unit (entry refuses when L4 mastery not earned; submit recompute matches client, `app IS NULL`, no BKT write) → AC#1 earned-it + integrity · agent lockstep typecheck → AC#5 · L1→L5 full-arc integration → Testing #2; AC#1/#6 · contract round-trip → new variants parse.
+
+### Risks / open decisions
+- **D26-1 — substate vs micro-statechart (Open Question 5).** RECOMMENDED & chosen: **own micro-statechart + ADR-013**; spine untouched (rejection rationale in the banner).
+- **D26-2 — DoS: cap the learner-authored target (headline integrity).** RECOMMENDED & chosen: `playgroundEquivalence` applies the distinct-variable cap to **both** the target and each submission; over-cap on either → verdict `false`, never enumerate. The real gap: `scoreEquivalence` caps only the submission, **not** the canonical — and here the target *is* the learner-controlled canonical (a 26-var target → 2^26 enumeration, hanging browser or event loop). Cap on the client AND the server recompute.
+- **D26-3 — agent role: scaffold-only, LLM never the verdict authority.** RECOMMENDED & chosen: the verdict is the client-side `playgroundEquivalence` call (locked "correctness off the network, learner sees correct before the agent decides"); the new move exists only for scaffold-on-request (AC#5) and compiles to a scaffold mount; the server recompute is defense-in-depth (like Layer 2).
+- **D26-4 — no `lessons/5/`.** RECOMMENDED & chosen: entry is the dedicated `enter_playground` event; `loadLessonIfExists(5)` correctly stays undefined so L4's `masteryCelebrationAction` won't set `nextLessonId:5` — the "Try the Playground" button is a separate affordance, earned-it-checked server-side.
+- **D26-5 — integrity scoping/fail-closed:** `handleEnterPlaygroundTurn` re-derives L4 mastery, scopes `events.app IS NULL`, fails closed; `handlePlaygroundSubmitTurn` persists verdicts but writes NO BKT/streak/mastery and scopes `app IS NULL`. No new operator route / env-gated service.
+- **D26-6 — probe-integrity:** trivially satisfied (all reps visible), but `PlaygroundCanvas` must still pass `visibleReps=['truth_table','circuit','pseudocode']` so each rep's existing `visibleReps` gate renders it.
+
+### Dependencies & DAG position
+- **Blocked by F-23** (L4 + full NAND/NOR vocabulary in the booleans grammar AND `circuitModel.ts`): `playgroundEquivalence` must parse every gate the learner can type; the circuit rep must render NAND/NOR. **F-23 merges first** (soft-orders after F-22, which F-23 subsumes).
+- **Runs STRICTLY LAST in I6** — rebases on top of all other I6 features (inherits their `menu.ts`/`contract`/`server.ts` changes).
+- **Unblocks:** nothing (terminal feature). **Not blocked by F-18/F-24/F-25** (exit goes to the existing `MasteryCelebration`, not the F-18 report).

@@ -6,7 +6,9 @@ coverage/
 
 # git worktrees live inside the repo root
 .worktrees/
-.claude/worktrees/
+
+# Claude Code session/build state (worktrees, scheduled-task locks, etc.) — all transient
+.claude/
 
 # env / secrets — never commit
 .env
