@@ -62,7 +62,9 @@ None — F-26 is the last feature in the roadmap and runs strictly after F-23.
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty. Note: this feature resolves Open Question 5 from ARCHITECTURE.md (playground substate vs. micro-statechart). The decision belongs in T-26a and should be reflected in the implementation notes.
+**T-26a — Open Question 5 resolved (ADR-013).** The playground is its OWN micro-statechart (a sibling machine), NOT a substate of the locked lesson spine. Rationale: the locked phase shape is a directed-practice grammar (every transition presumes a server-picked item + BKT/streak/transfer/mastery folds the playground has none of); a sibling machine adds NO phase to `PhaseName`/`LESSON_PHASES`, honoring the F-01 lock literally. The playground machine (`createPlaygroundMachine`) imports neither `PhaseName` nor `lesson.ts`; the statechart test asserts `LESSON_PHASES` is unchanged so any future coupling fails CI.
+
+**Frozen-base note.** The I6 contracts barrier (`73e655c`) already landed every cross-cutting contract this feature touches: the `PlaygroundCanvas` `ComponentSpec` variant + `COMPONENT_KINDS` entry (with the contract round-trip test), the four append-only `ClientEvent` kinds, the `verify_playground_equivalence` menu move + its `openaiClient.ts` lockstep half, the `playgroundEquivalence` booleans export, the `HandoffArtifact` schema + the `share_token` migration, and a routing stub in `server.ts` that acks the four playground events. F-26's build work is therefore the FEATURE BEHAVIOR on top of those frozen shapes: ADR-013, the `playground.ts` micro-statechart, the `playgroundEquivalence.test.ts` (the frozen export shipped without a test → below the package's 100% coverage gate), the real `PlaygroundCanvas.tsx` + registry case (replacing the TBD placeholder), the real server handlers (replacing the bare ack), and the App wiring.
 
 ---
 
@@ -96,7 +98,7 @@ A post-mastery free-build capstone. After mastering L4 the learner sees a "Try t
 > **No `lessons/5/` directory** — the generic advance reflex would break on `content.items[0]`; entry is the dedicated `enter_playground` event, not `advance_lesson`. **No Dockerfile COPY change** (source-only additions to existing packages).
 
 ### Build sequence (test-first)
-- [ ] **T-26a (serial):** write `docs/adrs/ADR-013-playground-micro-statechart.md` (own micro-statechart; cite the locked-phase-shape invariant). Mark Open Question 5 resolved.
+- [x] **T-26a (serial):** write `docs/adrs/ADR-013-playground-micro-statechart.md` (own micro-statechart; cite the locked-phase-shape invariant). Mark Open Question 5 resolved.
 - [ ] Test-first `playground.test.ts` (`proposing→building→checking→satisfied|mismatch`, `mismatch→building`, any→`ended`; assert `LESSON_PHASES` unchanged), then `createPlaygroundMachine()` + index export.
 - [ ] Test-first `playgroundEquivalence.test.ts` (3 reps ≡ target → allAgree; one wrong → that rep false; **over-cap target → all false, no enumeration**; over-cap submission → false; unparseable → false), then `playgroundEquivalence` (cap target too).
 - [ ] **Contract (coordinated):** add `PlaygroundCanvas` to the union + `COMPONENT_KINDS`; add the 4 `ClientEvent` kinds; round-trip cases in `index.test.ts`. `pnpm --filter @polymath/contract test` + `pnpm typecheck` (registry.tsx now fails exhaustiveness — proves the contract landed).
