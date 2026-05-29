@@ -741,6 +741,154 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     expect(verdicts.every((v) => v!.correct === false)).toBe(true);
   });
 
+  // ── F-13 Lesson 2 — composition: the lesson-binding READ wiring ───────────────
+  // The load-bearing F-13 fix: a `?lesson=2` session must fold against L2 content on
+  // EVERY turn, not just the first. The barrier wired `currentLessonId` to read the
+  // durable `sessions.lessonProgress`; F-13 persists that binding on `session_start`
+  // (the read-wiring; F-15 owns the mid-session advance write). The pre-barrier bug
+  // hardcoded lessonId=1 for every non-session_start event, silently folding an L2
+  // session against L1 after the first frame.
+  describe('F-13 Lesson 2 lesson-binding (?lesson=2 dev seam)', () => {
+    const L1_EXPRESSIONS = new Set(['A AND B', 'A OR B', 'NOT A']);
+    const L2_EXPRESSIONS = new Set(
+      loadLesson(2).content.items.map((i) => i.targetExpression),
+    );
+
+    function mountExpression(action: Action): string | undefined {
+      if (action.type !== 'mount') return undefined;
+      const c = action.component;
+      if (c.kind === 'TruthTablePractice') return c.expression;
+      if (c.kind === 'CircuitBuilder' || c.kind === 'PseudocodeChallenge') return c.targetExpression;
+      return undefined;
+    }
+
+    /** Drive frames over a WS URL carrying the given query (so the server's dev
+     *  seam sees `?lesson=2`); collect each Action. Mirrors `driveSequence`. */
+    async function driveWithQuery(
+      query: string,
+      frames: Record<string, unknown>[],
+    ): Promise<Action[]> {
+      const ws = new WebSocket(`${wsUrl}${query}`);
+      const actions: Action[] = [];
+      await new Promise<void>((resolve, reject) => {
+        let sent = 0;
+        ws.on('open', () => ws.send(JSON.stringify(frames[sent++])));
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            actions.push(Action.parse(msg.action));
+            if (sent < frames.length) ws.send(JSON.stringify(frames[sent++]));
+            else resolve();
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('L2 sequence timed out')), 8000);
+      });
+      ws.close();
+      return actions;
+    }
+
+    it('binds the session to L2 on session_start and persists lessonProgress (the read-wiring)', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      await driveWithQuery('?lesson=2', [
+        { kind: 'session_start', sessionId, lessonId: 2 },
+      ]);
+      await new Promise((r) => setTimeout(r, 300));
+      const rows = await db.select().from(sessions).where(eq(sessions.id, sessionId));
+      expect((rows[0]!.lessonProgress as { currentLessonId: number }).currentLessonId).toBe(2);
+    });
+
+    it('an L2 submit turn folds against L2 content (NOT L1) — the pre-barrier bug', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      // session_start mounts L2's first item; the submit advances WITHIN L2 — the
+      // heuristic picks the next L2 item. If the turn folded against L1 (the bug),
+      // the next item would be an L1 expression.
+      const actions = await driveWithQuery('?lesson=2', [
+        { kind: 'session_start', sessionId, lessonId: 2 },
+        { kind: 'submit', sessionId, itemId: '(A AND B) OR (NOT C)', submission: '(A AND B) OR (NOT C)', correct: true },
+      ]);
+      const submitAction = actions[1];
+      expect(submitAction).toBeDefined();
+      const expr = mountExpression(submitAction!);
+      expect(expr, 'L2 submit must mount an L2 item').toBeDefined();
+      expect(L2_EXPRESSIONS.has(expr!), `mounted ${String(expr)} — expected an L2 expression`).toBe(true);
+      expect(L1_EXPRESSIONS.has(expr!), `mounted ${String(expr)} — an L1 expression leaked (the fold-against-L1 bug)`).toBe(false);
+    });
+
+    it('FAILS CLOSED: without the ?lesson seam a forged session_start.lessonId=2 is clamped to L1', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      // No `?lesson` query on the WS upgrade → the server does NOT honor a client
+      // lessonId > 1 (a learner can't skip L1 by forging the frame). The binding
+      // stays L1 (no lessonProgress write, currentLessonId defaults to 1).
+      await driveWithQuery('', [
+        { kind: 'session_start', sessionId, lessonId: 2 },
+      ]);
+      await new Promise((r) => setTimeout(r, 300));
+      const rows = await db.select().from(sessions).where(eq(sessions.id, sessionId));
+      const progress = rows[0]!.lessonProgress as { currentLessonId: number } | null;
+      // Either no write happened (null) or it bound to 1 — never 2.
+      expect(progress?.currentLessonId ?? 1).toBe(1);
+    });
+
+    // The durable-write clamp is NOT enough: the lesson the FORGED turn actually
+    // folds against (the mounted item / agent reasoning) must be L1 too. The
+    // pre-fix bug clamped only `lessonProgress` while turn 1 still loaded
+    // `getLesson(event.lessonId=2)` — leaking a gated L2 item for one turn. This
+    // asserts the in-turn fold, not just the DB row (mirror of the seam-on
+    // 'folds against L2' test, inverted).
+    it('FAILS CLOSED: a forged session_start.lessonId=2 with NO seam mounts an L1 item on turn 1 (not L2)', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const actions = await driveWithQuery('', [
+        { kind: 'session_start', sessionId, lessonId: 2 },
+      ]);
+      const startAction = actions[0];
+      expect(startAction).toBeDefined();
+      const expr = mountExpression(startAction!);
+      expect(expr, 'session_start must mount a practice item').toBeDefined();
+      expect(
+        L1_EXPRESSIONS.has(expr!),
+        `mounted ${String(expr)} — a forged session_start must fold against L1`,
+      ).toBe(true);
+      expect(
+        L2_EXPRESSIONS.has(expr!),
+        `mounted ${String(expr)} — gated L2 content leaked on the forged turn-1 fold`,
+      ).toBe(false);
+    });
+
+    // RECONNECT NO-DOWNGRADE: a session durably advanced to L2 that reconnects
+    // sending session_start{lessonId:1} (the web client re-announces its in-memory
+    // lessonId, which on a default-URL reload is 1) must keep folding against L2 —
+    // the `max` preserves the durable binding AND `lessonIdForEvent` reads that
+    // binding, so the turn does not fold against the lower frame value.
+    it('does not downgrade a durably-L2 session when a reconnect sends session_start.lessonId=1', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      // Durably advance to L2 via the seam, then submit so the reconnect is not a
+      // fresh session (the idempotent guard returns no_action on a started one, so
+      // we assert the DURABLE binding rather than a remount).
+      await driveWithQuery('?lesson=2', [
+        { kind: 'session_start', sessionId, lessonId: 2 },
+        { kind: 'submit', sessionId, itemId: '(A AND B) OR (NOT C)', submission: '(A AND B) OR (NOT C)', correct: true },
+      ]);
+      await new Promise((r) => setTimeout(r, 200));
+      // Reconnect WITHOUT the seam, re-announcing the default-URL lessonId=1.
+      await driveWithQuery('', [{ kind: 'session_start', sessionId, lessonId: 1 }]);
+      await new Promise((r) => setTimeout(r, 300));
+      const rows = await db.select().from(sessions).where(eq(sessions.id, sessionId));
+      const progress = rows[0]!.lessonProgress as { currentLessonId: number } | null;
+      expect(progress?.currentLessonId, 'reconnect must not downgrade L2→L1').toBe(2);
+    });
+  });
+
   // ── F-11 explain-back rubric: REACHABILITY (the I1 inert-refusal lesson) ──────
   // The single most important F-11 test: a raw `explain_back_recording_ended`
   // ClientEvent driven through the real fold (handleClientFrame), NOT a hand-set

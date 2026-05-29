@@ -38,70 +38,86 @@ export type LessonEvent =
   | { type: 'mastery_ok' }
   | { type: 'remediate' };
 
-export const lessonMachine = setup({
-  types: {
-    context: {} as LessonContext,
-    events: {} as LessonEvent,
-    input: {} as { lessonId: number; masteryReady?: boolean; transferReady?: boolean },
-  },
-  guards: {
-    /** ADR-005 refusal #3 source: a transition into `mastered` is only legal
-     *  when the gate is satisfied. F-01 stub returns the context flag (false). */
-    canDeclareMastery: ({ context }) => context.masteryReady,
-    /** ADR-005 refusal #1 source: an item only ends on an explicit learner act.
-     *  F-01 stub is trivially true (no mid-item auto-advance path exists yet). */
-    canEndItem: () => true,
-    /** F-09 rule-gate seam: `practicing → transferring` only when the learner has
-     *  cleared the behavioral + BKT bar (the server-computed rule gate, mirrored
-     *  into `transferReady`). The spine refuses an early transfer probe. */
-    canEnterTransfer: ({ context }) => context.transferReady,
-  },
-  actions: {
-    setTransferReady: assign({
-      transferReady: ({ event }) =>
-        event.type === 'set_transfer_ready' ? event.ready : false,
+/**
+ * F-13: the lesson spine is a FACTORY parameterised on `lessonId`. F-01 locked the
+ * *phase shape*; F-13 proves the architecture's "the same spine extends across
+ * lessons" claim by instantiating that identical shape for L2 (and L3/L4 later) —
+ * the only per-lesson difference is the machine **id** (`lesson_${lessonId}`, so a
+ * Stately export / a multi-lesson actor system has distinct ids). The guard bodies
+ * key on `context.lessonId` (a number) — never the id string — so a downstream
+ * guard never has to parse the id. The default `lessonMachine` export is lesson 1,
+ * preserved bit-for-bit for every existing consumer (App.tsx, the tests).
+ */
+export function createLessonMachine(opts: { lessonId: number }) {
+  return setup({
+    types: {
+      context: {} as LessonContext,
+      events: {} as LessonEvent,
+      input: {} as { lessonId: number; masteryReady?: boolean; transferReady?: boolean },
+    },
+    guards: {
+      /** ADR-005 refusal #3 source: a transition into `mastered` is only legal
+       *  when the gate is satisfied. F-01 stub returns the context flag (false). */
+      canDeclareMastery: ({ context }) => context.masteryReady,
+      /** ADR-005 refusal #1 source: an item only ends on an explicit learner act.
+       *  F-01 stub is trivially true (no mid-item auto-advance path exists yet). */
+      canEndItem: () => true,
+      /** F-09 rule-gate seam: `practicing → transferring` only when the learner has
+       *  cleared the behavioral + BKT bar (the server-computed rule gate, mirrored
+       *  into `transferReady`). The spine refuses an early transfer probe. */
+      canEnterTransfer: ({ context }) => context.transferReady,
+    },
+    actions: {
+      setTransferReady: assign({
+        transferReady: ({ event }) =>
+          event.type === 'set_transfer_ready' ? event.ready : false,
+      }),
+    },
+  }).createMachine({
+    id: `lesson_${String(opts.lessonId)}`,
+    initial: 'introducing',
+    context: ({ input }) => ({
+      lessonId: input.lessonId,
+      masteryReady: input.masteryReady ?? false,
+      transferReady: input.transferReady ?? false,
     }),
-  },
-}).createMachine({
-  id: 'lesson_1',
-  initial: 'introducing',
-  context: ({ input }) => ({
-    lessonId: input.lessonId,
-    masteryReady: input.masteryReady ?? false,
-    transferReady: input.transferReady ?? false,
-  }),
-  states: {
-    introducing: {
-      on: { start_practice: { target: 'practicing' } },
-    },
-    practicing: {
-      on: {
-        request_hint: { target: 'hint' },
-        set_transfer_ready: { actions: 'setTransferReady' },
-        enter_transfer: { target: 'transferring', guard: 'canEnterTransfer' },
-        submit: { target: 'assessed', guard: 'canEndItem' },
+    states: {
+      introducing: {
+        on: { start_practice: { target: 'practicing' } },
+      },
+      practicing: {
+        on: {
+          request_hint: { target: 'hint' },
+          set_transfer_ready: { actions: 'setTransferReady' },
+          enter_transfer: { target: 'transferring', guard: 'canEnterTransfer' },
+          submit: { target: 'assessed', guard: 'canEndItem' },
+        },
+      },
+      hint: {
+        on: { resume_practice: { target: 'practicing' } },
+      },
+      transferring: {
+        on: { assess: { target: 'assessed', guard: 'canEndItem' } },
+      },
+      assessed: {
+        on: {
+          mastery_ok: { target: 'mastered', guard: 'canDeclareMastery' },
+          remediate: { target: 'remediating' },
+        },
+      },
+      remediating: {
+        on: { resume_practice: { target: 'practicing' } },
+      },
+      mastered: {
+        type: 'final',
       },
     },
-    hint: {
-      on: { resume_practice: { target: 'practicing' } },
-    },
-    transferring: {
-      on: { assess: { target: 'assessed', guard: 'canEndItem' } },
-    },
-    assessed: {
-      on: {
-        mastery_ok: { target: 'mastered', guard: 'canDeclareMastery' },
-        remediate: { target: 'remediating' },
-      },
-    },
-    remediating: {
-      on: { resume_practice: { target: 'practicing' } },
-    },
-    mastered: {
-      type: 'final',
-    },
-  },
-});
+  });
+}
+
+/** The default lesson spine (lesson 1). Existing consumers import this unchanged;
+ *  a multi-lesson caller uses `createLessonMachine({ lessonId })`. */
+export const lessonMachine = createLessonMachine({ lessonId: 1 });
 
 export type LessonMachine = typeof lessonMachine;
 

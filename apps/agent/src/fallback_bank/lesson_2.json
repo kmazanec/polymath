@@ -1,0 +1,48 @@
+{
+  "lessonId": 2,
+  "note": "ADR-010 Layer 2 fallback bank for Lesson 2 (composition). Hand-curated items used when the agent fails twice in a row, so the L2 lesson never stalls. Every claimedTruthTable is hand-verified and asserted against @polymath/booleans in fallbackBank.test.ts. XOR is the pedagogical label only — the parser knows NOT/AND/OR, so XOR ships as the composition (A AND NOT B) OR (NOT A AND B). Tiers mirror L1: 1 = single composition, 2 = nested, 3 = XOR-as-composition / three-var.",
+  "items": [
+    {
+      "itemId": "fb-l2-and-or",
+      "kc": "composition",
+      "tier": 1,
+      "targetExpression": "(A AND B) OR (NOT C)",
+      "claimedTruthTable": [1, 0, 1, 0, 1, 0, 1, 1]
+    },
+    {
+      "itemId": "fb-l2-or-and",
+      "kc": "composition",
+      "tier": 1,
+      "targetExpression": "(A OR B) AND C",
+      "claimedTruthTable": [0, 0, 0, 1, 0, 1, 0, 1]
+    },
+    {
+      "itemId": "fb-l2-a-and-bc",
+      "kc": "composition",
+      "tier": 2,
+      "targetExpression": "A AND (B OR C)",
+      "claimedTruthTable": [0, 0, 0, 0, 0, 1, 1, 1]
+    },
+    {
+      "itemId": "fb-l2-a-and-b-or-notc",
+      "kc": "composition",
+      "tier": 2,
+      "targetExpression": "A AND (B OR NOT C)",
+      "claimedTruthTable": [0, 0, 0, 0, 1, 0, 1, 1]
+    },
+    {
+      "itemId": "fb-l2-xor",
+      "kc": "XOR",
+      "tier": 3,
+      "targetExpression": "(A AND NOT B) OR (NOT A AND B)",
+      "claimedTruthTable": [0, 1, 1, 0]
+    },
+    {
+      "itemId": "fb-l2-majority",
+      "kc": "composition",
+      "tier": 3,
+      "targetExpression": "(A AND B) OR (B AND C) OR (A AND C)",
+      "claimedTruthTable": [0, 0, 0, 1, 0, 1, 1, 1]
+    }
+  ]
+}

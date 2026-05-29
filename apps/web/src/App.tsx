@@ -7,10 +7,23 @@ import { adaptAction } from './ws/actionAdapter.js';
 import { AnimateOrNot } from './motion/AnimateOrNot.js';
 import { renderComponent, type RepSubmitPayload } from './components/registry.js';
 import { transferRepRefusal } from './copy/refusals.js';
-import { LESSON_1_INTRO } from './lessonIntroContent.js';
+import { introForLesson } from './lessonIntroContent.js';
 import { AskTutorButton } from './voice/AskTutorButton.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
+
+/**
+ * F-13 AC#8 dev seam: the lesson the SPA runs, from a `?lesson=2` URL param. Until
+ * F-15 lands the earned L1→L2 advance, L2 is reachable ONLY this way — and the
+ * SERVER independently gates it (the `?lesson` query is forwarded on the WS upgrade
+ * and the agent only honors lesson > 1 when `POLYMATH_ENABLE_TEST_SEAMS` is set and
+ * `NODE_ENV!=='production'`). A forged param can't skip L1 in production: the server
+ * clamps it to 1. Defaults to 1; anything other than 2 is treated as 1.
+ */
+function lessonFromUrl(): number {
+  const raw = new URLSearchParams(window.location.search).get('lesson');
+  return raw === '2' ? 2 : 1;
+}
 
 const REP_PHRASES: Record<Rep, RegExp> = {
   truth_table: /truth\s*table/i,
@@ -57,12 +70,18 @@ function currentPhase(value: unknown): 'introducing' | 'practicing' | 'transferr
 }
 
 export function App(): ReactElement {
-  const [snapshot, send] = useMachine(lessonMachine, { input: { lessonId: 1 } });
+  // F-13: the lesson the session runs (1 by default; 2 via the `?lesson=2` dev seam).
+  // Captured once on mount — it parameterises the lesson spine input, the session_start
+  // frame, and the intro. The `lessonMachine` default export IS lesson 1, but the
+  // input drives `context.lessonId`, so a `?lesson=2` run carries lessonId 2.
+  const lessonIdRef = useRef<number>(lessonFromUrl());
+  const lessonId = lessonIdRef.current;
+  const [snapshot, send] = useMachine(lessonMachine, { input: { lessonId } });
   const [conn, setConn] = useState<ConnState>('connecting');
   const [sessionId, setSessionId] = useState<string | null>(null);
   /** The component the agent has mounted (the inner loop's output). Starts on the
    *  lesson intro until the first agent `mount` arrives. */
-  const [mounted, setMounted] = useState<ComponentSpec>(LESSON_1_INTRO);
+  const [mounted, setMounted] = useState<ComponentSpec>(introForLesson(lessonId));
   /** The agent's most recent answer to a learner question (ADR-003 Q&A). */
   const [answer, setAnswer] = useState<ComponentSpec | null>(null);
   /** The current hint, shown in a side slot — NOT in the main workspace, so the
@@ -85,7 +104,11 @@ export function App(): ReactElement {
 
   useEffect(() => {
     let cancelled = false;
-    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/agent`;
+    // F-13 AC#8: forward `?lesson=2` on the WS upgrade so the server's dev seam can
+    // honor an L2 binding (it stays inert unless POLYMATH_ENABLE_TEST_SEAMS is set and
+    // NODE_ENV!=='production'). Omitted for the default L1 run.
+    const lessonQuery = lessonId === 2 ? '?lesson=2' : '';
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/agent${lessonQuery}`;
 
     void fetch('/api/session', { method: 'POST' })
       .then((r) => r.json())
@@ -98,7 +121,7 @@ export function App(): ReactElement {
           // a reconnect this re-announces the session, which is harmless.
           onOpen: () => {
             setConn('open');
-            socket.send({ kind: 'session_start', sessionId: body.sessionId, lessonId: 1 });
+            socket.send({ kind: 'session_start', sessionId: body.sessionId, lessonId });
           },
           onClose: () => setConn('closed'),
           onMessage: (msg: ServerMessage) => {

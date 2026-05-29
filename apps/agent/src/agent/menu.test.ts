@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Action } from '@polymath/contract';
+import { truthTable } from '@polymath/booleans';
 import { compileMove, type ProposedItem, type TacticalMove } from './menu.js';
 
 const item: ProposedItem = {
@@ -74,6 +75,35 @@ describe('compileMove', () => {
     });
     expect(a.type).toBe('mount');
     expect(a.type === 'mount' && a.component.kind).toBe('WorkedExample');
+  });
+
+  // F-13 AC#3 (satisfied at the AGENT layer — the web `WorkedExample` renderer is a
+  // <Tbd> stub, descoped here per D4). The XOR-as-composition introduction is a
+  // WorkedExample the agent can mount: it must be a contract-valid spec whose
+  // `expression` is a PURE AND/OR/NOT composition (the parser knows only NOT/AND/OR)
+  // computing the canonical XOR truth table [0,1,1,0]. Never the string "A XOR B".
+  it('worked_example mounts a valid XOR-as-composition WorkedExample (F-13 AC#3)', () => {
+    const expression = '(A AND NOT B) OR (NOT A AND B)';
+    const a = assertValidAction({
+      move: 'worked_example',
+      expression,
+      steps: [
+        { label: 'A but not B', detail: 'true when A is on and B is off' },
+        { label: 'or B but not A', detail: 'true when B is on and A is off' },
+        { label: 'exactly one', detail: 'XOR is true when exactly one input is true' },
+      ],
+      visibleReps: ['truth_table', 'circuit', 'pseudocode'],
+      rationale: 'introducing XOR as a composition of AND/OR/NOT',
+    });
+    expect(a.type).toBe('mount');
+    if (a.type === 'mount' && a.component.kind === 'WorkedExample') {
+      // The expression never carries the bare XOR keyword (a parser would throw).
+      expect(a.component.expression).not.toMatch(/\bXOR\b/);
+      // It IS the exclusive-or, proven by the validator (the criterion is the table).
+      expect(truthTable(a.component.expression).out.map((v) => (v ? 1 : 0))).toEqual([0, 1, 1, 0]);
+    } else {
+      throw new Error('expected a WorkedExample mount');
+    }
   });
 
   it('answer_question → answer_question with topic classification preserved', () => {

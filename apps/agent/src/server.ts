@@ -189,11 +189,18 @@ export async function currentLessonId(db: Db, sessionId: string): Promise<number
   return typeof id === 'number' && Number.isInteger(id) && id >= 1 ? id : 1;
 }
 
-/** The lesson a turn binds to. `session_start` carries its own lessonId (the
- *  session is being (re)started on it); any other event reads the durable
- *  per-session binding via `currentLessonId`. */
+/** The lesson a turn binds to — for EVERY kind (incl. `session_start`) this reads
+ *  the durable per-session binding via `currentLessonId`, never the raw client
+ *  frame. On `session_start` the frame handler has ALREADY committed the clamped
+ *  binding (`bound = max(durable, seam-allowed request)`, server.ts ~920-934)
+ *  before this read, so the turn's lesson is read-after-write of that clamped
+ *  value — a forged `session_start.lessonId > 1` with the seam OFF is clamped to
+ *  L1 here too, not just in the durable write (the in-turn fold must fail closed
+ *  identically, else turn 1 leaks gated content; and a durably-advanced session
+ *  that reconnects sending a lower lessonId folds against its real lesson, not
+ *  the downgraded frame value). NOT trusting `event.lessonId` for the fold is the
+ *  fix; the clamp lives in the handler that wrote `bound`. */
 async function lessonIdForEvent(db: Db, event: ClientEvent): Promise<number> {
-  if (event.kind === 'session_start') return event.lessonId;
   return currentLessonId(db, event.sessionId);
 }
 
@@ -754,6 +761,16 @@ export interface FrameOptions {
    *  rubric runs and an unmet precondition / unavailable judge → `passed:false` → no
    *  pass folded → mastery blocked (the fail-closed default). */
   testExplainBackVerdict?: ExplainBackVerdict;
+  /** F-13 AC#8 dev/test seam (`?lesson=2`): allow a `session_start` to BIND the
+   *  session to a lesson > 1 it has not durably earned. Gated identically to the
+   *  other seams (`NODE_ENV!=='production'` AND `POLYMATH_ENABLE_TEST_SEAMS==='true'`,
+   *  explicit opt-in, default OFF). FAIL-CLOSED: without the seam a client-supplied
+   *  `session_start.lessonId > 1` is IGNORED for binding (a learner cannot skip L1 by
+   *  forging the frame; the real L1→L2 gate is F-15's statechart-driven advance). A
+   *  session that has *durably* advanced (F-15 wrote `lessonProgress`) keeps its
+   *  lesson regardless of the seam — the binding is `max(durable, seam-allowed
+   *  request)`, never a downgrade. */
+  allowLessonOverride?: boolean;
 }
 
 /**
@@ -899,8 +916,37 @@ export async function handleClientFrame(
     return;
   }
 
+  // F-13: bind the session to the lesson it STARTS on. `session_start` carries its
+  // own lessonId (e.g. the `?lesson=2` dev seam); persist it into the durable
+  // `sessions.lessonProgress` so EVERY subsequent turn reads L2 via `currentLessonId`
+  // — without this the second turn folds against L1 again (the pre-barrier bug the
+  // spec names). This is the READ-wiring only: F-15 owns the durable L1→L2 *advance*
+  // (the mid-session reflex). We never DOWNGRADE: if a session already advanced to a
+  // higher lesson (F-15), a re-announced `session_start` on a lower lesson (e.g. a
+  // reconnect) must not stomp the progress — bind to the max.
+  if (event.kind === 'session_start') {
+    const current = await currentLessonId(deps.db, event.sessionId);
+    // FAIL-CLOSED: a client-supplied lesson > 1 only binds when the dev seam allows
+    // it (a forged frame can't skip L1 in prod). A durably-advanced session (F-15)
+    // keeps its lesson via the max — never a downgrade on a reconnect.
+    const requested = opts.allowLessonOverride ? event.lessonId : Math.min(event.lessonId, 1);
+    const bound = Math.max(current, requested);
+    if (bound !== current) {
+      const progress: LessonProgress = { currentLessonId: bound };
+      await deps.db
+        .update(sessions)
+        .set({ lessonProgress: progress })
+        .where(eq(sessions.id, event.sessionId));
+    }
+  }
+
   // Assemble the turn input the agent reasons over: lesson content, the learner
   // snapshot, and recent history (ADR-003: fresh-per-turn, structured state only).
+  // ORDERING IS LOAD-BEARING: the `session_start` bind above must commit `bound`
+  // BEFORE this read — `lessonIdForEvent` reads the durable (clamped) binding for
+  // every kind incl. `session_start`, so the turn folds against the SAME clamped
+  // lesson as the durable write (a forged `session_start.lessonId > 1` with the
+  // seam off is L1 here too, not just in the row). Do not move this above the bind.
   const lesson = getLesson(await lessonIdForEvent(deps.db, event));
 
   // F-11/F-12 SERIAL JOIN (Option A — same-turn mastery celebration). The explain-back
@@ -1232,10 +1278,18 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
         : ebSeam === 'fail'
           ? { passed: false, reasons: ['judge_unavailable'] }
           : undefined;
+    // F-13 AC#8 dev seam: `?lesson=2` on the WS upgrade URL lets a `session_start`
+    // bind the session to L2 even though F-15's earned L1→L2 advance hasn't landed.
+    // Same explicit-opt-in gate as the other seams (default OFF, inert in prod): a
+    // forged `session_start.lessonId` can't skip L1 in production (it's clamped to 1
+    // in the frame handler for BOTH the durable write AND the turn-1 fold —
+    // `lessonIdForEvent` reads the clamped binding, never the raw frame). The web
+    // client sets it from its own `?lesson` param.
+    const allowLessonOverride = devSeams && reqUrl.searchParams.get('lesson') !== null;
     ws.on('message', (data) => {
       // The frame handler must never reject unhandled — an unawaited rejection
       // (e.g. a DB error on a bad sessionId) would crash the process.
-      handleClientFrame(deps, ws, data.toString(), { testForceMastered, testExplainBackVerdict }).catch((err) => {
+      handleClientFrame(deps, ws, data.toString(), { testForceMastered, testExplainBackVerdict, allowLessonOverride }).catch((err) => {
         console.error('error handling client frame', err);
         try {
           send(ws, { kind: 'error', message: 'internal error' });

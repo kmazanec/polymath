@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createActor } from 'xstate';
 import { PhaseName } from '@polymath/contract';
-import { lessonMachine, LESSON_PHASES, isHiddenRepMountRefused } from './lesson.js';
+import {
+  createLessonMachine,
+  lessonMachine,
+  LESSON_PHASES,
+  isHiddenRepMountRefused,
+} from './lesson.js';
 
 function start(masteryReady = false) {
   const actor = createActor(lessonMachine, {
@@ -94,6 +99,75 @@ describe('lesson_1 statechart', () => {
     actor.send({ type: 'mastery_ok' });
     expect(actor.getSnapshot().value).toBe('mastered');
     expect(actor.getSnapshot().status).toBe('done');
+  });
+});
+
+// F-13: the lesson spine is a FACTORY parameterised on lessonId. The default
+// `lessonMachine` is lesson 1; `createLessonMachine({lessonId})` instantiates the
+// SAME locked phase shape for any lesson (L2 is the first non-L1 instantiation).
+// The machine id keys on the lessonId (`lesson_${lessonId}`); guards key on
+// `context.lessonId` (a number), never the id string.
+describe('createLessonMachine (F-13 lesson factory — parameterised spine)', () => {
+  it('the default export is the lesson_1 machine (unchanged)', () => {
+    expect(lessonMachine.id).toBe('lesson_1');
+  });
+
+  it('builds a machine whose id reflects the lessonId', () => {
+    expect(createLessonMachine({ lessonId: 2 }).id).toBe('lesson_2');
+    expect(createLessonMachine({ lessonId: 3 }).id).toBe('lesson_3');
+  });
+
+  function startL2(masteryReady = false) {
+    const actor = createActor(createLessonMachine({ lessonId: 2 }), {
+      input: { lessonId: 2, masteryReady },
+    });
+    actor.start();
+    return actor;
+  }
+
+  it('L2 starts in introducing with lessonId 2 in context', () => {
+    const actor = startL2();
+    expect(actor.getSnapshot().value).toBe('introducing');
+    expect(actor.getSnapshot().context.lessonId).toBe(2);
+  });
+
+  it('L2 phase behavior is IDENTICAL to L1 (introducing → practicing → assessed)', () => {
+    const actor = startL2();
+    actor.send({ type: 'start_practice' });
+    expect(actor.getSnapshot().value).toBe('practicing');
+    actor.send({ type: 'submit' });
+    expect(actor.getSnapshot().value).toBe('assessed');
+  });
+
+  it('L2 REFUSES early transfer (canEnterTransfer keys on context, not the id string)', () => {
+    const actor = startL2();
+    actor.send({ type: 'start_practice' });
+    actor.send({ type: 'enter_transfer' }); // no set_transfer_ready → refused
+    expect(actor.getSnapshot().value).toBe('practicing');
+    actor.send({ type: 'set_transfer_ready', ready: true });
+    actor.send({ type: 'enter_transfer' });
+    expect(actor.getSnapshot().value).toBe('transferring');
+  });
+
+  it('L2 REFUSES mastery while the gate is unsatisfied, reaches mastered when satisfied', () => {
+    const refused = startL2(false);
+    refused.send({ type: 'start_practice' });
+    refused.send({ type: 'submit' });
+    refused.send({ type: 'mastery_ok' });
+    expect(refused.getSnapshot().value).toBe('assessed');
+
+    const ok = startL2(true);
+    ok.send({ type: 'start_practice' });
+    ok.send({ type: 'submit' });
+    ok.send({ type: 'mastery_ok' });
+    expect(ok.getSnapshot().value).toBe('mastered');
+    expect(ok.getSnapshot().status).toBe('done');
+  });
+
+  it('every instantiation has the SAME locked phase set as the contract enum', () => {
+    const l2 = createLessonMachine({ lessonId: 2 });
+    expect(Object.keys(l2.states).sort()).toEqual([...PhaseName.options].sort());
+    expect(l2.states.mastered.type).toBe('final');
   });
 });
 

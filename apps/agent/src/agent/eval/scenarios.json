@@ -47,6 +47,42 @@
       "event": { "kind": "request_hint", "itemId": "l1-and" },
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
       "expectMove": "propose_hint"
+    },
+    {
+      "id": "l2-session-start-kicks-off-composition",
+      "lessonId": 2,
+      "event": { "kind": "session_start", "lessonId": 2 },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+    },
+    {
+      "id": "l2-xor-misconception-wrong-submit-does-not-advance",
+      "lessonId": 2,
+      "event": { "kind": "submit", "itemId": "l2-xor-canonical", "submission": "A OR B", "correct": false },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["rephrase", "simpler_item", "worked_example"]
+    },
+    {
+      "id": "l2-composition-depth-hint",
+      "lessonId": 2,
+      "event": { "kind": "request_hint", "itemId": "l2-majority" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "propose_hint"
+    },
+    {
+      "id": "l2-majority-correct-submit-advances",
+      "lessonId": 2,
+      "event": { "kind": "submit", "itemId": "l2-majority", "submission": "(A AND B) OR (B AND C) OR (A AND C)", "correct": true },
+      "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+    },
+    {
+      "id": "l2-xor-question-is-on-topic",
+      "lessonId": 2,
+      "event": { "kind": "learner_question", "question": "is XOR a real gate or do I build it?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "on_topic"
     }
   ]
 }

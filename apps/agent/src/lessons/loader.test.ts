@@ -28,6 +28,41 @@ describe('loadLesson', () => {
     expect(() => loadLesson(99)).toThrow();
   });
 
+  // F-13: Lesson 2 (composition). Validator-passing content + config + KC vocab.
+  it('loads and validates lesson 2 against the contract + the validator (F-13)', () => {
+    // loadLesson cross-checks every item's hand-authored truthTable against
+    // @polymath/booleans and throws on any mismatch — reaching the assertions
+    // proves all L2 items agree with the validator.
+    expect(() => loadLesson(2)).not.toThrow();
+    const lesson = loadLesson(2);
+    expect(lesson.content.lessonId).toBe(2);
+    expect(lesson.content.title).toMatch(/Composition/i);
+    expect(lesson.content.knowledgeComponents.length).toBeGreaterThan(0);
+    // ~12 practice items across the difficulty tiers (the composition + XOR gym).
+    expect(lesson.content.items.length).toBeGreaterThanOrEqual(12);
+    // XOR-as-composition: at least one item carries the canonical XOR truth table
+    // [0,1,1,0], expressed as a pure AND/OR/NOT composition (never the string
+    // "A XOR B" — the parser knows only NOT/AND/OR; the criterion is the table).
+    expect(
+      lesson.content.items.some(
+        (i) => JSON.stringify(i.truthTable) === JSON.stringify([0, 1, 1, 0]),
+      ),
+    ).toBe(true);
+    // No item smuggles the bare XOR keyword into a parsed expression.
+    for (const i of lesson.content.items) {
+      expect(i.targetExpression).not.toMatch(/\bXOR\b/);
+    }
+    expect(lesson.masteryConfig.bktMasteryThreshold).toBe(0.95);
+  });
+
+  it('reads the L2 KC vocabulary list including the composition/XOR terms (F-13)', () => {
+    const lesson = loadLesson(2);
+    expect(Array.isArray(lesson.kcVocabulary)).toBe(true);
+    expect(lesson.kcVocabulary).toContain('composition');
+    expect(lesson.kcVocabulary).toContain('XOR');
+    expect(lesson.kcVocabulary).toContain('exclusive or');
+  });
+
   it('reads the L1 KC vocabulary list (the explain-back precondition #4 source)', () => {
     const lesson = loadLesson(1);
     expect(Array.isArray(lesson.kcVocabulary)).toBe(true);

@@ -1,0 +1,104 @@
+{
+  "lessonId": 2,
+  "title": "Lesson 2 — Composition",
+  "_authoring": "PLACEHOLDER content (F-13). Pedagogically coherent with the L2 transfer bank (seed_data/transfer_items.json) and the L2 KCs, with every truthTable computed via @polymath/booleans so loadLesson(2) cannot throw — but the final wording/sequencing of the 12 practice items across the 4 difficulty tiers is Keith's pedagogical authoring (~1.5 days, see the spec's Manual setup). XOR is the pedagogical LABEL only; the criterion is equivalent() on the composition (A AND NOT B) OR (NOT A AND B). Never write 'A XOR B' here — the parser only knows NOT/AND/OR.",
+  "knowledgeComponents": ["composition", "XOR"],
+  "items": [
+    {
+      "itemId": "l2-and-or-c",
+      "kc": "composition",
+      "difficultyTier": 1,
+      "targetExpression": "(A AND B) OR (NOT C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 0, 1, 0, 1, 0, 1, 1]
+    },
+    {
+      "itemId": "l2-or-and-c",
+      "kc": "composition",
+      "difficultyTier": 1,
+      "targetExpression": "(A OR B) AND C",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 0, 1, 0, 1, 0, 1]
+    },
+    {
+      "itemId": "l2-a-or-bc",
+      "kc": "composition",
+      "difficultyTier": 1,
+      "targetExpression": "A OR (B AND C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 0, 1, 1, 1, 1, 1]
+    },
+    {
+      "itemId": "l2-a-and-bc",
+      "kc": "composition",
+      "difficultyTier": 2,
+      "targetExpression": "A AND (B OR C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 0, 0, 0, 1, 1, 1]
+    },
+    {
+      "itemId": "l2-a-and-b-or-notc",
+      "kc": "composition",
+      "difficultyTier": 2,
+      "targetExpression": "A AND (B OR NOT C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 0, 0, 1, 0, 1, 1]
+    },
+    {
+      "itemId": "l2-nor",
+      "kc": "composition",
+      "difficultyTier": 2,
+      "targetExpression": "NOT (A OR B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 0]
+    },
+    {
+      "itemId": "l2-xor-canonical",
+      "kc": "XOR",
+      "difficultyTier": 3,
+      "targetExpression": "(A AND NOT B) OR (NOT A AND B)",
+      "variables": ["A", "B"],
+      "truthTable": [0, 1, 1, 0]
+    },
+    {
+      "itemId": "l2-xor-alt-form",
+      "kc": "XOR",
+      "difficultyTier": 3,
+      "targetExpression": "(A OR B) AND NOT (A AND B)",
+      "variables": ["A", "B"],
+      "truthTable": [0, 1, 1, 0]
+    },
+    {
+      "itemId": "l2-xor-reordered",
+      "kc": "XOR",
+      "difficultyTier": 3,
+      "targetExpression": "(NOT A AND B) OR (A AND NOT B)",
+      "variables": ["A", "B"],
+      "truthTable": [0, 1, 1, 0]
+    },
+    {
+      "itemId": "l2-xnor",
+      "kc": "XOR",
+      "difficultyTier": 3,
+      "targetExpression": "(A AND B) OR (NOT A AND NOT B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 1]
+    },
+    {
+      "itemId": "l2-majority",
+      "kc": "composition",
+      "difficultyTier": 4,
+      "targetExpression": "(A AND B) OR (B AND C) OR (A AND C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 0, 1, 0, 1, 1, 1]
+    },
+    {
+      "itemId": "l2-xor-three",
+      "kc": "XOR",
+      "difficultyTier": 4,
+      "targetExpression": "(A AND NOT B) OR (NOT A AND B) OR C",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 1, 1, 1, 1, 1, 0, 1]
+    }
+  ]
+}

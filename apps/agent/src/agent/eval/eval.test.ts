@@ -17,6 +17,10 @@ import { loadLesson } from '../../lessons/loader.js';
 
 interface Scenario {
   id: string;
+  /** F-13: which lesson this scenario's content is loaded from (default 1). L2
+   *  scenarios load `loadLesson(2)` so the agent reasons over the composition/XOR
+   *  content, not L1. */
+  lessonId?: number;
   event: Record<string, unknown>;
   learnerState: { consecutiveCorrect: number; hintsUsed: number; ruleGatePassed: boolean };
   transferCandidates?: AgentInput['transferCandidates'];
@@ -29,14 +33,24 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const scenarios: Scenario[] = JSON.parse(
   fs.readFileSync(path.join(dir, 'scenarios.json'), 'utf8'),
 ).scenarios;
-const lesson = loadLesson(1);
+// Lessons are loaded per scenario (F-13: L2 scenarios reason over L2 content). Cache
+// so each lesson is read + validated once.
+const lessonCache = new Map<number, ReturnType<typeof loadLesson>>();
+function lessonFor(id: number): ReturnType<typeof loadLesson> {
+  let l = lessonCache.get(id);
+  if (!l) {
+    l = loadLesson(id);
+    lessonCache.set(id, l);
+  }
+  return l;
+}
 const SID = '00000000-0000-0000-0000-000000000000';
 
 function inputFor(s: Scenario): AgentInput {
   const event = { sessionId: SID, ...s.event } as AgentInput['event'];
   return {
     event,
-    lesson,
+    lesson: lessonFor(s.lessonId ?? 1),
     learnerState: { bktByKc: {}, explainBackPassed: false, topicGuardrailClean: true, ...s.learnerState },
     recentHistory: [],
     transferCandidates: s.transferCandidates,

@@ -46,17 +46,22 @@ describe('validateLayer2', () => {
   });
 
   it('every fallback-bank item passes Layer 2 (the bank is the answer-key of last resort)', () => {
-    const bank = loadFallbackBank(1);
-    expect(bank.length).toBeGreaterThan(0);
-    for (const item of bank) {
-      const action = compileMove({
-        move: 'next_practice_item',
-        tier: item.tier,
-        rationale: 'fallback',
-        item: { rep: 'truth_table', targetExpression: item.targetExpression, claimedTruthTable: item.claimedTruthTable, visibleReps: ['truth_table'] },
-      });
-      const r = validateLayer2(action);
-      expect(r.ok, `fallback item ${item.itemId} (${item.targetExpression}) failed Layer 2`).toBe(true);
+    // F-13: both L1 and L2 banks must hold — every claimedTruthTable agrees with
+    // the validator (XOR ships as a composition, never the bare keyword).
+    for (const lessonId of [1, 2]) {
+      const bank = loadFallbackBank(lessonId);
+      expect(bank.length, `lesson ${lessonId} fallback bank is empty`).toBeGreaterThan(0);
+      for (const item of bank) {
+        expect(item.targetExpression).not.toMatch(/\bXOR\b/);
+        const action = compileMove({
+          move: 'next_practice_item',
+          tier: item.tier,
+          rationale: 'fallback',
+          item: { rep: 'truth_table', targetExpression: item.targetExpression, claimedTruthTable: item.claimedTruthTable, visibleReps: ['truth_table'] },
+        });
+        const r = validateLayer2(action);
+        expect(r.ok, `L${lessonId.toString()} fallback item ${item.itemId} (${item.targetExpression}) failed Layer 2`).toBe(true);
+      }
     }
   });
 });
