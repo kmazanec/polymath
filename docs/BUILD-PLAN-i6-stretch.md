@@ -1,6 +1,6 @@
 # BUILD-PLAN — I6 (Stretch: L3 NAND · L4 De Morgan's · Handoff-to-tutor · Teacher artifact · L5 Playground)
 
-**Iteration slug:** `i6-stretch` · **Status:** Awaiting human approval (decisions D-A / D-B locked 2026-05-29) · **Date:** 2026-05-29 · **Planner:** kmaz-plan-iteration
+**Iteration slug:** `i6-stretch` · **Status:** Approved (Keith, 2026-05-29; decisions D-A / D-B locked) — cleared for build launch concurrent with I5 · **Date:** 2026-05-29 · **Planner:** kmaz-plan-iteration
 (11 planning agents: F-22/F-23/F-25 one-opus-pass through architect/reuse/contrarian lenses; F-24/F-26 escalated to a 3-draft panel + synthesis. Every load-bearing claim verified against code under `apps/`, `packages/`, `lessons/`, `seed_data/`, `ops/` on 2026-05-29.)
 
 **Scope:** the final stretch iteration ([ROADMAP I6](./ROADMAP.md#i6--stretch-priority-ordered-may-be-cut)), priority-ordered per [ADR-012](./adrs/ADR-012-stretch-features-for-nerdy.md): **L3 → L4 → Handoff → Teacher → L5 Playground.** "Cut decisively before sacrificing MVP polish."

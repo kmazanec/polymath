@@ -1,6 +1,6 @@
 # BUILD-PLAN — I5 (MVP+ polish: SessionReport · privacy/a11y · observability · counter-metrics)
 
-**Iteration slug:** `i5-polish-observability-metrics` · **Status:** Approved (decisions locked 2026-05-29; awaiting human review before build launch) · **Date:** 2026-05-29 · **Planner:** kmaz-plan-iteration
+**Iteration slug:** `i5-polish-observability-metrics` · **Status:** Approved (Keith, 2026-05-29; decisions locked) — cleared for build launch concurrent with I6 · **Date:** 2026-05-29 · **Planner:** kmaz-plan-iteration
 (11 planning agents: F-18/F-19 one-opus-pass through architect/reuse/contrarian lenses; F-20/F-21 escalated to a 3-draft panel + synthesis; reconciled inline. Every load-bearing claim verified against code under `apps/`, `packages/`, `ops/`, `.gitlab-ci.yml`.)
 
 **Scope:** the four off-critical-path MVP+ features of I5 ([ROADMAP I5](./ROADMAP.md#i5--mvp-polish)). F-18/F-19/F-20 run concurrent after a shared barrier; **F-21 is the merge sink** (opens last). All depend on contracts locked in I0–I4, which are merged on `main`.
