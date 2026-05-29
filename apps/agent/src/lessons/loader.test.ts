@@ -31,10 +31,16 @@ describe('loadLesson', () => {
   it('reads the L1 KC vocabulary list (the explain-back precondition #4 source)', () => {
     const lesson = loadLesson(1);
     expect(Array.isArray(lesson.kcVocabulary)).toBe(true);
-    // The ADR-010 Layer 4 generic terms must be present.
-    expect(lesson.kcVocabulary).toContain('AND');
-    expect(lesson.kcVocabulary).toContain('gate');
-    expect(lesson.kcVocabulary).toContain('output');
+    // Thread 12: the L1 KC vocab is tightened toward lesson-specific compound terms
+    // (less likely in off-topic paste than bare `true/gate/input/output`), kept
+    // DISTINCT from precondition #5 (the item's bare vars + operators). The
+    // lesson-specific multi-word terms must be present.
+    expect(lesson.kcVocabulary).toContain('truth table');
+    expect(lesson.kcVocabulary).toContain('AND gate');
+    expect(lesson.kcVocabulary).toContain('boolean expression');
+    // The over-generic single words were removed (they matched off-topic English).
+    expect(lesson.kcVocabulary).not.toContain('true');
+    expect(lesson.kcVocabulary).not.toContain('output');
   });
 
   it('FAILS CLOSED (empty list, no throw) when kc_vocabulary.json is absent', () => {
