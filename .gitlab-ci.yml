@@ -184,6 +184,11 @@ deploy:
   needs:
     - verify
     - agent_test
+    # MR !8 review: deploy must wait for the live LangSmith/OpenAI trace verification
+    # too — without it in `needs`, the explicit DAG let deploy start (and ship) as soon
+    # as verify+agent_test finished, before this gate ran or while it was failing. It
+    # only runs on a main push (same rule as deploy), so it never blocks MR pipelines.
+    - langsmith_live_verify
   rules:
     - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
   variables:
