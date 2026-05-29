@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { equivalent, parse, variables } from '@polymath/booleans';
 import {
   ClientEvent,
@@ -41,6 +41,7 @@ import { handleExplainBack, type ExplainBackRouteDeps } from './explainback/rout
 import type { TransferBankItemRef } from './explainback/itemTokens.js';
 import type { ExplainBackJudge, ProsodyFeatures } from '@polymath/graph';
 import { makeExplainBackJudge } from '@polymath/graph';
+import { ExplainBackCaptureRegistry } from './voice/explainBackRegistry.js';
 
 export interface ServerDeps {
   db: Db;
@@ -57,11 +58,21 @@ export interface ServerDeps {
    *  session's explain-back utterance. Absent → the judge sees no prosody. */
   explainBackProsodyFor?: (sessionId: string, targetItemId: string) => ProsodyFeatures | undefined;
   /** F-11 transcript provider: the WebRTC bridge's server-side authoritative
-   *  transcript for a session's explain-back utterance. When present it OVERRIDES
-   *  the client-supplied `transcript` (the server must not trust the client for the
-   *  central integrity input). Absent (bridge capture deferred) → the client
-   *  transcript is used as a fallback, still gated by the preconditions + judge. */
+   *  transcript for a session's explain-back utterance. This is the ONLY integrity
+   *  source for the spoken content — the client-supplied `transcript` is NEVER used
+   *  (CLAUDE.md "server never trusts the client": a client could otherwise POST a
+   *  crafted transcript and pass the rubric without speaking). Absent (no capture for
+   *  this key) → the rubric runs on an EMPTY transcript and FAILS CLOSED at
+   *  precondition #3. Defaults to the injected `explainBackCaptureRegistry`'s getter
+   *  in `createServer`, so the production path has a real server-side transcript seam. */
   explainBackTranscriptFor?: (sessionId: string, targetItemId: string) => string | undefined;
+  /** F-11 server-side voice-capture registry (the bridge ↔ explain-back seam). When
+   *  the caller doesn't inject `explainBackTranscriptFor`/`explainBackProsodyFor`
+   *  directly, `createServer` sources both from this registry — the production wiring
+   *  that makes a real spoken explain-back yield a server-side transcript. Defaults to
+   *  a fresh registry; populating it from a live device session is the deferred
+   *  cross-platform smoke (see explainBackRegistry.ts). */
+  explainBackCaptureRegistry?: ExplainBackCaptureRegistry;
 }
 
 /** Cap inbound WS frames — protocol messages are small JSON. Prevents a single
@@ -79,6 +90,60 @@ const AGENT_TURN_TIMEOUT_MS = 15_000;
  *  hundred recent events far exceeds a real L1 session (~10–30 turns) while
  *  bounding the per-turn cost. */
 const MAX_SESSION_EVENTS = 500;
+
+/**
+ * Per-(session,item) serialization for explain-back handling (CLUSTER C — the
+ * attempt-cap race). The route reads `priorAttempts` from the event log and only
+ * persists the attempt row AFTER running the (paid) judge, so two concurrent
+ * `explain_back_recording_ended` frames for the same session+item could BOTH read
+ * `prior=0`, both pass the MAX_ATTEMPTS cap, and both invoke the judge — defeating
+ * the cap and amplifying OpenAI cost. We serialize per key with a promise chain:
+ * each frame awaits the prior frame for the same key before it reads the count, so
+ * the first frame's row is persisted (and thus visible to `scanSession`) before the
+ * next frame reads. Keys are pruned when their chain drains so the map can't grow
+ * unboundedly. Per-process is sufficient: a single agent process owns the WS
+ * connection for a session.
+ */
+const explainBackLocks = new Map<string, Promise<unknown>>();
+function withExplainBackLock<T>(sessionId: string, targetItemId: string, fn: () => Promise<T>): Promise<T> {
+  const key = `${sessionId} ${targetItemId}`;
+  const prior = explainBackLocks.get(key) ?? Promise.resolve();
+  // Chain after the prior holder (ignoring its result/rejection), then run fn.
+  const run = prior.then(fn, fn);
+  // Store the settled chain so the next caller waits for THIS one too. Prune the key
+  // once this is the tail (no later caller chained on), so the map stays bounded.
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  explainBackLocks.set(key, tail);
+  void tail.then(() => {
+    if (explainBackLocks.get(key) === tail) explainBackLocks.delete(key);
+  });
+  return run;
+}
+
+/**
+ * CLUSTER E — the topic-guardrail MUST be monotonic across the WHOLE session, not
+ * just the bounded `MAX_SESSION_EVENTS` fold window. The off-topic counter derived
+ * from the newest-N fold ages out: a learner who tripped the budget could push the
+ * off-topic rows out of the window with benign frames and drop back under budget
+ * (fail-OPEN). So count the off-topic `answer_question` actions with a SEPARATE,
+ * UNCAPPED aggregate query over the full session — the guardrail can never decrease.
+ * The `payload.action.{type,topicClassification}` slot is exactly what
+ * `toLoggedEvent` reads from the bounded fold; this just counts it across all rows.
+ */
+async function countOffTopicAnswers(db: Db, sessionId: string): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(events)
+    .where(
+      sql`${events.sessionId} = ${sessionId}
+        AND ${events.payload} -> 'action' ->> 'type' = 'answer_question'
+        AND ${events.payload} -> 'action' ->> 'topicClassification' = 'off_topic'`,
+    );
+  return rows[0]?.n ?? 0;
+}
 
 /** Lessons are immutable per process; load once and cache. */
 const lessonCache = new Map<number, Lesson>();
@@ -154,15 +219,19 @@ async function updateAndReadLearnerState(
   priorMissesByItem: Record<string, number>;
   currentSubmitCorrect: boolean | undefined;
 }> {
-  // Most-recent N events (bounded), then chronological for the fold.
-  const priorRows = (
-    await db
+  // Most-recent N events (bounded), then chronological for the fold. The off-topic
+  // guardrail is counted SEPARATELY and UNCAPPED (CLUSTER E) so it can't age out of
+  // this window; both are read in parallel.
+  const [priorRowsDesc, offTopicTotal] = await Promise.all([
+    db
       .select({ kind: events.kind, payload: events.payload })
       .from(events)
       .where(eq(events.sessionId, sessionId))
       .orderBy(desc(events.ts))
-      .limit(MAX_SESSION_EVENTS)
-  ).reverse();
+      .limit(MAX_SESSION_EVENTS),
+    countOffTopicAnswers(db, sessionId),
+  ]);
+  const priorRows = priorRowsDesc.reverse();
 
   const priorLogged: LoggedEvent[] = priorRows.map((r) => toLoggedEvent(r.kind, r.payload));
   // Prior-only fold gives the miss baseline BEFORE this turn (so the heuristic's
@@ -177,6 +246,10 @@ async function updateAndReadLearnerState(
     toLoggedEvent(current.kind, { event: current, transferVerdict, explainBackVerdict }),
   ];
   const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
+  // CLUSTER E: override the windowed off-topic count with the UNCAPPED session-wide
+  // total (monotonic — never less than what the bounded fold saw). This is the
+  // authoritative guardrail count; without it the budget could age out of the window.
+  derived.offTopicCount = Math.max(derived.offTopicCount, offTopicTotal);
   const learnerState_ = toLearnerState(derived, lesson.masteryConfig);
   const gate = evaluateRuleGate(learnerState_, lesson.masteryConfig);
 
@@ -445,6 +518,32 @@ function masteryCelebrationAction(masteryState: LearnerState, lesson: Lesson): A
   };
 }
 
+/** CLUSTER F — remediation when the explain-back PASSED but the full mastery gate is
+ *  still blocked (e.g. `topic_guardrail_exceeded`). A bare `no_action` leaves the
+ *  learner stuck: the transfer-pass reflex won't re-mount (explainBackPassed has
+ *  latched true), so there's no retry/remediation path. Instead mount an explicit
+ *  blocker UI keyed to the remaining blockers, using the EXISTING `HintCard`
+ *  ComponentSpec variant (no new contract variant) so the learner sees WHY mastery is
+ *  withheld and what to do. The body is keyed to the gate blockers. */
+function blockerRemediationAction(blockers: MasteryGateResult['blockers']): Action {
+  const messages: Record<string, string> = {
+    topic_guardrail_exceeded:
+      'Your explanation was solid! Mastery is held back only because we drifted off-topic too many times this session. Stay focused on the lesson and you can clear the gate.',
+    rule_gate_failed:
+      'Your explanation was solid! Keep practicing the items consistently (no hints, steady pace) to clear the remaining mastery requirements.',
+    transfer_not_passed:
+      'Your explanation was solid! You still need to pass a transfer probe on a fresh problem to demonstrate mastery.',
+    explain_back_not_passed:
+      'Your explanation was solid, but the mastery gate still needs a passing explain-back on this item.',
+  };
+  const body = blockers.map((b) => messages[b] ?? `Mastery blocked: ${b}.`).join(' ');
+  return {
+    type: 'mount',
+    component: { kind: 'HintCard', level: 1, body },
+    rationale: `explain-back passed but mastery gate blocked (${blockers.join(',')}); mounting blocker remediation (F-12)`,
+  };
+}
+
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
 async function proposeWithTimeout(agent: AgentClient, input: AgentInput): Promise<Action> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -615,10 +714,11 @@ async function handleRealtimeSession(
 /** Per-connection options resolved from the WS upgrade request (dev seams). */
 export interface FrameOptions {
   /** F-12 AC#3 dev seam (`?testForce=mastered`): inject a real `transition→mastered`
-   *  proposal so the earned-it gate's refusal is demoable. Dev-only — the connection
-   *  handler only sets it when `NODE_ENV!=='production'` (fail-closed on the seam
-   *  itself). It does NOT grant mastery: the gate still rejects it when the predicate
-   *  fails; it only forces the proposal so the rejection path runs. */
+   *  proposal so the earned-it gate's refusal is demoable. Gated — the connection
+   *  handler only sets it when `NODE_ENV!=='production'` AND `POLYMATH_ENABLE_TEST_SEAMS
+   *  ==='true'` (explicit opt-in, default OFF; fail-closed on the seam itself). It does
+   *  NOT grant mastery: the gate still rejects it when the predicate fails; it only
+   *  forces the proposal so the rejection path runs. */
   testForceMastered?: boolean;
   /** F-11/F-12 dev/test seam (`?testExplainBackVerdict=pass|fail`): synthesize the
    *  `explain_back_recording_ended` turn's `explainBackVerdict`. The integration tests
@@ -708,12 +808,16 @@ async function handleExplainBackTurn(
     // with server-sourced conceptsMastered (never an agent/client claim).
     action = masteryCelebrationAction(learnerDerived.masteryState, lesson);
     statechart = { statechartDecision: 'accept', statechartReason: 'mastery_gate_satisfied' };
+  } else if (outcome.passed) {
+    // CLUSTER F: explain-back PASSED but the full gate is still blocked (e.g.
+    // topic_guardrail_exceeded). Don't return a bare no_action — explainBackPassed has
+    // latched true, so the transfer-pass reflex won't re-mount and the learner has no
+    // path forward. Mount an explicit blocker-remediation (HintCard, an existing
+    // variant) keyed to the remaining blockers so the learner sees WHY + what to do.
+    action = blockerRemediationAction(gateEvaluation.blockers);
   } else {
-    // A pass that the gate still blocks → no_action (no celebration); a non-pass →
-    // F-11's retry mount / escalation. Either way the blocking gate is persisted below.
-    action = outcome.passed
-      ? noAction('wait_for_learner', `explain-back passed but mastery gate blocked: ${gateEvaluation.blockers.join(',')}`)
-      : outcome.failPathAction;
+    // A non-pass → F-11's retry mount / escalation. The blocking gate is persisted below.
+    action = outcome.failPathAction;
   }
 
   // Persist exactly one row for this turn (the route no longer writes its own). It
@@ -788,7 +892,11 @@ export async function handleClientFrame(
   // (on a pass-and-gate-clear) the `accept` statechart decision — so the replay shows
   // the gate flipping false→true on the explain-back turn.
   if (event.kind === 'explain_back_recording_ended') {
-    await handleExplainBackTurn(deps, ws, event, lesson, opts);
+    // CLUSTER C: serialize per session+item so concurrent frames can't all read the
+    // same pre-insert attempt count and each fire the paid judge past MAX_ATTEMPTS.
+    await withExplainBackLock(event.sessionId, event.targetItemId, () =>
+      handleExplainBackTurn(deps, ws, event, lesson, opts),
+    );
     return;
   }
   // The transfer verdict (server-computed) must be known before deriving learner
@@ -964,6 +1072,11 @@ export async function handleClientFrame(
 export interface PolymathServer {
   httpServer: http.Server;
   wss: WebSocketServer;
+  /** The server-side explain-back voice-capture registry backing the integrity seam.
+   *  Exposed so the (deferred) live LiveKit bridge can `register()` a phase-scoped
+   *  RealtimeSession per explain-back utterance — making a real spoken explain-back
+   *  produce the server-side transcript the route reads (never the client string). */
+  explainBackCaptureRegistry: ExplainBackCaptureRegistry;
   /** Drain WS connections, close the HTTP server, then resolve. Without
    *  terminating the WS clients first, `httpServer.close()` waits forever for
    *  open sockets and a SIGTERM hangs (the container never exits). */
@@ -981,9 +1094,31 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
   // shipping it as dead code (Stage 4b was previously unreachable: index.ts never
   // called makeExplainBackJudge and createServer never defaulted it).
   const defaultedJudge = rawDeps.explainBackJudge ?? makeExplainBackJudge();
+
+  // The server-side explain-back voice-capture registry IS the integrity seam: the
+  // route reads the spoken content from here (via explainBackTranscriptFor), never
+  // from the client-supplied event.transcript. Default a fresh registry and source
+  // BOTH the transcript and prosody getters from it unless the caller injected its
+  // own (tests inject either a registry or the getters directly). This wires the real
+  // production path: a captured explain-back utterance produces a server-side
+  // transcript; with nothing captured for a key, the getter returns undefined → the
+  // rubric runs on an empty transcript → fails CLOSED (no learner is silently trusted
+  // via the client string). Populating the registry from a live device session is the
+  // deferred cross-platform smoke (explainBackRegistry.ts) — the SEAM exists + is wired.
+  const captureRegistry = rawDeps.explainBackCaptureRegistry ?? new ExplainBackCaptureRegistry();
+  const transcriptFor =
+    rawDeps.explainBackTranscriptFor ??
+    ((sessionId: string, targetItemId: string) => captureRegistry.transcriptFor(sessionId, targetItemId));
+  const prosodyFor =
+    rawDeps.explainBackProsodyFor ??
+    ((sessionId: string, targetItemId: string) => captureRegistry.prosodyFor(sessionId, targetItemId));
+
   const deps: ServerDeps = {
     ...rawDeps,
     ...(defaultedJudge ? { explainBackJudge: defaultedJudge } : {}),
+    explainBackCaptureRegistry: captureRegistry,
+    explainBackTranscriptFor: transcriptFor,
+    explainBackProsodyFor: prosodyFor,
   };
 
   const httpServer = http.createServer((req, res) => {
@@ -1017,10 +1152,15 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     const replayMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/replay$/);
     if (req.method === 'GET' && replayMatch) {
       const sessionId = replayMatch[1]!;
+      // Chronological order is load-bearing for AC#5 (the replay must "show the gate
+      // failing then passing"): a default `select` returns rows in arbitrary order, so
+      // a consumer reading the latest turn's gate (`.at(-1)`) could pick the wrong turn.
+      // Order by the insert timestamp (turns are sequential WS round-trips).
       deps.db
         .select()
         .from(events)
         .where(eq(events.sessionId, sessionId))
+        .orderBy(events.ts)
         .then((rows) => sendJson(res, 200, { sessionId, events: rows }))
         .catch(() => sendJson(res, 500, { error: 'failed to load replay' }));
       return;
@@ -1048,7 +1188,14 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     // behind NODE_ENV!=='production' (fail-closed on the seam itself) — inert in prod,
     // and even in dev the earned-it gate still rejects it when the predicate fails.
     const reqUrl = new URL(req.url ?? '/agent', 'http://localhost');
-    const devSeams = process.env['NODE_ENV'] !== 'production';
+    // CLUSTER D thread 6: the synthetic test seams (`?testForce=mastered`,
+    // `?testExplainBackVerdict=…`) require an EXPLICIT opt-in env (default OFF) AND
+    // must stay off in production. `NODE_ENV!=='production'` alone is risky — staging /
+    // preview / an unset NODE_ENV would silently enable them. The integration test
+    // harness sets `POLYMATH_ENABLE_TEST_SEAMS=true`; a real deploy never does, so the
+    // seams are inert everywhere except an explicitly-opted-in non-prod environment.
+    const devSeams =
+      process.env['NODE_ENV'] !== 'production' && process.env['POLYMATH_ENABLE_TEST_SEAMS'] === 'true';
     const testForceMastered = devSeams && reqUrl.searchParams.get('testForce') === 'mastered';
     // F-12 dev seam: `?testExplainBackVerdict=pass|fail` synthesizes the explain-back
     // turn's verdict so the full mastery path is drivable before F-11's judge lands.
@@ -1082,7 +1229,7 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       wss.close(() => httpServer.close(() => resolve()));
     });
 
-  return { httpServer, wss, close };
+  return { httpServer, wss, explainBackCaptureRegistry: captureRegistry, close };
 }
 
 /** Session-id helper used by the REST layer's callers/tests. */

@@ -33,6 +33,11 @@ import { eq } from 'drizzle-orm';
  * environment has neither — a genuine capability gap, not a default.
  */
 
+// CLUSTER D thread 6: the synthetic test seams (`?testForce=mastered`,
+// `?testExplainBackVerdict=…`) are gated behind this explicit opt-in env (default OFF,
+// always off in production). The integration harness opts in; a real deploy never does.
+process.env['POLYMATH_ENABLE_TEST_SEAMS'] = 'true';
+
 let db: Db;
 let pool: { end: () => Promise<void> };
 let server: PolymathServer;
@@ -338,6 +343,17 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
     ]);
 
+    // CLUSTER A/D: the synthetic PASS seam now also requires a non-empty SERVER
+    // transcript that clears the preconditions (it can never fold with an empty
+    // transcript). Populate the server-side capture registry — the production
+    // integrity source — with a genuine item-specific transcript for the PROBED item
+    // (the one the ExplainBackPrompt was mounted for; its tokens drive precondition #5).
+    server.explainBackCaptureRegistry.setTranscript(
+      sessionId,
+      probedItemId,
+      'For this AND gate the output is true only when both A and B are true across every row of the truth table.',
+    );
+
     // Now drive the explain-back turn over a socket carrying the dev verdict seam.
     // The server folds the synthetic PASS verdict, the FULL gate clears, the agent
     // organically proposes mastery, and the earned-it gate accepts → the server
@@ -349,7 +365,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
           JSON.stringify({
             kind: 'explain_back_recording_ended',
             sessionId,
-            targetItemId: 'l1-and',
+            targetItemId: probedItemId,
             transcript: 'An AND gate outputs true only when both inputs are true.',
             durationMs: 20000,
           }),
@@ -507,6 +523,14 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       { kind: 'learner_question', sessionId, question: 'tell me a joke about cats' },
       { kind: 'learner_question', sessionId, question: 'who won the game last night?' },
     ]);
+    // The explain-back transcript clears the preconditions (server-side integrity
+    // source) so the synthetic PASS is honored — but the guardrail is dirty, so
+    // mastery is still blocked (the point of this test).
+    server.explainBackCaptureRegistry.setTranscript(
+      sessionId,
+      probedItemId,
+      'For this AND gate the output is true only when both A and B are true across every row of the truth table.',
+    );
     // Now the explain-back passes — but the guardrail is dirty, so mastery is blocked.
     const wsEb = new WebSocket(`${wsUrl}?testExplainBackVerdict=pass`);
     const after = await new Promise<Action>((resolve, reject) => {
@@ -515,7 +539,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
           JSON.stringify({
             kind: 'explain_back_recording_ended',
             sessionId,
-            targetItemId: 'l1-and',
+            targetItemId: probedItemId,
             transcript: 'An AND gate outputs true only when both inputs are true.',
             durationMs: 20000,
           }),
@@ -531,6 +555,15 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     wsEb.close();
     // The agent does NOT propose mastery (it waits) — no MasteryCelebration mounts.
     expect(after.type === 'mount' && after.component.kind === 'MasteryCelebration').toBe(false);
+    // CLUSTER F: a passing explain-back blocked by the guardrail mounts an explicit
+    // blocker-remediation (HintCard) — NOT a bare no_action — so the learner has a path.
+    expect(after.type).toBe('mount');
+    if (after.type === 'mount') {
+      expect(after.component.kind).toBe('HintCard');
+      if (after.component.kind === 'HintCard') {
+        expect(after.component.body.toLowerCase()).toContain('off-topic');
+      }
+    }
 
     await new Promise((r) => setTimeout(r, 300));
     const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
@@ -541,6 +574,62 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       .filter((g): g is { passed: boolean; blockers: string[] } => g !== undefined)
       .at(-1);
     expect(lastGate?.passed).toBe(false);
+    expect(lastGate?.blockers).toContain('topic_guardrail_exceeded');
+  });
+
+  /**
+   * CLUSTER E — the topic-guardrail must NOT age out of the bounded fold window. A
+   * learner who tripped the off-topic budget (>3 off-topic answers) and then pushes
+   * those rows past the newest-500 fold window with benign frames must STILL be
+   * blocked: the guardrail is counted with a separate, uncapped session-wide query.
+   *
+   * We insert the history directly (driving 500+ real WS turns would be slow): 4
+   * off-topic `answer_question` rows, then >500 benign rows so the off-topic rows fall
+   * outside the MAX_SESSION_EVENTS fold window, then a passing explain-back turn —
+   * asserting mastery is still blocked with `topic_guardrail_exceeded`.
+   */
+  it('the off-topic guardrail does not age out past the fold window (>500 events)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // 4 off-topic answers (budget is 3 → exceeded), inserted oldest-first.
+    const offTopicRows = Array.from({ length: 4 }, () => ({
+      sessionId,
+      kind: 'learner_question',
+      payload: {
+        event: { kind: 'learner_question', sessionId, question: 'off-topic' },
+        action: { type: 'answer_question', topicClassification: 'off_topic', rationale: 'deflect' },
+      },
+    }));
+    await db.insert(events).values(offTopicRows);
+    // 600 benign rows so the off-topic rows are pushed outside the newest-500 window.
+    const benign = Array.from({ length: 600 }, (_, i) => ({
+      sessionId,
+      kind: 'learner_question',
+      payload: {
+        event: { kind: 'learner_question', sessionId, question: `benign ${i.toString()}` },
+        action: { type: 'answer_question', topicClassification: 'on_topic', rationale: 'answer' },
+      },
+    }));
+    // Insert in chunks to keep statements reasonable.
+    for (let i = 0; i < benign.length; i += 100) {
+      await db.insert(events).values(benign.slice(i, i + 100));
+    }
+
+    // A submit turn now reads the learner state: the windowed fold sees ZERO off-topic
+    // rows (they aged out), but the uncapped count sees 4 → guardrail dirty.
+    const [action] = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+    ]);
+    expect(action!.type).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { gateEvaluation?: { passed: boolean; blockers: string[] } } }[];
+    };
+    const lastGate = replay.events
+      .map((e) => e.payload.gateEvaluation)
+      .filter((g): g is { passed: boolean; blockers: string[] } => g !== undefined)
+      .at(-1);
     expect(lastGate?.blockers).toContain('topic_guardrail_exceeded');
   });
 
@@ -1082,5 +1171,129 @@ describe.skipIf(!canRunPg)('F-11 explain-back PASS path through the real fold', 
     const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
     expect(derived.explainBackPassed).toBe(true);
     expect(toLearnerState(derived, lesson.masteryConfig).explainBackPassed).toBe(true);
+  });
+});
+
+/**
+ * CLUSTER C — the concurrency attempt-cap race. Several `explain_back_recording_ended`
+ * frames for the SAME session+item, fired concurrently, must not each read the same
+ * pre-insert `priorAttempts` and all invoke the paid judge past MAX_ATTEMPTS (=2). The
+ * server serializes per session+item; with N concurrent frames whose preconditions all
+ * pass (a server transcript clears them), the judge must run AT MOST MAX_ATTEMPTS times.
+ */
+describe.skipIf(!canRunPg)('CLUSTER C — explain-back attempt-cap under concurrency', () => {
+  let cdb: Db;
+  let cpool: { end: () => Promise<void> };
+  let cserver: PolymathServer;
+  let cBaseUrl: string;
+  let cWsUrl: string;
+  let judgeCalls = 0;
+
+  const countingJudge: ExplainBackJudge = {
+    judge: () => {
+      judgeCalls++;
+      return Promise.resolve({ passed: false, subScores: { overall: false } });
+    },
+  };
+  const passingTranscript =
+    'For this AND gate the output is true only when both A and B are true across every row of the truth table here.';
+
+  beforeAll(async () => {
+    const POSTGRES_URL = await ensureTestPg();
+    await runMigrations(POSTGRES_URL);
+    ({ db: cdb, pool: cpool } = createDb(POSTGRES_URL));
+    cserver = createServer({
+      db: cdb,
+      agent: new StubAgentClient(),
+      explainBackJudge: countingJudge,
+      explainBackTranscriptFor: () => passingTranscript,
+    });
+    await new Promise<void>((resolve) => cserver.httpServer.listen(0, resolve));
+    const { port } = cserver.httpServer.address() as AddressInfo;
+    cBaseUrl = `http://localhost:${port}`;
+    cWsUrl = `ws://localhost:${port}/agent`;
+  }, 60000);
+
+  afterAll(async () => {
+    await cserver.close();
+    await cpool.end().catch(() => {});
+  });
+
+  async function drive(sessionId: string, frames: Record<string, unknown>[]): Promise<Action[]> {
+    const ws = new WebSocket(cWsUrl);
+    const actions: Action[] = [];
+    await new Promise<void>((resolve, reject) => {
+      let sent = 0;
+      ws.on('open', () => ws.send(JSON.stringify(frames[sent++])));
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          actions.push(Action.parse(msg.action));
+          if (sent < frames.length) ws.send(JSON.stringify(frames[sent++]));
+          else resolve();
+        }
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('sequence timed out')), 8000);
+    });
+    ws.close();
+    return actions;
+  }
+
+  it('fires concurrent frames for the same item: judge runs at most MAX_ATTEMPTS times', async () => {
+    const { sessionId } = (await (await fetch(`${cBaseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // Get to a transfer-pass so an ExplainBackPrompt is mounted.
+    const actions = await drive(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+    ]);
+    const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+    await drive(sessionId, [{ kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr }]);
+
+    judgeCalls = 0;
+
+    // Fire 5 explain-back frames CONCURRENTLY over separate sockets, each on its own
+    // connection so the server handles them in parallel. The preconditions all pass
+    // (server transcript clears them), so without serialization each would invoke the
+    // judge. With the per-(session,item) lock, the judge runs at most MAX_ATTEMPTS (2).
+    const frame = {
+      kind: 'explain_back_recording_ended',
+      sessionId,
+      targetItemId: probedItemId,
+      transcript: '',
+      durationMs: 9000,
+    };
+    const fireOnce = (): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(cWsUrl);
+        ws.on('open', () => ws.send(JSON.stringify(frame)));
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            ws.close();
+            resolve();
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('concurrent frame timed out')), 8000);
+      });
+    await Promise.all([fireOnce(), fireOnce(), fireOnce(), fireOnce(), fireOnce()]);
+
+    await new Promise((r) => setTimeout(r, 300));
+    // The paid judge must not have run more than MAX_ATTEMPTS times despite 5 frames.
+    expect(judgeCalls).toBeLessThanOrEqual(2);
+    // And exactly one row carries the attempt-cap short-circuit verdict (no judge).
+    const replay = (await (await fetch(`${cBaseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { kind: string; payload: { explainBackVerdict?: { reasons: string[] } } }[];
+    };
+    const ebRows = replay.events.filter((e) => e.kind === 'explain_back_recording_ended');
+    expect(ebRows.length).toBe(5);
+    const capped = ebRows.filter((r) => r.payload.explainBackVerdict?.reasons.includes('attempt_cap_reached'));
+    expect(capped.length).toBeGreaterThanOrEqual(3); // frames 3,4,5 short-circuit
   });
 });
