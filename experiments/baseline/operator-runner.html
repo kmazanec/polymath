@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Polymath baseline experiment — operator runner</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 56rem; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.3rem; }
+      fieldset { border: 1px solid currentColor; border-radius: 6px; margin: 1rem 0; padding: 0.75rem 1rem; }
+      legend { font-weight: bold; padding: 0 0.4rem; }
+      label { display: inline-block; min-width: 9rem; }
+      input, select, textarea, button { font: inherit; padding: 0.3rem 0.5rem; margin: 0.2rem 0; }
+      input[type="text"] { width: 24rem; max-width: 100%; }
+      button { cursor: pointer; }
+      .items { margin: 0.5rem 0; }
+      .items .item { margin: 0.3rem 0; }
+      .items .item input { width: 18rem; }
+      pre { background: rgba(127,127,127,0.15); padding: 0.6rem; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; }
+      .muted { opacity: 0.7; }
+    </style>
+  </head>
+  <body>
+    <h1>Polymath baseline experiment — operator runner</h1>
+    <p class="muted">
+      Self-contained vanilla-JS console for the <code>/api/experiment/*</code>
+      endpoints. The experiment source of truth is Postgres; the CSV is a streaming
+      download. Follow <code>protocol-checklist.md</code> step by step.
+    </p>
+
+    <fieldset>
+      <legend>Connection</legend>
+      <label for="api">API base</label>
+      <input id="api" type="text" value="http://localhost:8080" />
+      <p class="muted">e.g. <code>https://polymath.biograph.dev</code> in production.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>1. Subject</legend>
+      <button id="create">Create subject</button>
+      <div>
+        <label>Subject ID</label><input id="subjectId" type="text" placeholder="(created)" />
+      </div>
+      <div>
+        <label>Condition order</label><span id="conditionOrder" class="muted">—</span>
+      </div>
+      <div>
+        <label>Follow-up token</label><input id="followupToken" type="text" placeholder="(created)" />
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>2. Link a session</legend>
+      <label>Session ID</label><input id="linkSessionId" type="text" />
+      <label>Arm</label>
+      <select id="linkArm"><option value="polymath">polymath</option><option value="baseline">baseline</option></select>
+      <button id="link">Link session</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>3. Pre-test</legend>
+      <button id="startPre">Start pre-test</button>
+      <div id="preItems" class="items"></div>
+      <button id="submitPre">Submit pre-test</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>4. Post-test</legend>
+      <label>Condition</label>
+      <select id="postCondition"><option value="polymath">polymath</option><option value="baseline">baseline</option></select>
+      <button id="startPost">Start post-test</button>
+      <div id="postItems" class="items"></div>
+      <button id="submitPost">Submit post-test</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>5. Follow-up (run by the subject 24h later)</legend>
+      <p>Give the subject this URL:</p>
+      <pre id="followupUrl">—</pre>
+      <button id="startFollow">Preview follow-up items (operator)</button>
+      <div id="followItems" class="items"></div>
+      <button id="submitFollow">Submit follow-up</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>6. Notes &amp; export</legend>
+      <div><label>Qualitative notes</label><textarea id="notes" rows="3" cols="50"></textarea></div>
+      <button id="saveNotes">Save notes</button>
+      <button id="download">Download CSV</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Log</legend>
+      <pre id="log"></pre>
+    </fieldset>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const api = () => $('api').value.replace(/\/$/, '');
+      const subj = () => $('subjectId').value.trim();
+      const token = () => $('followupToken').value.trim();
+      const log = (label, data) => {
+        $('log').textContent = label + '\n' + JSON.stringify(data, null, 2) + '\n\n' + $('log').textContent;
+      };
+
+      async function call(method, path, body) {
+        const res = await fetch(api() + path, {
+          method,
+          headers: body ? { 'content-type': 'application/json' } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const text = await res.text();
+        let json;
+        try { json = JSON.parse(text); } catch { json = text; }
+        log(method + ' ' + path + ' → ' + res.status, json);
+        return { status: res.status, json };
+      }
+
+      function renderItems(container, items) {
+        container.innerHTML = '';
+        for (const it of items) {
+          const row = document.createElement('div');
+          row.className = 'item';
+          const rep = it.targetRep ? ` [present as: ${it.targetRep}]` : '';
+          row.innerHTML = `<label>${it.itemId}${rep}</label><input type="text" data-item="${it.itemId}" data-rep="${it.targetRep || ''}" placeholder="subject's answer" />`;
+          container.appendChild(row);
+        }
+      }
+      function collectResponses(container) {
+        return [...container.querySelectorAll('input[data-item]')].map((i) => ({
+          itemId: i.dataset.item,
+          submission: i.value,
+          targetRepOverride: i.dataset.rep || undefined,
+        }));
+      }
+
+      $('create').onclick = async () => {
+        const { json } = await call('POST', '/api/experiment/subjects');
+        if (json && json.subjectId) {
+          $('subjectId').value = json.subjectId;
+          $('conditionOrder').textContent = json.conditionOrder;
+          $('followupToken').value = json.followupToken;
+          $('followupUrl').textContent = api() + '/api/experiment/followup/' + json.followupToken;
+        }
+      };
+      $('link').onclick = () =>
+        call('POST', `/api/experiment/subjects/${subj()}/session`, {
+          sessionId: $('linkSessionId').value.trim(),
+          arm: $('linkArm').value,
+        });
+      $('startPre').onclick = async () => {
+        const { json } = await call('POST', `/api/experiment/subjects/${subj()}/pretest/start`);
+        if (json && json.items) renderItems($('preItems'), json.items);
+      };
+      $('submitPre').onclick = () =>
+        call('POST', `/api/experiment/subjects/${subj()}/pretest/submit`, {
+          responses: collectResponses($('preItems')).map(({ itemId, submission }) => ({ itemId, submission })),
+        });
+      $('startPost').onclick = async () => {
+        const { json } = await call('POST', `/api/experiment/subjects/${subj()}/posttest/start`);
+        if (json && json.items) renderItems($('postItems'), json.items);
+      };
+      $('submitPost').onclick = () =>
+        call('POST', `/api/experiment/subjects/${subj()}/posttest/submit`, {
+          condition: $('postCondition').value,
+          responses: collectResponses($('postItems')).map(({ itemId, submission }) => ({ itemId, submission })),
+        });
+      $('startFollow').onclick = async () => {
+        const { json } = await call('GET', `/api/experiment/followup/${token()}`);
+        if (json && json.items) renderItems($('followItems'), json.items);
+      };
+      $('submitFollow').onclick = () =>
+        call('POST', `/api/experiment/followup/${token()}`, { responses: collectResponses($('followItems')) });
+      $('saveNotes').onclick = () =>
+        call('POST', `/api/experiment/subjects/${subj()}/notes`, { notes: $('notes').value });
+      $('download').onclick = () => {
+        window.open(api() + `/api/experiment/subjects/${subj()}/export.csv`, '_blank');
+      };
+    </script>
+  </body>
+</html>

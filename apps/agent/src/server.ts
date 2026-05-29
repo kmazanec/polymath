@@ -40,6 +40,20 @@ import { loadLesson, loadLessonIfExists, type Lesson } from './lessons/loader.js
 import { mintRealtimeToken } from './voice/token.js';
 import { createRateLimiter } from './voice/rateLimiter.js';
 import { handleExplainBack, type ExplainBackRouteDeps } from './explainback/route.js';
+import {
+  createSubject,
+  startPretest,
+  submitPretest,
+  startPosttest,
+  submitPosttest,
+  startFollowup,
+  submitFollowup,
+  linkSession,
+  setNotes,
+  exportSubjectCsv,
+  bodyErrorStatus,
+  EXPERIMENT_UUID_RE,
+} from './experiment/routes.js';
 import type { TransferBankItemRef } from './explainback/itemTokens.js';
 import type { ExplainBackJudge, ProsodyFeatures } from '@polymath/graph';
 import { makeExplainBackJudge } from '@polymath/graph';
@@ -805,6 +819,133 @@ async function handleRealtimeSession(
   });
 }
 
+/** Read + parse a JSON body for an experiment POST, mapping the body-read failure
+ *  reasons to their 4xx (shared with the realtime route's semantics). Returns the
+ *  parsed body, or sends the error response and returns the sentinel `undefined`. */
+async function readExperimentBody(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<unknown | undefined> {
+  try {
+    return (await readJsonBody(req)) ?? {};
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'invalid request body';
+    sendJson(res, bodyErrorStatus(reason), { error: reason });
+    return undefined;
+  }
+}
+
+/**
+ * F-17 experiment route dispatcher. Mirrors `handleRealtimeSession`'s
+ * read-body/validate/respond shape; each branch maps a method+pathname to a
+ * handler in `experiment/routes.ts`, building the CSV/JSON from Postgres (the
+ * source of truth — nothing on disk). Unmatched experiment paths fall through to
+ * a 404.
+ */
+async function handleExperimentRoute(
+  deps: ServerDeps,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+): Promise<void> {
+  const { pathname } = url;
+  const method = req.method ?? 'GET';
+  const routeDeps = { db: deps.db };
+
+  // POST /api/experiment/subjects — create a subject (counterbalanced + token).
+  if (method === 'POST' && pathname === '/api/experiment/subjects') {
+    const r = await createSubject(routeDeps);
+    sendJson(res, r.status, r.body);
+    return;
+  }
+
+  // /api/experiment/subjects/:id/...
+  const subjMatch = pathname.match(/^\/api\/experiment\/subjects\/([^/]+)(\/.*)?$/);
+  if (subjMatch) {
+    const subjectId = subjMatch[1]!;
+    const sub = subjMatch[2] ?? '';
+    if (!EXPERIMENT_UUID_RE.test(subjectId)) {
+      sendJson(res, 400, { error: 'subjectId must be a UUID' });
+      return;
+    }
+    if (method === 'POST' && sub === '/pretest/start') {
+      const r = await startPretest(routeDeps, subjectId);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+    if (method === 'POST' && sub === '/pretest/submit') {
+      const body = await readExperimentBody(req, res);
+      if (body === undefined) return;
+      const r = await submitPretest(routeDeps, subjectId, body);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+    if (method === 'POST' && sub === '/posttest/start') {
+      const r = await startPosttest(routeDeps, subjectId);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+    if (method === 'POST' && sub === '/posttest/submit') {
+      const body = await readExperimentBody(req, res);
+      if (body === undefined) return;
+      const r = await submitPosttest(routeDeps, subjectId, body);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+    if (method === 'POST' && sub === '/session') {
+      const body = await readExperimentBody(req, res);
+      if (body === undefined) return;
+      const r = await linkSession(routeDeps, subjectId, body);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+    if (method === 'POST' && sub === '/notes') {
+      const body = await readExperimentBody(req, res);
+      if (body === undefined) return;
+      const r = await setNotes(routeDeps, subjectId, body);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+    if (method === 'GET' && sub === '/export.csv') {
+      const r = await exportSubjectCsv(routeDeps, subjectId);
+      if (r.status !== 200) {
+        sendJson(res, r.status, { error: 'unknown subject' });
+        return;
+      }
+      const payload = r.csv;
+      res.writeHead(200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${subjectId}.csv"`,
+        'content-length': Buffer.byteLength(payload),
+      });
+      res.end(payload);
+      return;
+    }
+    sendJson(res, 404, { error: 'not found' });
+    return;
+  }
+
+  // /api/experiment/followup/:token — token is the random secret, NOT the subj id.
+  const followMatch = pathname.match(/^\/api\/experiment\/followup\/([^/]+)$/);
+  if (followMatch) {
+    const token = followMatch[1]!;
+    if (method === 'GET') {
+      const r = await startFollowup(routeDeps, token);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+    if (method === 'POST') {
+      const body = await readExperimentBody(req, res);
+      if (body === undefined) return;
+      const r = await submitFollowup(routeDeps, token, body);
+      sendJson(res, r.status, r.body);
+      return;
+    }
+  }
+
+  sendJson(res, 404, { error: 'not found' });
+}
+
 /** Per-connection options resolved from the WS upgrade request (dev seams). */
 export interface FrameOptions {
   /** F-12 AC#3 dev seam (`?testForce=mastered`): inject a real `transition→mastered`
@@ -1491,15 +1632,38 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/session') {
-      deps.db
-        .insert(sessions)
-        .values({})
-        .returning({ id: sessions.id, startedAt: sessions.startedAt })
+      // Optional F-16/F-17 linkage: a session can be created THROUGH a subject
+      // (so the CSV joins automatically) and/or tagged with its `app` arm. Both
+      // are additive + nullable — an unadorned `POST /api/session` (the default
+      // polymath path) is unchanged. A non-UUID subjectId / unknown app is
+      // ignored rather than failing the create (session creation must stay robust).
+      void readJsonBody(req)
+        .catch(() => null)
+        .then((body) => {
+          const b = (body ?? {}) as { subjectId?: unknown; app?: unknown };
+          const subjectId =
+            typeof b.subjectId === 'string' && UUID_RE.test(b.subjectId) ? b.subjectId : undefined;
+          const app = b.app === 'baseline' ? 'baseline' : undefined;
+          return deps.db
+            .insert(sessions)
+            .values({
+              ...(subjectId ? { subjectId } : {}),
+              ...(app ? { app } : {}),
+            })
+            .returning({ id: sessions.id, startedAt: sessions.startedAt });
+        })
         .then((rows) => {
-          const row = rows[0]!;
+          const row = rows![0]!;
           sendJson(res, 201, { sessionId: row.id, startedAt: row.startedAt });
         })
         .catch(() => sendJson(res, 500, { error: 'failed to create session' }));
+      return;
+    }
+
+    if (url.pathname.startsWith('/api/experiment/')) {
+      handleExperimentRoute(deps, req, res, url).catch(() =>
+        sendJson(res, 500, { error: 'experiment route failed' }),
+      );
       return;
     }
 

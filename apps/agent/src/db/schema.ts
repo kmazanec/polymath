@@ -84,3 +84,96 @@ export const validatedDistractors = pgTable('validated_distractors', {
   truthTable: jsonb('truth_table').notNull(),
   isNearMiss: boolean('is_near_miss').notNull(),
 });
+
+/**
+ * F-17 experiment scaffolding (ADR-011 within-subject counterbalanced study).
+ *
+ * Source of truth for the experiment is Postgres (the CSV export streams from
+ * these tables — nothing persists to disk under the release-symlink deploy). The
+ * four tables below + `subject_item_usage` are ADDITIVE (migration 0002, applied
+ * on agent boot). The CSV column shape is FROZEN (F-21 reads it).
+ */
+
+/** One row per recruited subject. The condition order is computed from the
+ *  subject's *ordinal* (count+1) at creation — odd→Polymath-first, even→
+ *  baseline-first (T-17f). The follow-up URL token is a SEPARATE random column,
+ *  never the subject id (a sequential/guessable id would be enumerable). */
+export const experimentSubjects = pgTable('experiment_subjects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** 'polymath_first' | 'baseline_first' — stored explicitly (UUIDs have no
+   *  odd/even; computed from the creation ordinal). */
+  conditionOrder: text('condition_order').notNull(),
+  /** AC#5: the qualitative reflection captured at session-end. */
+  qualitativeNotes: text('qualitative_notes'),
+  /** The Polymath-arm session (soft FK → sessions.id; linked via
+   *  POST …/subjects/:id/session so the CSV joins automatically). */
+  polymathSessionId: uuid('polymath_session_id').references(() => sessions.id),
+  /** The baseline-arm (F-16) session. */
+  baselineSessionId: uuid('baseline_session_id').references(() => sessions.id),
+  /** AC#4: a random, unguessable token for the 24h follow-up URL (NOT the id). */
+  followupToken: text('followup_token').notNull().unique(),
+  /** AC#4: follow-up expiry — set to now+48h after the 2nd post-test. NULL until
+   *  both post-tests are done (follow-up fails closed while NULL). */
+  followupExpiresAt: timestamp('followup_expires_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Schema-level half of AC#6: every item a subject is exposed to (pre/post/
+ *  followup) is recorded here with a composite PK `(subject_id, item_id)`. The
+ *  unique constraint BACKSTOPS the application-level exclusion filter — even a
+ *  buggy/racing selector cannot serve the same item twice to a subject. */
+export const subjectItemUsage = pgTable(
+  'subject_item_usage',
+  {
+    subjectId: uuid('subject_id')
+      .notNull()
+      .references(() => experimentSubjects.id),
+    itemId: text('item_id').notNull(),
+    /** Where the item was used: 'pretest' | 'posttest' | 'followup'. */
+    phase: text('phase').notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.subjectId, table.itemId] })],
+);
+
+/** AC#2: 4 pre-test responses per subject, scored against the bank canonical. */
+export const preTestResults = pgTable('pre_test_results', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subjectId: uuid('subject_id')
+    .notNull()
+    .references(() => experimentSubjects.id),
+  itemId: text('item_id').notNull(),
+  submission: text('submission').notNull(),
+  correct: boolean('correct').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** AC#3: post-test responses. `condition` records which arm's post-test this is
+ *  ('polymath' | 'baseline') — design (ii) shares ONE held-out 4-item bank across
+ *  both arms, so the same item ids appear under each condition. */
+export const postTestResults = pgTable('post_test_results', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subjectId: uuid('subject_id')
+    .notNull()
+    .references(() => experimentSubjects.id),
+  condition: text('condition').notNull(),
+  itemId: text('item_id').notNull(),
+  submission: text('submission').notNull(),
+  correct: boolean('correct').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** AC#4: 24h follow-up responses. Design (ii): the followup reuses pre/post items
+ *  in a DIFFERENT surface form, recorded as `target_rep_override` (the only proxy
+ *  for "different surface form" — the bank has no separate field). */
+export const followupResults = pgTable('followup_results', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subjectId: uuid('subject_id')
+    .notNull()
+    .references(() => experimentSubjects.id),
+  itemId: text('item_id').notNull(),
+  targetRepOverride: text('target_rep_override').notNull(),
+  submission: text('submission').notNull(),
+  correct: boolean('correct').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

@@ -24,3 +24,7 @@ pgdata/
 # playwright artifacts
 apps/web/test-results/
 apps/web/playwright-report/
+
+# F-17 experiment research data (per-subject CSV downloads — privacy). Keep the
+# directory (.gitkeep) but never commit subject data.
+experiments/baseline/results/*.csv
