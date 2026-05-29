@@ -3,6 +3,7 @@ import { runMigrations } from './db/migrate.js';
 import { StubAgentClient } from './agent/stubClient.js';
 import { createServer } from './server.js';
 import { startSessionDeletionSweep } from './privacy/sessionDeletion.js';
+import { registerOtel } from './voice/otelSdk.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const POSTGRES_URL =
@@ -19,6 +20,13 @@ const allowedOrigins = (process.env.ALLOWED_WS_ORIGINS ?? 'http://localhost:5173
   .filter((o) => o.length > 0);
 
 async function main(): Promise<void> {
+  // Register the OTLP trace exporter BEFORE anything emits a span, so the API-only
+  // `recordVoiceTurnSpan` calls (voice/otel.ts) actually leave the process. Env-gated
+  // and fail-closed: with no `OTEL_EXPORTER_OTLP_ENDPOINT` this is a clean no-op (the
+  // API stays a no-op), and a bad endpoint can never throw into boot — telemetry is
+  // best-effort, never on the critical path.
+  registerOtel();
+
   await runMigrations(POSTGRES_URL);
 
   const { db, pool } = createDb(POSTGRES_URL);
