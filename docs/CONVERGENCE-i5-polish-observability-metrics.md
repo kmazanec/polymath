@@ -19,7 +19,7 @@ were fixed-now on their branches. **All four are SHIPPED.** Nothing left out / b
 | F-18 | SessionReport dashboard | YES | `0e0e8a8` |
 | F-19 | Privacy + accessibility audit + global stylesheet | YES | `7f2ab50` |
 | F-20 | Observability (PostHog + LangSmith + OTel + ui-churn) | YES | `ca126d4` |
-| F-21 | Counter-metrics dashboard (6 metrics, four-state) | YES | `8785f51` |
+| F-21 | Counter-metrics dashboard (6 metrics, four-state) | YES | `99eaf06` |
 
 ## Batch-level evidence
 
@@ -211,7 +211,7 @@ conflict required human judgment; nothing was forced or skipped.**
 
 ### F-21 — Counter-metrics dashboard (six metrics, four-state) — SHIPPABLE
 
-- **Branch:** `feat/f-21` (tip `8785f51`, 4 commits)
+- **Branch:** `feat/f-21` (tip `99eaf06`, 5 commits — incl. the final docs commit)
 - **Acceptance:** met. Six pure four-state counter-metric computations (fail-closed:
   empty N → `insufficient_data`/`unconfigured`, never a default green/red);
   `fetchMetricInputs` single DB seam (`events.app IS NULL`-scoped) + `computeAllMetrics`;
