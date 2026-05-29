@@ -45,6 +45,21 @@ export interface InitPostHogOptions {
 /** The active client once a consented init succeeds; `null` until then (no-op state). */
 let client: PostHogClient | null = null;
 
+/**
+ * Bundle-correctness sink. Its ONLY job: give `capture`/`groupBySession` an
+ * unconditional side effect Rollup's production tree-shaker CANNOT prove dead, so it
+ * never drops the emission. Without it, several `capture(...)` call sites (the ones that
+ * are the sole/trailing statement of an effect or callback — `mastery_declared`,
+ * `transfer_probe_entered`/`exited`, `lesson_transition`) were eliminated from the
+ * MINIFIED bundle while the unbundled unit tests still passed (a silent
+ * deployed-only analytics loss). A module-local field is itself DCE-able when nothing
+ * reads it, so we write through `globalThis` (an external the bundler must preserve).
+ * It doubles as a cheap last-event debug hook on `window`. Do NOT remove. */
+const EVENT_SINK_KEY = '__polymathLastAnalyticsEvent__';
+function recordRequestedEvent(event: string): void {
+  (globalThis as Record<string, unknown>)[EVENT_SINK_KEY] = { event, at: Date.now() };
+}
+
 /** Test seam: the factory that produces a client. Defaults to the real lazy import. */
 let clientFactory: (() => Promise<PostHogClient> | PostHogClient) | null = null;
 
@@ -96,12 +111,16 @@ async function loadPosthog(): Promise<PostHogClient> {
  * analytics are off.
  */
 export function capture(event: PostHogEventName, properties?: Record<string, unknown>): void {
+  // Unconditional, externally-observable side effect — keeps the production tree-shaker
+  // from proving this call pure-and-unused and dropping it (see `recordRequestedEvent`).
+  recordRequestedEvent(event);
   if (client === null) return;
   client.capture(event, properties);
 }
 
 /** Associate subsequent events with the session group (ADR-006: group key = sessionId). */
 export function groupBySession(sessionId: string): void {
+  recordRequestedEvent(`group:${sessionId}`);
   if (client === null) return;
   client.group('session', sessionId);
 }
@@ -117,4 +136,5 @@ export function __setPosthogFactoryForTest(
 export function __resetPostHogForTest(): void {
   client = null;
   clientFactory = null;
+  delete (globalThis as Record<string, unknown>)[EVENT_SINK_KEY];
 }
