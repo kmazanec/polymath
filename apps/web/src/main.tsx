@@ -5,6 +5,7 @@ import { App } from './App.js';
 import { SessionReport } from './views/SessionReport.js';
 import { MetricsDashboard } from './MetricsDashboard.js';
 import { TutorHandoff } from './views/TutorHandoff.js';
+import { TeacherReport } from './views/TeacherReport.js';
 // The single global stylesheet (tokens + a11y primitives), imported ONCE here so
 // every view inherits the design tokens and the focus/reduced-motion rules.
 import './styles/global.css';
@@ -19,6 +20,7 @@ const router = createBrowserRouter([
   // authenticates the API read).
   { path: '/handoff/:sessionId', element: <TutorHandoff /> },
   { path: '/handoff/:sessionId/:token', element: <TutorHandoff /> },
+  { path: '/teacher/:sessionId', element: <TeacherReport /> },
 ]);
 
 const rootEl = document.getElementById('root');

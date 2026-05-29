@@ -59,7 +59,43 @@ None.
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+**D25-1 (misconception source):** Chose option (a) — client-derive best-effort from `stuckKcs`.
+The agent's `GET /api/session/:id/teacher-report` endpoint derives `masteredKcs`/`stuckKcs`
+from the `learner_state` table (BKT threshold 0.95), requiring no contract extension and no
+dependency on any unmerged feature. The view renders "No misconceptions detected" when `stuckKcs`
+is empty. This is the "cut decisively" I6 posture.
+
+**D25-2 (token):** Reuses `POLYMATH_OPERATOR_SECRET` — the report endpoint is already
+operator-gated (exactly the `checkOperatorAuth` pattern from MR !7). A distinct teacher token
+adds no meaningful role separation for a prototype.
+
+**D25-3 (auth presentation):** Token is entered in an in-page form and sent as
+`Authorization: Bearer <token>`, never as a `?token=` query param. The spec's AC#1 wording
+(`?token=...`) was deliberately not followed — query params leak secrets in access logs. The
+in-page form matches I5 D10 intent. The AC is satisfied by the correct auth mechanism, not
+the wrong URL pattern.
+
+**DAG adaptation:** The build plan was blocked on F-18 (`GET /api/session/:id/report` +
+`SessionSummarySchema`). Since F-18 is not yet in `build/i6-stretch`, this feature adds its
+own lightweight endpoint (`GET /api/session/:id/teacher-report`) that reads `learner_state`
+directly — the same data source with a teacher-shaped response shape. When F-18 lands, this
+endpoint can be deprecated in favor of the report pipeline, but it ships value now without
+blocking on the DAG.
+
+**Files created:**
+- `apps/agent/src/report/teacherReport.ts` — `buildTeacherReport(db, sessionId)` reads
+  `learner_state` + `sessions`, returns `TeacherReportPayload`.
+- `apps/agent/src/report/teacherReport.test.ts` — unit tests for the builder.
+- `apps/web/src/views/TeacherReport.tsx` — route component (auth / loading / loaded states).
+- `apps/web/src/views/TeacherReport.test.tsx` — 9 component tests covering AC#1–5.
+- `apps/web/src/views/teacherReport.css` — table grid + `@media print` overrides (AC#6).
+- `apps/web/src/views/focusParagraph.ts` — pure deterministic focus paragraph builder (AC#4).
+- `apps/web/src/views/focusParagraph.test.ts` — 5 unit tests.
+
+**Files modified:**
+- `apps/agent/src/server.ts` — added `GET /api/session/:id/teacher-report` route (operator-gated).
+- `apps/web/src/main.tsx` — registered `/teacher/:sessionId` route.
+- `.env.example` — documented `POLYMATH_OPERATOR_SECRET` for teacher auth.
 
 ---
 

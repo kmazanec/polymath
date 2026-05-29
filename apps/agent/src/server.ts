@@ -67,6 +67,7 @@ import { tryHandleBaselineRoute } from './baseline/route.js';
 import { tryHandleHandoffRoute } from './handoff/route.js';
 import type { BaselineChatProvider } from './baseline/chatProvider.js';
 import { makeOpenAiBaselineChatProvider } from './baseline/openaiChatProvider.js';
+import { buildTeacherReport } from './report/teacherReport.js';
 
 export interface ServerDeps {
   db: Db;
@@ -1975,6 +1976,30 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
           else sendJson(res, r.status, r.body);
         })
         .catch(() => sendJson(res, 500, { error: 'failed to build handoff' }));
+      return;
+    }
+
+    // Teacher report: operator-auth gated (a session's per-KC mastery snapshot for
+    // the teacher / VT4S surface). Follows the replay-route auth pattern (MR !7):
+    // a leaked sessionId must not expose teaching data on the public port. Returns
+    // the `TeacherReportPayload` JSON or 404 if the session does not exist.
+    const teacherReportMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/teacher-report$/);
+    if (req.method === 'GET' && teacherReportMatch) {
+      const denied = checkOperatorAuth(req, deps.operatorSecret);
+      if (denied) {
+        sendJson(res, denied.status, denied.body);
+        return;
+      }
+      const sessionId = teacherReportMatch[1]!;
+      buildTeacherReport(deps.db, sessionId)
+        .then((report) => {
+          if (report === null) {
+            sendJson(res, 404, { error: 'session not found' });
+          } else {
+            sendJson(res, 200, report);
+          }
+        })
+        .catch(() => sendJson(res, 500, { error: 'failed to build teacher report' }));
       return;
     }
 

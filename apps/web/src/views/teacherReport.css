@@ -1,0 +1,185 @@
+/**
+ * Teacher report stylesheet.
+ *
+ * Consumes global design tokens via var() with local fallbacks so the sheet
+ * is self-contained when rendered outside the main app shell (e.g. print PDF
+ * or a direct /teacher/:sessionId URL without the root stylesheet).
+ *
+ * Follows the same pattern as other view-scoped stylesheets in this project.
+ */
+
+/* ── Print-first layout ────────────────────────────────────────────────── */
+
+.teacher-report {
+  font-family: var(--font-mono, 'Courier New', monospace);
+  max-width: 72ch;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  color: var(--color-text, #111);
+  background: var(--color-bg, #fff);
+}
+
+.teacher-report h1 {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 2px solid var(--color-border, #333);
+  padding-bottom: 0.5rem;
+}
+
+.teacher-report .report-meta {
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #555);
+  margin-bottom: 2rem;
+}
+
+/* ── KC mastery table ──────────────────────────────────────────────────── */
+
+.teacher-report .kc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 2rem;
+}
+
+.teacher-report .kc-table th,
+.teacher-report .kc-table td {
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--color-border, #ccc);
+  font-size: 0.9rem;
+}
+
+.teacher-report .kc-table th {
+  background: var(--color-bg-subtle, #f5f5f5);
+  font-weight: bold;
+}
+
+.teacher-report .kc-table tr.mastered {
+  background: var(--color-success-bg, #e8f5e9);
+}
+
+.teacher-report .kc-table tr.stuck {
+  background: var(--color-warn-bg, #fff3e0);
+}
+
+.teacher-report .badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.teacher-report .badge-mastered {
+  background: var(--color-success, #2e7d32);
+  color: #fff;
+}
+
+.teacher-report .badge-stuck {
+  background: var(--color-warn, #e65100);
+  color: #fff;
+}
+
+.teacher-report .badge-unknown {
+  background: var(--color-border, #888);
+  color: #fff;
+}
+
+/* ── Section headings ──────────────────────────────────────────────────── */
+
+.teacher-report section {
+  margin-bottom: 2rem;
+}
+
+.teacher-report section h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border, #ccc);
+  padding-bottom: 0.25rem;
+}
+
+/* ── Focus paragraph ───────────────────────────────────────────────────── */
+
+.teacher-report .focus-paragraph {
+  line-height: 1.6;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--color-primary, #1565c0);
+  background: var(--color-bg-subtle, #f5f5f5);
+  font-size: 0.9rem;
+}
+
+/* ── Auth overlay ──────────────────────────────────────────────────────── */
+
+.teacher-report-auth {
+  font-family: var(--font-mono, 'Courier New', monospace);
+  max-width: 40ch;
+  margin: 4rem auto;
+  padding: 2rem;
+  border: 1px solid var(--color-border, #ccc);
+}
+
+.teacher-report-auth h1 {
+  font-size: 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.teacher-report-auth label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+
+.teacher-report-auth input[type='password'] {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  border: 1px solid var(--color-border, #ccc);
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+}
+
+.teacher-report-auth button {
+  padding: 0.4rem 1rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.teacher-report-auth .auth-error {
+  color: var(--color-error, #c62828);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+/* ── Print overrides ───────────────────────────────────────────────────── */
+
+@media print {
+  .teacher-report {
+    max-width: 100%;
+    padding: 0;
+    font-size: 11pt;
+  }
+
+  .teacher-report h1 {
+    font-size: 16pt;
+  }
+
+  .teacher-report .kc-table th,
+  .teacher-report .kc-table td {
+    font-size: 10pt;
+    padding: 3pt 6pt;
+  }
+
+  /* Single-page: avoid table/section page breaks */
+  .teacher-report .kc-table,
+  .teacher-report section {
+    page-break-inside: avoid;
+  }
+
+  /* Hide auth overlay when printing (auth was already passed to get here) */
+  .teacher-report-auth {
+    display: none;
+  }
+}
