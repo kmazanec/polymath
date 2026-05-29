@@ -1,0 +1,183 @@
+/*
+ * Session-report view styles. View-scoped (every selector is prefixed
+ * `.session-report`), and it deliberately ships NO `:root` block — the design
+ * tokens are owned by the global `tokens.css`. Each property reads a token via
+ * `var(--token, fallback)` so the report inherits the shared palette when tokens
+ * are present and still renders standalone (the fallback) if they are not yet
+ * merged.
+ *
+ * The `@media print` block produces a clean single-page PDF: tiles flow, the grid
+ * collapses to a print-friendly two-column layout, and interactive chrome is hidden.
+ */
+
+.session-report {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: var(--space-4, 1.5rem);
+  color: var(--color-text, #14181f);
+  background: var(--color-bg, #ffffff);
+  font-family: system-ui, sans-serif;
+}
+
+.session-report__title {
+  font-size: 1.75rem;
+  margin: 0 0 var(--space-1, 0.25rem);
+}
+
+.session-report__subtitle {
+  margin: 0 0 var(--space-4, 1.5rem);
+  color: var(--color-text-muted, #4a5260);
+}
+
+.session-report__subtitle code {
+  font-size: 0.9em;
+}
+
+.session-report__status {
+  color: var(--color-text-muted, #4a5260);
+}
+
+.session-report__status--error {
+  color: var(--color-fail, #c2570a);
+  font-weight: 600;
+}
+
+.session-report__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-3, 1rem);
+}
+
+.session-report__tile {
+  border: 1px solid var(--color-border, #c8cdd6);
+  border-radius: var(--radius-2, 0.5rem);
+  background: var(--color-surface, #f4f5f7);
+  padding: var(--space-3, 1rem);
+}
+
+.session-report__tile-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted, #4a5260);
+  margin: 0 0 var(--space-1, 0.25rem);
+}
+
+.session-report__tile-value {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.session-report__tile-value--text {
+  font-size: 1.25rem;
+}
+
+.session-report__tile-empty {
+  font-size: 1rem;
+  font-style: italic;
+  color: var(--color-text-muted, #4a5260);
+  margin: 0;
+}
+
+.session-report__tile-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #4a5260);
+  margin: var(--space-1, 0.25rem) 0 0;
+}
+
+/* The "double growth" hero tile — the Nerdy KPI shape's centerpiece. */
+.session-report__tile--growth {
+  grid-column: span 1;
+  border-color: var(--color-accent, #1d4ed8);
+  border-width: 2px;
+  background: var(--color-bg, #ffffff);
+}
+
+.session-report__tile-value--hero {
+  font-size: 3rem;
+  color: var(--color-accent, #1d4ed8);
+  line-height: 1.1;
+}
+
+.session-report__verdict--pass {
+  color: var(--color-pass, #1d6fb8);
+}
+
+.session-report__verdict--fail {
+  color: var(--color-fail, #c2570a);
+}
+
+.session-report__reasons {
+  margin: var(--space-1, 0.25rem) 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #4a5260);
+}
+
+.session-report__kcs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3, 1rem);
+  margin-top: var(--space-4, 1.5rem);
+}
+
+.session-report__auth {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 0.5rem);
+  max-width: 24rem;
+}
+
+.session-report__auth input {
+  padding: var(--space-2, 0.5rem);
+  border: 1px solid var(--color-border, #c8cdd6);
+  border-radius: var(--radius-1, 0.25rem);
+  background: var(--color-bg, #ffffff);
+  color: var(--color-text, #14181f);
+}
+
+.session-report__auth button {
+  padding: var(--space-2, 0.5rem) var(--space-3, 1rem);
+  border: none;
+  border-radius: var(--radius-1, 0.25rem);
+  background: var(--color-accent, #1d4ed8);
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+/* Clean single-page PDF (AC#3): no shadows, print-safe colours, tighter grid. */
+@media print {
+  .session-report {
+    max-width: none;
+    padding: 0;
+    color: #000;
+    background: #fff;
+  }
+
+  .session-report__tiles {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+
+  .session-report__tile {
+    background: #fff;
+    border: 1px solid #000;
+    break-inside: avoid;
+  }
+
+  .session-report__tile--growth {
+    border-color: #000;
+  }
+
+  .session-report__tile-value--hero {
+    color: #000;
+  }
+
+  /* The operator-secret form is interactive chrome; it never prints. */
+  .session-report__auth {
+    display: none;
+  }
+}
