@@ -6,6 +6,7 @@ coverage/
 
 # git worktrees live inside the repo root
 .worktrees/
+.claude/worktrees/
 
 # env / secrets — never commit
 .env
