@@ -20,9 +20,15 @@ type MasteryCelebrationSpec = Extract<ComponentSpec, { kind: 'MasteryCelebration
 export function MasteryCelebration({
   spec,
   onContinue,
+  onTryPlayground,
 }: {
   spec: MasteryCelebrationSpec;
   onContinue?: (nextLessonId: number) => void;
+  /** ADR-013 stretch: the "Try the Playground" affordance. The App passes it ONLY
+   *  when the just-mastered lesson is the final one (no `nextLessonId`), so a
+   *  mastered learner sees the free-build capstone as a separate door from the
+   *  next-lesson advance. Absent → the button is not rendered. */
+  onTryPlayground?: () => void;
 }): ReactElement {
   const concepts = spec.conceptsMastered;
   const nextLessonId = spec.nextLessonId;
@@ -60,6 +66,15 @@ export function MasteryCelebration({
       >
         Continue to Lesson 2
       </button>
+      {onTryPlayground !== undefined && (
+        <button
+          type="button"
+          className="try-the-playground"
+          onClick={onTryPlayground}
+        >
+          Try the Playground
+        </button>
+      )}
     </section>
   );
 }

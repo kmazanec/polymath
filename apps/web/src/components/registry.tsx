@@ -69,6 +69,9 @@ export interface RenderOptions {
   onPlaygroundRequestScaffold?: (payload: PlaygroundRequestScaffoldPayload) => void;
   /** ADR-013 stretch playground: exit (`exit_playground`) → session-end celebration. */
   onExitPlayground?: () => void;
+  /** ADR-013 stretch playground: the "Try the Playground" affordance on the final
+   *  lesson's `MasteryCelebration`. Absent → the button is not rendered. */
+  onTryPlayground?: () => void;
 }
 
 /** A safe no-op explain-back seam for when no real voice client is wired (tests,
@@ -128,7 +131,9 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
         />
       );
     case 'MasteryCelebration':
-      return <MasteryCelebration spec={spec} onContinue={opts.onContinue} />;
+      return (
+        <MasteryCelebration spec={spec} onContinue={opts.onContinue} onTryPlayground={opts.onTryPlayground} />
+      );
     case 'CrossLessonRecall':
       // F-14: text-only cross-lesson recall card (ADR-012). No rep workspace — the
       // probe-integrity boundary; dismiss resumes practice at the current item.

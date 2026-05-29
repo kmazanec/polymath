@@ -6,6 +6,10 @@ import { AgentSocket } from './ws/client.js';
 import { adaptAction } from './ws/actionAdapter.js';
 import { AnimateOrNot } from './motion/AnimateOrNot.js';
 import { renderComponent, type RepSubmitPayload } from './components/registry.js';
+import type {
+  PlaygroundSubmitPayload,
+  PlaygroundRequestScaffoldPayload,
+} from './components/PlaygroundCanvas.js';
 import { transferRepRefusal } from './copy/refusals.js';
 import { introForLesson, LESSON_2_INTRO } from './lessonIntroContent.js';
 import { AskTutorButton } from './voice/AskTutorButton.js';
@@ -112,6 +116,7 @@ function LessonSession({
   onExplainBackEnd,
   onContinue,
   onRequestHint,
+  onTryPlayground,
 }: {
   lessonId: number;
   bridge: LessonBridge;
@@ -124,6 +129,9 @@ function LessonSession({
   onExplainBackEnd: (payload: { targetItemId: string; transcript: string; durationMs: number }) => void;
   onContinue: (nextLessonId: number) => void;
   onRequestHint: () => void;
+  /** ADR-013 stretch: enter the free-build playground from the final lesson's
+   *  MasteryCelebration (a celebration with no `nextLessonId`). */
+  onTryPlayground: () => void;
 }): ReactElement {
   const [snapshot, send] = useMachine(lessonMachine, { input: { lessonId } });
   const phase = currentPhase(snapshot.value);
@@ -150,7 +158,17 @@ function LessonSession({
           its disabled submit button) would bleed into the new item, blocking it. */}
       <AnimateOrNot phase={phase}>
         <div key={mountKey(mounted)}>
-          {renderComponent(mounted, { onSubmit, explainBackDeps, onExplainBackEnd, onContinue })}
+          {renderComponent(mounted, {
+            onSubmit,
+            explainBackDeps,
+            onExplainBackEnd,
+            onContinue,
+            // ADR-013: offer the playground ONLY on a terminal MasteryCelebration (no
+            // next lesson) — the final-lesson capstone door, separate from the advance.
+            ...(mounted.kind === 'MasteryCelebration' && mounted.nextLessonId === undefined
+              ? { onTryPlayground }
+              : {}),
+          })}
         </div>
       </AnimateOrNot>
 
@@ -206,6 +224,11 @@ export function App(): ReactElement {
    *  learner is asked to rate, or null when not sampling. Set on ~1-in-3 workspace
    *  mounts; cleared (and the beacon sent) when the learner answers (ADR-011 metric 2). */
   const [intelligibilityFor, setIntelligibilityFor] = useState<string | null>(null);
+  /** ADR-013 stretch: once the learner enters the free-build playground (from the
+   *  final lesson's MasteryCelebration), the App swaps the directed-practice
+   *  LessonSession for the PlaygroundCanvas. Exiting clears this (the server's
+   *  exit_playground reply re-mounts a session-end MasteryCelebration). */
+  const [playground, setPlayground] = useState<ComponentSpec | null>(null);
   /** The id of the item currently mounted, echoed on submit. */
   const currentItemId = useRef<string>('l1-and');
   /** When the current item was mounted (for the submit's response-time report). */
@@ -293,6 +316,10 @@ export function App(): ReactElement {
               } else {
                 setMounted(r.mount);
                 setHint(null); // a new workspace clears any stale hint
+                // ADR-013: a server mount (e.g. the session-end MasteryCelebration the
+                // exit_playground reflex returns) leaves the playground — back to the
+                // directed-practice view rendering this celebration.
+                setPlayground(null);
                 if (r.mount.kind === 'TransferProbe') {
                   currentProbeItemId.current = r.mount.itemId;
                   activeHiddenReps.current = r.mount.hiddenReps;
@@ -537,6 +564,51 @@ export function App(): ReactElement {
     [sessionId],
   );
 
+  // ADR-013 stretch: the "Try the Playground" affordance on the final lesson's
+  // MasteryCelebration. Send `enter_playground` (the server re-derives mastery as the
+  // earned-it guard and acks; a forged frame on an unmastered session gets an error and
+  // no canvas) and optimistically mount the PlaygroundCanvas. visibleReps is all three
+  // — the playground is a free build, nothing held out.
+  const onTryPlayground = useCallback((): void => {
+    if (!sessionId) return;
+    socketRef.current?.send({ kind: 'enter_playground', sessionId });
+    setPlayground({ kind: 'PlaygroundCanvas', visibleReps: ['truth_table', 'circuit', 'pseudocode'] });
+  }, [sessionId]);
+
+  const onPlaygroundSubmit = useCallback(
+    (payload: PlaygroundSubmitPayload): void => {
+      if (!sessionId) return;
+      socketRef.current?.send({
+        kind: 'playground_submit',
+        sessionId,
+        targetExpression: payload.targetExpression,
+        submissions: payload.submissions,
+      });
+    },
+    [sessionId],
+  );
+
+  const onPlaygroundRequestScaffold = useCallback(
+    (payload: PlaygroundRequestScaffoldPayload): void => {
+      if (!sessionId) return;
+      socketRef.current?.send({
+        kind: 'playground_request_scaffold',
+        sessionId,
+        targetExpression: payload.targetExpression,
+        ...(payload.learnerQuestion ? { learnerQuestion: payload.learnerQuestion } : {}),
+      });
+    },
+    [sessionId],
+  );
+
+  // ADR-013 AC#6: Finish exits the playground. The server's exit_playground reflex
+  // replies with a session-end MasteryCelebration (an `action` over this socket),
+  // which the message closure mounts (clearing `playground`).
+  const onExitPlayground = useCallback((): void => {
+    if (!sessionId) return;
+    socketRef.current?.send({ kind: 'exit_playground', sessionId });
+  }, [sessionId]);
+
   // F-11: the TTS seam for the explain-back prompt (the ~3s read). Best-effort via
   // the Web Speech API; wrapped so an unavailable/throwing synth (iOS Safari quirk)
   // degrades silently — the recording window still opens. The WebRTC-bridge capture
@@ -580,20 +652,35 @@ export function App(): ReactElement {
           for L2 in `introducing` — the macro transition (AC#2). The session owns the
           XState spine + the mounted workspace; App owns the socket + per-lesson UI
           state and routes lesson events down via the stable `bridgeRef`. */}
-      <LessonSession
-        key={lessonId}
-        lessonId={lessonId}
-        bridge={bridgeRef.current}
-        mounted={mounted}
-        hint={hint}
-        answer={answer}
-        conn={conn}
-        onSubmit={onSubmit}
-        explainBackDeps={explainBackDeps}
-        onExplainBackEnd={onExplainBackEnd}
-        onContinue={onContinue}
-        onRequestHint={onRequestHint}
-      />
+      {playground ? (
+        // ADR-013 stretch: the free-build playground replaces the directed-practice
+        // session view. Exiting (Finish) sends exit_playground; the server replies with
+        // a session-end MasteryCelebration `action` which the closure mounts (clearing
+        // `playground` and restoring the session view to render the celebration).
+        <div key="playground">
+          {renderComponent(playground, {
+            onPlaygroundSubmit,
+            onPlaygroundRequestScaffold,
+            onExitPlayground,
+          })}
+        </div>
+      ) : (
+        <LessonSession
+          key={lessonId}
+          lessonId={lessonId}
+          bridge={bridgeRef.current}
+          mounted={mounted}
+          hint={hint}
+          answer={answer}
+          conn={conn}
+          onSubmit={onSubmit}
+          explainBackDeps={explainBackDeps}
+          onExplainBackEnd={onExplainBackEnd}
+          onContinue={onContinue}
+          onRequestHint={onRequestHint}
+          onTryPlayground={onTryPlayground}
+        />
+      )}
 
       {/* F-14: the cross-lesson recall callout, in its own App-level side slot —
           BESIDE the keyed `LessonSession`, not inside it — so the in-progress practice
