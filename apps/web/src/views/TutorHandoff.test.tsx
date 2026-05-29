@@ -10,7 +10,20 @@ const ARTIFACT: HandoffArtifact = {
   sessionId: '11111111-1111-1111-1111-111111111111',
   generatedAt: '2026-05-29T00:00:00.000Z',
   warmIntro: "I've taken you as far as I usefully can on this. Here's what to ask next.",
-  summary: { kcsMastered: ['AND'], kcsStuck: ['OR'], masteryStatus: 'in_progress' },
+  // F-18's real SessionSummary (the F-24↔F-18 reconcile); the view renders the
+  // top-level masteredKcs/stuckKcs, not summary.*, so this is the embedded record.
+  summary: {
+    preTestScore: null,
+    postTestScore: null,
+    growthMultiplier: null,
+    timeOnTaskMs: 0,
+    transferSuccessRate: 0,
+    masteryStatus: 'practicing',
+    explainBackVerdict: { passed: false, reasons: [] },
+    kcsMastered: ['AND'],
+    kcsStuck: ['OR'],
+    source: 'in_session',
+  },
   masteredKcs: ['AND'],
   stuckKcs: ['OR'],
   tutorQuestions: [

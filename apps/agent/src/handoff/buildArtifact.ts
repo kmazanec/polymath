@@ -1,24 +1,24 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { generateTutorQuestions } from '@polymath/graph';
-import type { HandoffArtifact, TutorQuestion } from '@polymath/contract';
+import type { HandoffArtifact, SessionSummary, TutorQuestion } from '@polymath/contract';
 import type { Db } from '../db/client.js';
 import { learnerState, sessions } from '../db/schema.js';
 import { currentLessonId } from '../server.js';
 import { loadLesson } from '../lessons/loader.js';
+import { buildReport } from '../report/buildReport.js';
 
 /**
  * The tutor-handoff artifact composer (ADR-012 stretch). This is the SOLE coupling
  * point to the session-summary source: it derives `masteredKcs` / `stuckKcs` from
- * the per-(session,kc) `learner_state` BKT rows — the same source the summary
- * pipeline reads — and composes a contract-valid `HandoffArtifact`.
+ * the per-(session,kc) `learner_state` BKT rows, and embeds F-18's real
+ * `SessionSummary` (via `buildReport`) as the artifact's `summary` field.
  *
- * The summary pipeline (`getSessionSummary` + `SessionSummarySchema`) is owned
- * elsewhere and is NOT on this branch; the frozen `HandoffArtifactSchema.summary`
- * field is a forward-compatible `z.unknown()` placeholder for exactly this reason.
- * Until that pipeline lands we emit a small forward-compatible summary object here.
- * When it merges, replace this file's inline summary projection with a
- * `getSessionSummary` call and swap the contract placeholder for the real schema —
- * both confined to this one adapter, per the plan.
+ * F-18 landed (I5), so the F-24↔F-18 reconcile happens HERE — the single adapter the
+ * F-24 plan said it would be confined to: `summary` is now the real `buildReport`
+ * output and `HandoffArtifactSchema.summary` is the real `SessionSummarySchema` (the
+ * `z.unknown()` placeholder is gone). The top-level `masteredKcs`/`stuckKcs` stay
+ * derived here (they drive the questions node + the view's tiles) and agree with
+ * `summary.kcsMastered`/`kcsStuck`.
  *
  * Returns `null` for an unknown session or a session with no learner state (an
  * empty/never-practised session has no artifact to hand off), and never throws.
@@ -36,6 +36,9 @@ export interface HandoffArtifactDeps {
   masteryThreshold(sessionId: string): Promise<number>;
   /** The questions node. */
   generateQuestions(input: { stuckKcs: string[]; masteredKcs: string[] }): Promise<TutorQuestion[]>;
+  /** F-18's session-summary pipeline (`buildReport`). Returns null only for an unknown
+   *  session — by the time it is called the session has learner state, so it resolves. */
+  getSessionSummary(sessionId: string): Promise<SessionSummary | null>;
 }
 
 const WARM_INTRO =
@@ -71,18 +74,21 @@ export async function buildHandoffArtifact(
 
   const tutorQuestions = await deps.generateQuestions({ stuckKcs, masteredKcs });
 
+  // F-18's real session summary (the reconcile). The session has learner state here
+  // (we returned null above otherwise), so buildReport resolves; the `?? null` guard
+  // keeps us null-safe and we fail closed to no-artifact if the summary is somehow
+  // unavailable rather than emitting a contract-invalid partial.
+  const summary = await deps.getSessionSummary(sessionId);
+  if (summary === null) return null;
+
   // Field order is load-bearing (AC#2): intro -> mastered -> stuck -> questions ->
-  // footer. `summary` is the forward-compatible placeholder until the summary
-  // pipeline lands (see the file header).
+  // footer. `summary` is F-18's real `SessionSummary` (kcsMastered/kcsStuck agree with
+  // the top-level lists derived above from the same learner_state rows).
   const artifact: HandoffArtifact = {
     sessionId,
     generatedAt: new Date().toISOString(),
     warmIntro: WARM_INTRO,
-    summary: {
-      kcsMastered: masteredKcs,
-      kcsStuck: stuckKcs,
-      masteryStatus: stuckKcs.length === 0 ? 'all_kcs_mastered' : 'in_progress',
-    },
+    summary,
     masteredKcs,
     stuckKcs,
     tutorQuestions,
@@ -117,5 +123,6 @@ export function makeHandoffArtifactDeps(db: Db): HandoffArtifactDeps {
       return loadLesson(lessonId).masteryConfig.bktMasteryThreshold;
     },
     generateQuestions: (input) => generateTutorQuestions(input),
+    getSessionSummary: (sessionId) => buildReport(db, sessionId),
   };
 }

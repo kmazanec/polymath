@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SessionSummarySchema } from './sessionReport.js';
 
 /**
  * `HandoffArtifact` — the tutor handoff artifact (ADR-012 stretch). An additive,
@@ -6,12 +7,10 @@ import { z } from 'zod';
  * tutor, carrying which KCs they mastered, where they got stuck, and a few
  * tutor-facing questions to pick up from.
  *
- * The `summary` field is the session summary produced by the summary pipeline
- * (owned elsewhere). That pipeline's `SessionSummarySchema` is NOT yet present in
- * this branch, so `summary` is typed here as a forward-compatible passthrough
- * (`z.unknown()`); the owning feature replaces this single line with
- * `import { SessionSummarySchema } from './sessionSummary.js'` (import, never
- * redefine) when the summary pipeline lands — the rest of the shape is frozen.
+ * The `summary` field is the session summary produced by F-18's summary pipeline.
+ * F-18 landed (I5), so `summary` now uses the REAL `SessionSummarySchema` (imported
+ * from `./sessionReport.js`, never redefined) — the F-24↔F-18 reconcile the F-24
+ * plan flagged. The rest of the shape is frozen.
  */
 
 /** A tutor-facing question keyed to the KC it probes. */
@@ -21,16 +20,13 @@ export const TutorQuestionSchema = z.object({
 });
 export type TutorQuestion = z.infer<typeof TutorQuestionSchema>;
 
-/** Placeholder for the summary-pipeline schema (owned elsewhere; not yet in this
- *  branch). Swap to the real `SessionSummarySchema` import when it merges. */
-const SummaryPlaceholderSchema = z.unknown();
-
 export const HandoffArtifactSchema = z.object({
   sessionId: z.string().uuid(),
   generatedAt: z.string(),
   warmIntro: z.string(),
-  /** OWNED BY the summary pipeline — import its `SessionSummarySchema`, never redefine. */
-  summary: SummaryPlaceholderSchema,
+  /** OWNED BY F-18's summary pipeline (`SessionSummarySchema` in `sessionReport.ts`) —
+   *  imported, never redefined. */
+  summary: SessionSummarySchema,
   masteredKcs: z.array(z.string()),
   stuckKcs: z.array(z.string()),
   tutorQuestions: z.array(TutorQuestionSchema).min(3).max(5),

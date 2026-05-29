@@ -1,8 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HandoffArtifactSchema } from '@polymath/contract';
+import { HandoffArtifactSchema, type SessionSummary } from '@polymath/contract';
 import { buildHandoffArtifact, type HandoffArtifactDeps } from './buildArtifact.js';
 
 const SESSION = '11111111-1111-1111-1111-111111111111';
+
+/** A contract-valid F-18 SessionSummary stub (the reconcile: the artifact embeds the
+ *  real summary, not the old 3-field placeholder). `kcsMastered`/`kcsStuck` are filled
+ *  per-test to match the learner rows so the agreement assertion holds. */
+function summaryStub(over: Partial<SessionSummary> = {}): SessionSummary {
+  return {
+    preTestScore: null,
+    postTestScore: null,
+    growthMultiplier: null,
+    timeOnTaskMs: 0,
+    transferSuccessRate: 0,
+    masteryStatus: 'practicing',
+    explainBackVerdict: { passed: false, reasons: [] },
+    kcsMastered: [],
+    kcsStuck: [],
+    source: 'in_session',
+    ...over,
+  };
+}
 
 /**
  * `buildHandoffArtifact` is the sole coupling point to the session-summary source.
@@ -12,7 +31,7 @@ const SESSION = '11111111-1111-1111-1111-111111111111';
  */
 function depsWith(
   rows: { kc: string; bktProbability: number | null }[],
-  opts: { sessionExists?: boolean } = {},
+  opts: { sessionExists?: boolean; summary?: SessionSummary | null } = {},
 ): HandoffArtifactDeps {
   return {
     sessionExists: vi.fn(async () => opts.sessionExists ?? true),
@@ -26,6 +45,9 @@ function depsWith(
         kc,
         question: `Ask about ${kc}?`,
       })),
+    ),
+    getSessionSummary: vi.fn(async () =>
+      opts.summary === undefined ? summaryStub() : opts.summary,
     ),
   };
 }
@@ -103,5 +125,41 @@ describe('buildHandoffArtifact', () => {
     expect(deps.generateQuestions).toHaveBeenCalledWith(
       expect.objectContaining({ stuckKcs: ['OR'], masteredKcs: ['AND'] }),
     );
+  });
+
+  it('embeds F-18\'s real SessionSummary as the summary field (F-24↔F-18 reconcile)', async () => {
+    const summary = summaryStub({
+      preTestScore: 0.25,
+      postTestScore: 0.75,
+      growthMultiplier: 3,
+      masteryStatus: 'mastered',
+      kcsMastered: ['AND'],
+      kcsStuck: ['OR'],
+      source: 'experiment',
+    });
+    const deps = depsWith(
+      [
+        { kc: 'AND', bktProbability: 0.99 },
+        { kc: 'OR', bktProbability: 0.2 },
+      ],
+      { summary },
+    );
+    const art = await buildHandoffArtifact(deps, SESSION);
+    expect(HandoffArtifactSchema.safeParse(art).success).toBe(true);
+    // The summary is the REAL pipeline output, not the old 3-field placeholder.
+    expect(art!.summary).toEqual(summary);
+    expect(art!.summary.growthMultiplier).toBe(3);
+    expect(art!.summary.masteryStatus).toBe('mastered');
+    // Top-level lists agree with the summary's (same learner_state source).
+    expect(art!.masteredKcs).toEqual(art!.summary.kcsMastered);
+    expect(art!.stuckKcs).toEqual(art!.summary.kcsStuck);
+  });
+
+  it('returns null (fail-closed) when the summary pipeline yields none', async () => {
+    // A session with learner state but no resolvable summary must not emit a
+    // contract-invalid partial — it fails closed to no-artifact.
+    const deps = depsWith([{ kc: 'AND', bktProbability: 0.99 }], { summary: null });
+    const art = await buildHandoffArtifact(deps, SESSION);
+    expect(art).toBeNull();
   });
 });
