@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { SessionSummarySchema } from '@polymath/contract';
 import { createDb, type Db } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
 import { canRunPg, ensureTestPg } from '../db/testPg.js';
@@ -82,6 +83,25 @@ describe.skipIf(!canRunPg)('MR !7 review fixes', () => {
       expect(denied.status).toBe(401);
       const ok = await fetch(url(`/api/session/${sessionId}/replay`), { headers: auth });
       expect(ok.status).toBe(200);
+    });
+
+    it('gates the session report route (401 without the secret), 200 + contract-valid body with it', async () => {
+      const s = await (await fetch(url('/api/session'), { method: 'POST' })).json();
+      const sessionId = (s as { sessionId: string }).sessionId;
+      const denied = await fetch(url(`/api/session/${sessionId}/report`));
+      expect(denied.status).toBe(401);
+      const ok = await fetch(url(`/api/session/${sessionId}/report`), { headers: auth });
+      expect(ok.status).toBe(200);
+      const body = await ok.json();
+      // The endpoint's body is the locked SessionSummary shape.
+      expect(SessionSummarySchema.safeParse(body).success).toBe(true);
+    });
+
+    it('the report route 404s an unknown session (with the secret)', async () => {
+      const res = await fetch(url('/api/session/22222222-2222-4222-8222-222222222222/report'), {
+        headers: auth,
+      });
+      expect(res.status).toBe(404);
     });
 
     it('does NOT gate the learner-facing followup route (its own token authenticates)', async () => {
