@@ -1,7 +1,8 @@
 import type { AgentInput, MoveProvider } from './client.js';
 import type { ProposedItem, TacticalMove } from './menu.js';
 import { FlowAgentClient } from './flowClient.js';
-import { generateL1, generateL2, generateL3Canned } from '../hints/templates.js';
+import { generateL1, generateL2, generateL3Canned, L4_DEMORGAN_HINT } from '../hints/templates.js';
+import { detectHalfwayMisconception, loadMisconceptions } from '../hints/misconceptions.js';
 
 /**
  * A deterministic, key-free `MoveProvider` (no LLM). It implements a small
@@ -55,6 +56,25 @@ export class HeuristicMoveProvider implements MoveProvider {
       // (currentSubmitCorrect), never the client `correct` flag — a client can't
       // claim correct to skip remediation. Prior-miss count is also server-derived.
       if (input.currentSubmitCorrect === false) {
+        // ADR-012 stretch (Lesson 4): before a generic rephrase, check whether the
+        // wrong answer is the recognisable "halfway De Morgan" misconception — the
+        // learner distributed the negation but kept the connective. The match is
+        // SEMANTIC (the learner's truth-table OUTPUT column vs the per-item authored
+        // halfway column), not string-based (D23-1), so it fires regardless of how
+        // the answer is spelled. We read the column straight off the truth-table
+        // `repSubmission` (a bounded 0/1 vector) — NEVER enumerating an expression,
+        // so there is no var-cap DoS surface here. Fail-soft: a missing/empty bank or
+        // a non-truth-table submission simply skips to the generic rephrase below.
+        const named = detectHalfwayHint(input, ev.itemId);
+        if (named) {
+          return Promise.resolve({
+            move: 'propose_hint',
+            // D23-4: the named misconception rides as an L1 directional hint.
+            level: 1,
+            body: named,
+            rationale: `detected the halfway De Morgan misconception on item "${ev.itemId}" — naming it (heuristic provider)`,
+          });
+        }
         const priorWrong = (input.priorMissesByItem?.[ev.itemId] ?? 0) > 0;
         const same = currentItem(input);
         if (same) {
@@ -317,6 +337,45 @@ function currentItem(input: AgentInput): ProposedItem | null {
     visibleReps: [rep],
     allowedGates: circuitAllowedGates(input, rep),
   };
+}
+
+/**
+ * If the current wrong submit is the recognisable halfway De Morgan misconception,
+ * return its NAMED hint body; otherwise undefined (the caller falls back to a
+ * generic rephrase). Pure-ish over `input` (it reads the lesson's misconception
+ * bank from disk, fail-soft: a missing/invalid bank → undefined).
+ *
+ * The learner's truth-table OUTPUT column is read straight off the bounded
+ * `repSubmission.cells` (0/1 ints, MSB-first) — we do NOT enumerate an expression,
+ * so there is no var-cap DoS surface. The bank is matched by the lesson `itemId`;
+ * the submit may name the item by itemId OR by targetExpression (the web mounts the
+ * rep with no itemId), so we resolve to the lesson itemId first. The per-item
+ * authored `hintBody` is preferred; absent it, the generic `L4_DEMORGAN_HINT`
+ * still names the misconception.
+ */
+function detectHalfwayHint(input: AgentInput, submitItemId: string): string | undefined {
+  const ev = input.event;
+  if (ev.kind !== 'submit') return undefined;
+  // Only a truth-table column can be matched against the authored halfway column;
+  // a circuit/pseudocode submission has no MSB-first output vector to compare.
+  if (!ev.repSubmission || ev.repSubmission.rep !== 'truth_table') return undefined;
+  const learnerOutput = ev.repSubmission.cells;
+  if (learnerOutput.length === 0) return undefined;
+
+  // Resolve the lesson itemId (the bank's key) — the submit may name the item by
+  // its targetExpression rather than its itemId.
+  const lessonItem = input.lesson.content.items.find(
+    (i) => i.itemId === submitItemId || i.targetExpression === submitItemId,
+  );
+  const itemId = lessonItem?.itemId ?? submitItemId;
+
+  const bank = loadMisconceptions(input.lesson.content.lessonId);
+  const matched = detectHalfwayMisconception(bank, itemId, learnerOutput);
+  if (!matched) return undefined;
+  // A detected halfway form gets its per-item named copy; if that copy is somehow
+  // empty, fall back to the generic named hint so the misconception is still named —
+  // never an empty body (a blank hint is worse than the generic one).
+  return matched.hintBody.trim().length > 0 ? matched.hintBody : L4_DEMORGAN_HINT;
 }
 
 /** A simpler item than the given one: the lesson's lowest-tier item that differs

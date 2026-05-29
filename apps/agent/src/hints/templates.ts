@@ -141,6 +141,20 @@ export function generateL2(targetExpression: string): string | null {
 }
 
 /**
+ * The Lesson 4 (De Morgan) named-misconception hint, used as the FALLBACK body
+ * when a lesson's `misconceptions.json` has no per-item copy but the halfway form
+ * was nonetheless detected. The per-item authored `hintBody` is preferred (it
+ * names the specific operator to flip); this generic version still names the
+ * misconception by its pedagogical label (Almstrum 1996's "halfway application")
+ * so the learner gets the directional nudge: you negated, but you didn't flip the
+ * operator — a negated AND becomes OR, and a negated OR becomes AND.
+ */
+export const L4_DEMORGAN_HINT =
+  'That looks like the halfway-application misconception: you flipped the negation but kept the operator. ' +
+  "De Morgan's law flips BOTH — a negated AND becomes an OR, and a negated OR becomes an AND. " +
+  'Try changing the connective as well as negating each part.';
+
+/**
  * Canned L3 prose used by the heuristic (key-free) provider. In the real LLM
  * path, L3 would be free-form generated prose; here it gives a useful
  * deep-dive hint without requiring a key.
