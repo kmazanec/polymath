@@ -16,6 +16,15 @@ RUN pnpm install --frozen-lockfile --filter @polymath/web...
 COPY tsconfig.base.json ./
 COPY packages packages
 COPY apps/web apps/web
+# PostHog config is read via import.meta.env, which Vite INLINES at BUILD time — so it
+# must be present as a build ARG here or the deployed bundle silently lacks it. Both are
+# optional (blank => PostHog fails closed to a no-op at runtime). Pass via
+# `docker build --build-arg VITE_POSTHOG_KEY=… --build-arg VITE_POSTHOG_HOST=…` (or the
+# compose `web.build.args`).
+ARG VITE_POSTHOG_KEY=
+ARG VITE_POSTHOG_HOST=
+ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
+ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
 RUN pnpm --filter @polymath/web build
 
 FROM nginx:1.27-alpine AS runtime

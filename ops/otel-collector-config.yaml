@@ -1,0 +1,44 @@
+# OpenTelemetry Collector config for the Polymath droplet sidecar.
+#
+# This file is read by the collector CONTAINER (mounted in compose.prod.yaml) — it is
+# NOT copied into the agent image. The agent only emits OTLP/HTTP to the collector's
+# 4318 receiver; everything downstream is the collector's concern.
+#
+# DEFAULT EXPORTER = debug (stdout). This is the always-on, KEY-FREE demo fallback: with
+# no external backend provisioned, voice-turn spans are still queryable via the
+# collector's container logs (`docker logs polymath-otel-collector`). A real backend
+# (Grafana Cloud OTLP, Honeycomb, …) is OPTIONAL and added by uncommenting the otlphttp
+# exporter below + setting its endpoint/headers from /etc/polymath/.env — never required
+# for the demo path to work.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # Always-on, key-free: spans land in the collector's own logs, queryable on the droplet.
+  debug:
+    verbosity: detailed
+
+  # OPTIONAL upstream backend (Grafana Cloud / Honeycomb / any OTLP/HTTP sink). Left
+  # commented so the collector boots with zero external config. To enable, uncomment and
+  # supply OTEL_UPSTREAM_ENDPOINT + OTEL_UPSTREAM_HEADERS via the collector's environment,
+  # then add `otlphttp` to the traces pipeline's exporters list below.
+  # otlphttp:
+  #   endpoint: ${env:OTEL_UPSTREAM_ENDPOINT}
+  #   headers:
+  #     authorization: ${env:OTEL_UPSTREAM_HEADERS}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

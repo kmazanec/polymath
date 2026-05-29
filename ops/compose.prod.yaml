@@ -49,6 +49,10 @@ services:
       PORT: '8080'
       # Compose-network DNS; password comes from the env_file above.
       POSTGRES_URL: postgres://${POSTGRES_USER:-polymath}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-polymath}
+      # Point the agent's OTLP exporter at the sidecar collector (compose-network DNS).
+      # registerOtel() fails closed, so if the collector is absent the agent still boots.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: polymath-agent
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,8 +89,21 @@ services:
     networks:
       - openemr_default
 
+  # OTel collector sidecar — receives OTLP from the agent (voice-turn spans) and exports
+  # to its own logs by default (key-free demo fallback) or an optional upstream backend.
+  # Internal-only: the agent reaches it by name on the private network; never host-exposed.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    container_name: polymath-otel-collector
+    restart: unless-stopped
+    command: ['--config=/etc/otelcol/config.yaml']
+    volumes:
+      - /srv/polymath/current/ops/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    networks:
+      - internal
+
 networks:
-  # Private network for agent <-> postgres; no host exposure.
+  # Private network for agent <-> postgres + agent <-> otel-collector; no host exposure.
   internal:
     driver: bridge
   # Shared network the host Caddy lives on. `external: true` — the openemr stack

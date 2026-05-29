@@ -100,6 +100,42 @@ explain_back_live_eval:
         pnpm install --frozen-lockfile &&
         pnpm --filter @polymath/graph exec vitest run src/explainback/eval.test.ts"
 
+# LangSmith trace verification — the ONLY job that touches `LANGCHAIN_API_KEY`. Modelled
+# byte-for-byte on `explain_back_live_eval`: kept OFF merge-request pipelines so an
+# untrusted same-project MR can never read the key (it could otherwise modify a script to
+# exfiltrate it; masking only hides log output). It runs the agent against a live LLM with
+# tracing on, so a trace lands in the `polymath-dev`/`polymath-demo` LangSmith project — a
+# human confirms it in the LangSmith UI (criterion 4). LangChain's `ChatOpenAI` tracing is
+# purely env-driven via `@langchain/core`, so NO code wrap is needed — only the env tuple.
+# Runs:
+#   - automatically on a push to `main` (protected branch → the protected variables are
+#     exposed only to code already landed on the trusted branch), and
+#   - manually otherwise (maintainer-triggered), non-blocking.
+langsmith_live_verify:
+  stage: verify
+  needs: []
+  resource_group: heavy-droplet
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - when: manual
+      allow_failure: true
+  script:
+    - >
+      docker run --rm
+      -v "$CI_PROJECT_DIR":/src:ro
+      -e OPENAI_API_KEY="$OPENAI_API_KEY"
+      -e LANGCHAIN_TRACING_V2="true"
+      -e LANGCHAIN_API_KEY="$LANGCHAIN_API_KEY"
+      -e LANGCHAIN_PROJECT="polymath-dev"
+      node:22-bookworm-slim
+      bash -c "set -e &&
+        cp -a /src /work && cd /work &&
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm --filter @polymath/graph exec vitest run src/explainback/eval.test.ts"
+
 # The agent suite incl. the WS+Postgres integration test. The integration test
 # connects to TEST_POSTGRES_URL (a sibling container) instead of spawning its own
 # Docker pg — the shell-executor test container has no Docker socket. Sibling pg
