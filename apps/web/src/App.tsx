@@ -17,6 +17,7 @@ import {
   shouldSampleIntelligibility,
   type IntelligibilityAnswer,
 } from './components/IntelligibilityCheck.js';
+import { HandoffButton } from './components/HandoffButton.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
 
@@ -638,6 +639,11 @@ export function App(): ReactElement {
           requested only when this is clicked, never at session start. Mounts once
           the session id exists (the token endpoint is session-scoped). */}
       {sessionId && <AskTutorButton sessionId={sessionId} />}
+
+      {/* ADR-012 stretch: the persistent "ready to hand off to a tutor" affordance.
+          Visible from any phase; pure client navigation to the handoff artifact (no
+          wire event). Renders nothing until the session id exists. */}
+      <HandoffButton sessionId={sessionId} />
 
       <p aria-live="polite" data-conn={conn} data-phase={phase}>
         Agent: {conn}
