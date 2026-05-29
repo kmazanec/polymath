@@ -284,6 +284,17 @@ function firstLessonItem(input: AgentInput): TacticalMove | null {
   };
 }
 
+/** Lesson 3 (NAND universality) constrains the circuit workspace to NAND only —
+ *  the universality proof is "build any function from NAND alone", so the palette
+ *  must offer NAND and nothing else. Returns the `allowedGates` restriction for a
+ *  circuit `ProposedItem` on this lesson, or `undefined` (use the registry default
+ *  AND/OR/NOT) for every other lesson. `allowedGates` is meaningful only for the
+ *  circuit rep; the truth-table / pseudocode specs ignore it. */
+function circuitAllowedGates(input: AgentInput, rep: ProposedItem['rep']): ProposedItem['allowedGates'] {
+  if (rep !== 'circuit') return undefined;
+  return input.lesson.content.lessonId === 3 ? ['NAND'] : undefined;
+}
+
 /** The lesson item the current submit concerns, as a `ProposedItem`. Identified by
  *  the submit's `itemId` only — matched against both the lesson `itemId` (e.g.
  *  "l1-and") and the item's `targetExpression` (e.g. "A AND B"), since the web
@@ -304,6 +315,7 @@ function currentItem(input: AgentInput): ProposedItem | null {
     targetExpression: item.targetExpression,
     claimedTruthTable: item.truthTable,
     visibleReps: [rep],
+    allowedGates: circuitAllowedGates(input, rep),
   };
 }
 
@@ -318,6 +330,7 @@ function simplerVariant(current: ProposedItem, input: AgentInput): ProposedItem 
     targetExpression: simpler.targetExpression,
     claimedTruthTable: simpler.truthTable,
     visibleReps: current.visibleReps,
+    allowedGates: circuitAllowedGates(input, current.rep),
   };
 }
 
@@ -344,6 +357,7 @@ function pickLessonItem(input: AgentInput): TacticalMove | null {
       targetExpression: next.targetExpression,
       claimedTruthTable: next.truthTable,
       visibleReps: [rep],
+      allowedGates: circuitAllowedGates(input, rep),
     },
   };
 }

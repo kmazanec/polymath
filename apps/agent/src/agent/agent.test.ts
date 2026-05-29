@@ -167,6 +167,63 @@ describe('inner-agent flow (heuristic, key-free)', () => {
   });
 });
 
+describe('Lesson 3 — NAND-only circuit workspace', () => {
+  const l3 = loadLesson(3);
+  const SID3 = '00000000-0000-0000-0000-000000000003';
+  function l3Input(event: AgentInput['event']): AgentInput {
+    const currentSubmitCorrect = event.kind === 'submit' ? event.correct : undefined;
+    return {
+      event,
+      lesson: l3,
+      learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 1, ruleGatePassed: false },
+      recentHistory: [],
+      currentSubmitCorrect,
+    };
+  }
+
+  it('mounts the next circuit item with allowedGates restricted to NAND (AC#3)', async () => {
+    const firstItem = l3.content.items[0]!;
+    const action = await new StubAgentClient().propose(
+      l3Input({
+        kind: 'submit',
+        sessionId: SID3,
+        itemId: firstItem.itemId,
+        submission: firstItem.targetExpression,
+        correct: true,
+        repSubmission: {
+          rep: 'circuit',
+          expression: firstItem.targetExpression,
+          nodes: [],
+          edges: [],
+        },
+      }),
+    );
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount' && action.component.kind === 'CircuitBuilder') {
+      expect(action.component.allowedGates).toEqual(['NAND']);
+    } else {
+      throw new Error(`expected a CircuitBuilder mount, got ${action.type}`);
+    }
+    expect(() => Action.parse(action)).not.toThrow();
+  });
+
+  it('a truth-table submit on L3 is NOT given a NAND palette (allowedGates is circuit-only)', async () => {
+    const firstItem = l3.content.items[0]!;
+    const action = await new StubAgentClient().propose(
+      l3Input({
+        kind: 'submit',
+        sessionId: SID3,
+        itemId: firstItem.itemId,
+        submission: firstItem.targetExpression,
+        correct: true,
+      }),
+    );
+    expect(action.type).toBe('mount');
+    // A truth-table rep mount carries no allowedGates field at all.
+    expect(action.type === 'mount' && action.component.kind).toBe('TruthTablePractice');
+  });
+});
+
 describe('validateOutboundAction (acceptance criterion 5)', () => {
   it('passes a valid action through unchanged', () => {
     const valid = { type: 'no_action', reason: 'thinking', rationale: 'r' } as const;
