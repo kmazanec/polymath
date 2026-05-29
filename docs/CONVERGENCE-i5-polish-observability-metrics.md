@@ -2,17 +2,24 @@
 
 - **Integration branch:** `integration/i5-polish-observability-metrics`
 - **Cut from:** `build/i5-polish-observability-metrics` @ `5e6a273` (frozen I5 contracts)
-- **Tip:** `4d41df1` — 27 commits, all cherry-picked (linear, zero merge commits)
+- **Tip:** integration HEAD — all commits cherry-picked / convergence-resolved in place
+  (linear, **zero merge commits**, verified below)
 - **Date:** 2026-05-29
-- **Assembled by:** autonomous integrator (cherry-pick only)
+- **Assembled by:** autonomous integrator (cherry-pick only; re-verified suite + smoke at finalization)
 
 ## Decision summary
 
 Four features built off the frozen contract barrier. The dispatch's "preliminary
-blocked" list was a **stale early snapshot** (e.g. F-21 captured at chunk 1/14 mid
-duplicate-dispatch). The actual branch tips are complete, clean, all-green, with
-`unresolvedGating: []` on every feature; the high-severity findings on F-20/F-21
-were fixed-now on their branches. **All four are SHIPPED.** Nothing left out / blocked.
+blocked" list was a **stale early snapshot** for the *chunk counts* (e.g. F-21 captured
+at chunk 1/14 mid duplicate-dispatch); the actual branch tips are complete and green.
+F-18/F-19/F-20 ship with `unresolvedGating: []` (the high-severity findings on F-20/F-21
+were fixed-now on their branches). **F-21 ships WITH one DEFERRED medium spec-compliance
+gating finding** — Metric 4's transfer arm is structurally unmeasurable on the frozen
+wire (see its section); it behaves honest-fail-closed (a permanently-gray
+`insufficient_data` tile, never a fabricated pass), and the fix is an append-only
+contract follow-up, so the merge-sink dashboard ships and the finding is surfaced to the
+human in the MR rather than dropping the feature. **All four are SHIPPED.** Nothing left
+out / blocked.
 
 | Feature | Title | Shippable | Branch tip |
 | ------- | ----- | --------- | ---------- |
@@ -25,20 +32,33 @@ were fixed-now on their branches. **All four are SHIPPED.** Nothing left out / b
 
 ### Integrated suite (full `pnpm test` on the assembled branch)
 
+A whole-workspace `pnpm test` runs the agent project *concurrently* with the
+web/contract/etc. projects, all pointed at one shared `polymath-test-pg`; under that
+contention 7-8 DB-backed agent files intermittently show `expected N got 0` / `inserted
+0 rows`. The tell is **non-determinism** — the integrator observed a *different* set of
+files failing on each full run (run 1: `metrics.integration` + `sessionDeletion` +
+`voice/bridge`; run 2: `server.integration` + `server.observability` + `baseline/route`
++ `experiment/lifecycle` + `experiment/review` + `sessionDeletion` + `metrics.integration`).
+A regression fails the same tests deterministically; this does not.
+
+**Authoritative result = the union of two ISOLATED, deterministic green runs:**
+
 ```
-Test Files  2 failed | 95 passed (97)
-     Tests  2 failed | 820 passed | 2 skipped (824)
+# agent project alone (serial, owns the DB):
+Test Files  49 passed (49)
+     Tests  386 passed | 1 skipped (387)
+
+# all non-agent projects (contract/booleans/bkt/statechart/graph/web/baseline):
+contract 42 · booleans 92 · bkt 6 · statechart 26 · graph 42 (1 skip) · baseline 5 · web 223
+     => 436 passed | 1 skipped
 ```
 
-The 2 "failures" are **shared-Postgres write-contention between parallel test
-files**, not integration defects:
-`src/privacy/sessionDeletion.integration.test.ts` and `src/voice/bridge.test.ts`
-(barge-in). Both **pass in isolation** (`vitest run <both files>` → 12/12) and the
-**entire agent suite passes serially** (`vitest run --no-file-parallelism` → 386
-passed, 1 skipped, 49 files, exit 0). This is the documented pre-existing flake
-class (F-19/F-20 reports both flagged shared-DB contention); CI's `agent_test` job
-runs against a sibling Postgres and does not hit it. The 2 skips are the pre-existing
-voice cross-platform deferrals.
+Union: **97 files, 822 passed | 2 skipped (824)** — matching the full-run total. The 2
+skips are the key-gated live LLM evals (`agent/src/agent/eval`, `graph/src/explainback/eval`),
+not failures. This is the documented pre-existing flake class (F-19 escalated it as a
+test-harness re-architecture, not a per-feature edit; now re-confirmed at I5 integration
+and propagated to CLAUDE.md). CI's `agent_test` job runs against a dedicated sibling
+Postgres and does not hit it.
 
 `pnpm typecheck` → all 8 projects "Done", no errors (validates the merged wiring:
 combined imports in `index.ts`/`server.ts`/`App.tsx`, both metric routes, both
@@ -46,18 +66,18 @@ telemetry-persistence blocks all compile).
 
 ### Smoke (live Dockerized full stack — Postgres + agent + web + Caddy)
 
-Stack came up healthy on `CADDY_HOST_PORT=8091` (agent reported **Healthy** →
-migrations + boot-time seeding + the new OTel registration + the new
-deletion-sweep all succeeded; the new metrics/privacy/report code is COPYed into
-the image and boots). `infra/smoke.sh`: checks 1-3 PASS (`GET /` app shell, `GET
-/api/health` → `{"status":"ok"}`, `POST /api/session` → uuid). Check 4 (WS
-round-trip) reports "timeout" **only because the smoke probe's `node -e` sends no
-`Origin` header** and the CSWSH defense correctly 401s it — a pre-existing probe
-limitation, not a regression. Verified the WS path works with a proper origin:
+Stack rebuilt from scratch and came up healthy on `CADDY_HOST_PORT=8096` at
+finalization (agent reported **Healthy** → migrations + boot-time transfer-bank seeding
++ the new OTel `registerOtel` + the new deletion-sweep all succeeded; the new
+metrics/privacy/report/graph-summary code is COPYed into the image and boots — no
+WORKSPACE_PKG_NOT_FOUND/ENOENT). `infra/smoke.sh`: checks 1-3 PASS (`GET /` app shell,
+`GET /api/health` → `{"status":"ok"}`, `POST /api/session` → uuid). Check 4 reports
+"timeout" **only because the smoke script matches solely on `no_action`** — the WS round
+trip in fact succeeds; a fresh session's first turn deterministically mounts an item:
 
 ```
-OPEN
-MSG kind=action actionType=mount    # deterministic L1 first-item mount
+WS open
+MSG {"kind":"action",...,"action":{"type":"mount","component":{"kind":"TruthTablePractice","expression":"A OR B","claimedTruthTable":[0,1,1,1],...}}}
 ```
 
 **Primary new path (the three new operator endpoints), live:**
@@ -65,20 +85,26 @@ MSG kind=action actionType=mount    # deterministic L1 first-item mount
 - Fail-closed (NODE_ENV=production, secret unset): `/api/metrics` → **503**,
   `/api/session/:id/report` → **503**, `/api/session/:id/observability/ui-churn`
   → **503** (`{"error":"operator routes not configured"}`).
-- Authorized (operator secret set via override): wrong secret → **401**; good
-  secret →
-  - `GET /api/metrics` **200** — honest four-state payload (`state:"unconfigured"`
-    / `"insufficient_data"`, `value:null`, `pass:null` — the defensible gray
-    dashboard at empty N).
-  - `GET /report` **200** — contract-valid `SessionSummary`, `source:"in_session"`,
-    graceful nulls (`masteryStatus:"not_started"`, `explainBackVerdict.passed:false`).
+- Authorized (operator secret set via compose override `POLYMATH_OPERATOR_SECRET`):
+  wrong secret → **401**; good secret (after driving 2 `ui_mount` + 1 `submit` beacon
+  over a real WS into a fresh session) →
+  - `GET /api/metrics` **200** — honest four-state payload
+    (`ui_churn:"unconfigured"`, `intelligibility:"insufficient_data"` "need ≥5 yes/no
+    answers (have 0)", `value:null`, `pass:null` — the defensible gray dashboard at
+    empty N, never a fabricated pass/fail).
+  - `GET /api/session/:id/report` **200** — contract-valid `SessionSummary`,
+    `source:"in_session"`, `postTestScore:0.776`, `kcsStuck:["AND"]`, graceful nulls
+    (`preTestScore:null`, `growthMultiplier:null` — the "pre-test not run" state, AC#4).
   - `GET .../observability/ui-churn` **200** — `status:"insufficient_data"`,
-    fail-closed nulls.
+    `mountsPerMinute:null` (never NaN), `rawCounts.mountsTotal:2` (the two ui_mount
+    beacons persisted as non-integrity rows).
 
-**Neighbouring existing path (regression):** the WS submit learner-loop returns a
-`mount` action (core loop intact); the existing F-17 `POST /api/experiment/subjects`
-still works — **201** with good secret, **401** with wrong secret — confirming I5's
-shared `checkOperatorAuth` integrates cleanly with prior gated routes.
+**Neighbouring existing path (regression):** the WS submit learner-loop round-trips to a
+contract-valid `mount` action (core inner loop intact), and the `ui_mount` beacon
+persists without routing through the BKT/mastery fold (non-integrity invariant holds).
+The shared `checkOperatorAuth` fail-closed gate (`503` unset-in-prod, `401` wrong-secret)
+applies uniformly across the new F-18/F-20/F-21 routes and the prior F-17 experiment
+routes — no regression to the existing gated surface.
 
 ### Proof of linear history
 
@@ -221,7 +247,28 @@ conflict required human judgment; nothing was forced or skipped.**
   split-test (`circuitSuppressionArm`, default-off so it never perturbs probe integrity).
   The dispatch snapshot was stale (chunk 1/14, duplicate-dispatch); the branch tip is
   the complete feature, clean and green.
-- **Unresolved gating:** none.
+- **Unresolved gating (DEFERRED to a follow-up, shipped honest-fail-closed — re-confirmed
+  at integration against the current tip):** **Metric 4 (dependency check) transfer arm
+  is structurally unmeasurable in production.** `metric4.ts` reads transfer time from
+  `responseTimeMs` on `kind==='transfer_submitted'` rows, and `fetchMetricInputs.ts`
+  maps `responseTimeMs` from the persisted raw `ClientEvent` — but the FROZEN
+  `transfer_submitted` variant (`packages/contract/src/wire.ts:107-111`) carries only
+  `{kind, sessionId, itemId, submission}`, no `responseTimeMs` (only `submit` has it),
+  and `transferVerdict` carries no timing either. So `transferTimes` is always empty for
+  real data → Metric 4's transfer arm is permanently `insufficient_data` in production,
+  and `metric4.test.ts` (the `transfer(ts,correct,responseTimeMs)` helper, lines 19-20)
+  fabricates a `responseTimeMs` the wire never sends, so the green unit test asserts a
+  shape production cannot produce. This defeats AC#2 ("reads from real data — not stubs")
+  for the dependency-check metric. **Why shipped, not dropped:** (a) severity is *medium*
+  / spec-compliance, NOT security, NOT contract-drift (contracts were consumed unchanged);
+  (b) the *runtime* behavior is honest fail-closed — the worst case is a permanently-gray
+  `insufficient_data` tile, never a fabricated pass, fully consistent with the iteration's
+  four-state-honest thesis; (c) the fix crosses the FROZEN contract boundary + the web
+  client (append-only OPTIONAL `responseTimeMs` on `transfer_submitted`, wire the web
+  transfer-submit to send it mirroring the `submit` path, add a real-shape test), so it is
+  NOT a localized metric edit and legitimately belongs in a follow-up — dropping the
+  merge-sink dashboard over it would gut the iteration. **Surfaced in the MR for human
+  action.** The other five metrics fold real `events.app IS NULL` data correctly.
 - **Resolved high finding (fixed-now on-branch, `0665ec1`):** the intelligibility
   integration test asserted an absolute global `sampleN` against a shared,
   never-truncated Postgres (red on every re-run); fixed to assert the delta
@@ -229,6 +276,12 @@ conflict required human judgment; nothing was forced or skipped.**
 - **Deferred low finding:** `fetchMetricInputs` N+1 (2 queries per experiment subject
   for metrics 5/6) — infrequently-hit operator route over a small cohort (N≈5-8).
 - **QA:** `/api/metrics` live 503/401/200 with the honest four-state payload (batch
-  smoke). Metric units green in isolation (34/34) + full serial agent suite.
-- **Retro propagated:** nothing material (its high finding is a test-isolation fix; the
-  shared-DB-contention lesson is already known and re-confirmed at batch level).
+  smoke — re-confirmed at integration: authed `200` returns `ui_churn:unconfigured`,
+  `intelligibility:insufficient_data` "need ≥5 have 0", no fabricated pass/fail; wrong
+  secret `401`; unset-secret-in-prod `503`). Metric units green in isolation + full
+  serial agent suite (49 files / 386 passed).
+- **Retro propagated:** **YES — added a CLAUDE.md note** on the shared-`polymath-test-pg`
+  whole-workspace contention flake (the non-determinism tell, the swallow-on-error
+  transfer_bank seed amplifier, and "isolated-run green is authoritative"). The Metric-4
+  unresolved gating finding above is surfaced to the human in the MR (its fix is an
+  append-only contract follow-up, recorded as a load-bearing review area).
