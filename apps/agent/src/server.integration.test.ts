@@ -889,6 +889,146 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     });
   });
 
+  /**
+   * F-14 — cross-lesson recall reflex (server-derived, deterministic). Drives the
+   * reflex through the `POLYMATH_ENABLE_TEST_SEAMS`-gated synthetic-L1-BKT seam
+   * (`?testL1Bkt=…`) because no real L1 `learner_state` exists in an L2 session until
+   * F-15. Asserts: (1) a regressed L1 KC mounts a `CrossLessonRecall` on the next
+   * turn (AC#1/AC#2); (2) the per-KC throttle suppresses a SECOND recall for the same
+   * KC in the same session (AC#4); (3) a DIFFERENT regressed KC still fires (AC#4);
+   * (4) the recall is visible in the replay endpoint (AC#5). The throttle is the
+   * UNCAPPED count query, so this exercises the monotonic-counter invariant end-to-end.
+   */
+  it('mounts CrossLessonRecall once per regressed L1 KC and suppresses repeats (F-14 AC#1,2,4,5)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // Synthetic L1 BKT: NOT slipped to 0.72 (regressed), AND held at 0.95 (no recall).
+    const seamUrl = `${wsUrl}?testL1Bkt=${encodeURIComponent('NOT:0.72,AND:0.95')}`;
+
+    // Drive frames over ONE socket; each turn re-reads the uncapped throttle. The
+    // inter-frame delay lets the async events insert land before the next read.
+    const driveOn = (url: string, frames: Record<string, unknown>[]): Promise<Action[]> =>
+      new Promise<Action[]>((resolve, reject) => {
+        const ws = new WebSocket(url);
+        const out: Action[] = [];
+        let sent = 0;
+        ws.on('open', () => ws.send(JSON.stringify(frames[sent++])));
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            out.push(Action.parse(msg.action));
+            if (sent < frames.length) setTimeout(() => ws.send(JSON.stringify(frames[sent++])), 300);
+            else {
+              ws.close();
+              resolve(out);
+            }
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('recall sequence timed out')), 10000);
+      });
+
+    const firstTwo = await driveOn(seamUrl, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
+    ]);
+    // AC#1/AC#2: the FIRST turn mounts a CrossLessonRecall naming the regressed KC (NOT).
+    const recall0 = firstTwo[0];
+    expect(recall0?.type).toBe('mount');
+    expect(recall0?.type === 'mount' && recall0.component.kind).toBe('CrossLessonRecall');
+    if (recall0?.type === 'mount' && recall0.component.kind === 'CrossLessonRecall') {
+      expect(recall0.component.kc).toBe('NOT');
+      expect(recall0.component.priorBktAtRegression).toBeCloseTo(0.72, 5);
+      expect(recall0.component.reminderBody).toContain('NOT');
+    }
+    // AC#4: the SECOND turn does NOT re-mount the recall for NOT (per-KC throttle).
+    const recall1 = firstTwo[1];
+    expect(recall1?.type === 'mount' && recall1.component.kind === 'CrossLessonRecall').toBe(false);
+
+    // A DIFFERENT KC slips (OR → 0.70) on a later turn → fires for OR (AC#4).
+    const orSeam = `${wsUrl}?testL1Bkt=${encodeURIComponent('NOT:0.72,OR:0.70')}`;
+    const [orTurn] = await driveOn(orSeam, [
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true },
+    ]);
+    expect(orTurn?.type).toBe('mount');
+    expect(
+      orTurn?.type === 'mount' && orTurn.component.kind === 'CrossLessonRecall' && orTurn.component.kc,
+    ).toBe('OR');
+
+    // AC#5: the recall is visible in the replay endpoint (the demo's cross-lesson value).
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { action?: { type: string; component?: { kind: string; kc?: string } } } }[];
+    };
+    const recallKcs = replay.events
+      .map((e) => e.payload.action)
+      .filter(
+        (a): a is { type: string; component: { kind: string; kc?: string } } =>
+          a?.type === 'mount' && a.component?.kind === 'CrossLessonRecall',
+      )
+      .map((a) => a.component.kc);
+    // Exactly one NOT recall (throttled) and one OR recall.
+    expect(recallKcs.filter((kc) => kc === 'NOT').length).toBe(1);
+    expect(recallKcs.filter((kc) => kc === 'OR').length).toBe(1);
+  });
+
+  /**
+   * F-14 no-false-positive guard: on a plain L1 session with no synthetic map and no
+   * real prior-lesson `learner_state`, the recall reflex never fires — a benign submit
+   * returns the normal tactical mount, never a CrossLessonRecall (the production-path
+   * default: no trigger until F-15 preserves L1 state in-session).
+   */
+  it('does NOT fire recall on a plain L1 submit with no synthetic map (F-14 no false-positive)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const [action] = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true },
+    ]);
+    expect(action?.type === 'mount' && action.component.kind === 'CrossLessonRecall').toBe(false);
+  });
+
+  /**
+   * F-14 finding #4 — the recall reflex must NOT swallow a learner's question. Even
+   * with a regressed L1 KC in the seam (so a recall WOULD fire on a routine submit),
+   * a `learner_question` turn returns the agent's `answer_question` UNTOUCHED — recall
+   * is an allow-list reflex (it only supersedes a routine practice/intro mount or a
+   * no_action), never an `answer_question`. Otherwise the learner asks a question and
+   * gets a recall card instead, their answer discarded.
+   */
+  it('does NOT supersede an answer_question with a recall, even when an L1 KC is regressed (F-14 finding #4)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // NOT regressed to 0.72 in the seam — a routine submit on this session WOULD mount
+    // a recall. But the learner asks a question, so the answer must pass through.
+    const seamUrl = `${wsUrl}?testL1Bkt=${encodeURIComponent('NOT:0.72')}`;
+    const driveOneOn = (url: string, frame: Record<string, unknown>): Promise<Action> =>
+      new Promise<Action>((resolve, reject) => {
+        const ws = new WebSocket(url);
+        ws.on('open', () => ws.send(JSON.stringify(frame)));
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            ws.close();
+            resolve(Action.parse(msg.action));
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('question turn timed out')), 10000);
+      });
+
+    const action = await driveOneOn(seamUrl, {
+      kind: 'learner_question',
+      sessionId,
+      question: 'what does an AND gate output?',
+    });
+    // The learner's question is answered — NOT replaced by a recall card.
+    expect(action.type).toBe('answer_question');
+    expect(action.type === 'mount' && action.component.kind === 'CrossLessonRecall').toBe(false);
+  });
+
   // ── F-11 explain-back rubric: REACHABILITY (the I1 inert-refusal lesson) ──────
   // The single most important F-11 test: a raw `explain_back_recording_ended`
   // ClientEvent driven through the real fold (handleClientFrame), NOT a hand-set

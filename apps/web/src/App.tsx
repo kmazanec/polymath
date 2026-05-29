@@ -87,6 +87,12 @@ export function App(): ReactElement {
   /** The current hint, shown in a side slot — NOT in the main workspace, so the
    *  practice item the learner is solving stays mounted and answerable. */
   const [hint, setHint] = useState<ComponentSpec | null>(null);
+  /** F-14: the current cross-lesson recall callout, shown in a side slot (like the
+   *  hint) — NOT in the main workspace. The recall is a short, dismissible callout;
+   *  the practice item the learner is mid-solving MUST survive it (a workspace
+   *  replacement would destroy the in-progress item with no restore path). Dismissing
+   *  it simply clears this slot and resumes the practice flow at the same item (AC#3). */
+  const [recall, setRecall] = useState<ComponentSpec | null>(null);
   /** The id of the item currently mounted, echoed on submit. */
   const currentItemId = useRef<string>('l1-and');
   /** When the current item was mounted (for the submit's response-time report). */
@@ -136,10 +142,15 @@ export function App(): ReactElement {
             if (r.lessonEvents) for (const e of r.lessonEvents) send(e);
             if (r.mount) {
               // A HintCard renders in the side hint slot, leaving the practice item
-              // mounted (the learner keeps solving). Everything else is the main
+              // mounted (the learner keeps solving). A CrossLessonRecall is likewise a
+              // non-destructive side callout — it must NOT clobber the in-progress
+              // practice item (the spec's "short callout the learner dismisses before
+              // continuing", not a workspace replacement). Everything else is the main
               // workspace.
               if (r.mount.kind === 'HintCard') {
                 setHint(r.mount);
+              } else if (r.mount.kind === 'CrossLessonRecall') {
+                setRecall(r.mount);
               } else {
                 setMounted(r.mount);
                 setHint(null); // a new workspace clears any stale hint
@@ -232,6 +243,17 @@ export function App(): ReactElement {
     setQuestion('');
   }, [question, sessionId]);
 
+  // F-14 AC#3: dismissing the recall callout clears the side slot and resumes the
+  // practice flow at the SAME in-progress item — which is still mounted in the main
+  // workspace because the recall never replaced it. The recall is server-throttled to
+  // ≤1 per session per KC, so there is nothing to re-request; clearing the slot is the
+  // resume. (Argument is the recall's `currentItemId`, unused here but kept so the
+  // callback matches `RenderOptions.onCrossLessonRecallDismiss` and a future flow that
+  // needs to re-request an item can use it.)
+  const onCrossLessonRecallDismiss = useCallback((_currentItemId: string): void => {
+    setRecall(null);
+  }, []);
+
   const onRequestHint = useCallback((): void => {
     if (!sessionId) return;
     socketRef.current?.send({
@@ -304,6 +326,15 @@ export function App(): ReactElement {
       </AnimateOrNot>
 
       {hint && <aside className="hint-slot">{renderComponent(hint)}</aside>}
+
+      {/* F-14: the cross-lesson recall callout, in its own side slot so the
+          in-progress practice item (the main workspace) survives. Dismissing it
+          clears the slot and resumes the practice flow at that same item (AC#3). */}
+      {recall && (
+        <aside className="recall-slot">
+          {renderComponent(recall, { onCrossLessonRecallDismiss })}
+        </aside>
+      )}
 
       {answer && <div className="agent-answer-slot">{renderComponent(answer)}</div>}
 

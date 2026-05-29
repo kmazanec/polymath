@@ -13,6 +13,7 @@ import {
   type ExplainBackEndPayload,
 } from './ExplainBackPrompt.js';
 import { MasteryCelebration } from './MasteryCelebration.js';
+import { CrossLessonRecall } from './CrossLessonRecall.js';
 
 /**
  * The curated component registry renderer (ADR-005). A single exhaustive switch
@@ -45,6 +46,11 @@ export interface RenderOptions {
   explainBackDeps?: ExplainBackPromptDeps;
   /** F-11: dispatch the `explain_back_recording_ended` event when the window closes. */
   onExplainBackEnd?: (payload: ExplainBackEndPayload) => void;
+  /** F-14: dismiss the cross-lesson recall card and resume practice at the current
+   *  item. Called with the recall spec's `currentItemId`. The recall is a one-shot
+   *  callout (server-throttled to ≤1 per session per KC), so the app re-requests the
+   *  next item rather than re-mounting the card. */
+  onCrossLessonRecallDismiss?: (currentItemId: string) => void;
 }
 
 /** A safe no-op explain-back seam for when no real voice client is wired (tests,
@@ -105,12 +111,13 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
       );
     case 'MasteryCelebration':
       return <MasteryCelebration spec={spec} />;
+    case 'CrossLessonRecall':
+      // F-14: text-only cross-lesson recall card (ADR-012). No rep workspace — the
+      // probe-integrity boundary; dismiss resumes practice at the current item.
+      return <CrossLessonRecall spec={spec} onDismiss={opts.onCrossLessonRecallDismiss} />;
     case 'IntroExplanation':
     case 'WorkedExample':
     case 'ConfidenceCheck':
-    // I3 barrier: CrossLessonRecall enters the union here so the exhaustive switch
-    // compiles; F-14 replaces this stub with the real text-only recall renderer.
-    case 'CrossLessonRecall':
       return <Tbd kind={spec.kind} />;
     default: {
       // Exhaustiveness: if a new ComponentSpec variant is added without a case

@@ -7,6 +7,7 @@ import {
   ClientEvent,
   noAction,
   type Action,
+  type ComponentSpec,
   type ExplainBackVerdict,
   type ServerMessage,
 } from '@polymath/contract';
@@ -34,6 +35,7 @@ import {
   type LoggedEvent,
 } from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
+import { computeRecall } from './agent/recallReflex.js';
 import { loadLesson, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
 import { createRateLimiter } from './voice/rateLimiter.js';
@@ -104,24 +106,45 @@ const MAX_SESSION_EVENTS = 500;
  * unboundedly. Per-process is sufficient: a single agent process owns the WS
  * connection for a session.
  */
-const explainBackLocks = new Map<string, Promise<unknown>>();
-function withExplainBackLock<T>(sessionId: string, targetItemId: string, fn: () => Promise<T>): Promise<T> {
-  const key = `${sessionId} ${targetItemId}`;
-  const prior = explainBackLocks.get(key) ?? Promise.resolve();
-  // Chain after the prior holder (ignoring its result/rejection), then run fn.
-  const run = prior.then(fn, fn);
-  // Store the settled chain so the next caller waits for THIS one too. Prune the key
-  // once this is the tail (no later caller chained on), so the map stays bounded.
-  const tail = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  explainBackLocks.set(key, tail);
-  void tail.then(() => {
-    if (explainBackLocks.get(key) === tail) explainBackLocks.delete(key);
-  });
-  return run;
+/** A per-key promise-chain mutex: each caller awaits the prior holder of the same
+ *  key before running, so a read-then-write critical section can't interleave across
+ *  concurrent frames. Keys are pruned when their chain drains so the map stays
+ *  bounded. Per-process is sufficient (one agent process owns a session's socket). */
+function makeKeyedLock(): <T>(key: string, fn: () => Promise<T>) => Promise<T> {
+  const locks = new Map<string, Promise<unknown>>();
+  return <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+    const prior = locks.get(key) ?? Promise.resolve();
+    const run = prior.then(fn, fn);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    locks.set(key, tail);
+    void tail.then(() => {
+      if (locks.get(key) === tail) locks.delete(key);
+    });
+    return run;
+  };
 }
+
+const explainBackLockBy = makeKeyedLock();
+function withExplainBackLock<T>(sessionId: string, targetItemId: string, fn: () => Promise<T>): Promise<T> {
+  return explainBackLockBy(`${sessionId} ${targetItemId}`, fn);
+}
+
+/**
+ * F-14 finding #3 — serialize the cross-lesson recall decision PER SESSION. The "≤1
+ * recall per session per KC" throttle is a read-then-insert: `computeRecall` reads the
+ * uncapped `readRecalledKcs` count, and the recall row is only persisted at the end of
+ * the turn. `ws.on('message')` dispatches frames concurrently with no per-session
+ * serialization, so two rapid submits for the same regressed KC could BOTH read zero
+ * prior recalls before either inserts — both mounting a recall, violating AC#4 under
+ * concurrency (exactly the race `withExplainBackLock` exists to prevent for the judge
+ * cap). Holding this lock from the recall read THROUGH the events insert closes the
+ * window: the first frame's recall row is visible to the second frame's read. The lock
+ * scopes only the recall-decide→persist tail, so unrelated turn work still parallelizes.
+ */
+const withRecallLock = makeKeyedLock();
 
 /**
  * CLUSTER E — the topic-guardrail MUST be monotonic across the WHOLE session, not
@@ -143,6 +166,25 @@ async function countOffTopicAnswers(db: Db, sessionId: string): Promise<number> 
         AND ${events.payload} -> 'action' ->> 'topicClassification' = 'off_topic'`,
     );
   return rows[0]?.n ?? 0;
+}
+
+/** F-14 dev/test seam parser: `NOT:0.72,AND:0.5` → `{ NOT: 0.72, AND: 0.5 }`.
+ *  A malformed pair (no colon, non-numeric, NaN, out of [0,1]) is SKIPPED — the seam
+ *  degrades a bad value away rather than crashing the connection. An empty/whitespace
+ *  string or no valid pairs → `undefined` (the reflex then uses the real
+ *  `learner_state` read). Only ever reached behind the gated devSeams flag. */
+function parseTestL1Bkt(raw: string | null): Record<string, number> | undefined {
+  if (!raw) return undefined;
+  const map: Record<string, number> = {};
+  for (const pair of raw.split(',')) {
+    const idx = pair.indexOf(':');
+    if (idx <= 0) continue;
+    const kc = pair.slice(0, idx).trim();
+    const bkt = Number(pair.slice(idx + 1).trim());
+    if (kc.length === 0 || Number.isNaN(bkt) || bkt < 0 || bkt > 1) continue;
+    map[kc] = bkt;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
 }
 
 /** Lessons are immutable per process; load once and cache. */
@@ -771,6 +813,15 @@ export interface FrameOptions {
    *  lesson regardless of the seam — the binding is `max(durable, seam-allowed
    *  request)`, never a downgrade. */
   allowLessonOverride?: boolean;
+  /** F-14 dev/test seam (`?testL1Bkt=NOT:0.72,AND:0.5`): a synthetic prior-lesson
+   *  (L1) KC → BKT map injected for the cross-lesson recall reflex. There is NO
+   *  production recall trigger until F-15 preserves L1 `learner_state` in-session;
+   *  standalone build/eval drives the reflex deterministically through this seam.
+   *  Gated like the others (`NODE_ENV!=='production'` AND `POLYMATH_ENABLE_TEST_SEAMS
+   *  ==='true'`, default OFF). When present it REPLACES the `learner_state` read; the
+   *  recall still flows through the same throttle + phase suppression, so the seam
+   *  exercises the real reflex, it doesn't bypass it. */
+  testL1Bkt?: Record<string, number>;
 }
 
 /**
@@ -1085,57 +1136,154 @@ export async function handleClientFrame(
         }
       : validatedAction;
 
-  // ADR-010 Layer 3: a HintCard level-3 mount is logged as unverified_prose.
-  // All other mounts go through the Layer-2 validator (layer 2); non-mounts
-  // are layer 1. This is set on the pre-rejection `shaped` action so the log
-  // reflects the original proposal even when it was downgraded.
-  // The transfer-pass reflex replaced the proposal with a deterministic
-  // server-authored ExplainBackPrompt mount; record THAT as a clean pass (it never
-  // went through the LLM, so the proposal-based layer below would mislabel it).
-  const reflexFired = action !== validatedAction;
-  const isL3Hint =
-    shaped.type === 'mount' &&
-    shaped.component.kind === 'HintCard' &&
-    shaped.component.level === 3;
-  const validationLayer = reflexFired ? 2 : isL3Hint ? 3 : shaped.type === 'mount' ? 2 : 1;
-  const validationStatus = reflexFired
-    ? 'pass'
-    : isL3Hint
-      ? 'unverified_prose'
-      : layer2.ok
-        ? 'pass'
-        : 'reject';
+  // F-14 CROSS-LESSON RECALL REFLEX (deterministic SERVER reflex, NOT an LLM menu
+  // move — it never goes through proposeMove/TacticalMove/MoveSchema). When the
+  // learner regresses on a prior-lesson (L1) KC mid-L2 (its server-derived BKT slips
+  // below 0.85), the SERVER mounts a text-only `CrossLessonRecall` card — bypassing
+  // the LLM (the BKT check IS the earned-it gate, so the server is the truth-maker).
+  //
+  // Gating (fail-closed defaults):
+  //  - SUPPRESS during the `transferring` phase (`inTransferProbe`): a recall mid-probe
+  //    would break the held-out-rep measurement and distract the assessment.
+  //  - Only ever supersede a ROUTINE turn — recall is the LOWEST-precedence reflex.
+  //    This is an ALLOW-LIST, not a deny-list: recall fires ONLY when the turn would
+  //    otherwise be a `no_action` OR a routine practice/intro `mount` (a practice
+  //    item, a worked example, an intro, a hint, a confidence check). It must NEVER
+  //    replace an `answer_question` (the learner asked a question — discarding their
+  //    answer for a recall card silently swallows the question), a `transition`, or an
+  //    integrity/privileged mount (MasteryCelebration, ExplainBackPrompt, TransferProbe,
+  //    AgentAnswer). A deny-list of three kinds would let recall hijack exactly those
+  //    legitimate turns — the "fixed the happy path, broke the legitimate path" trap.
+  //  - NO production trigger until F-15. The reflex fires ONLY through the
+  //    `POLYMATH_ENABLE_TEST_SEAMS`-gated synthetic-L1-BKT seam (`opts.testL1Bkt`),
+  //    which drives it standalone for build/eval. A bare `lessonId > 1` heuristic
+  //    would fire on ordinary low L2 BKT (the (session,kc)-keyed `learner_state`
+  //    holds the LIVE L2 value, not a preserved L1 snapshot) — a false-positive
+  //    recall. F-15 supplies the real preserved-L1 trigger (finding #5).
+  // The "≤1 recall per session per KC" throttle is a SEPARATE UNCAPPED count query
+  // (computeRecall → readRecalledKcs), never the bounded fold (monotonic invariant).
+  const recallSupersedableMountKinds = new Set<ComponentSpec['kind']>([
+    'TruthTablePractice',
+    'CircuitBuilder',
+    'PseudocodeChallenge',
+    'LessonIntro',
+    'IntroExplanation',
+    'WorkedExample',
+    'HintCard',
+    'ConfidenceCheck',
+  ]);
+  const recallEligible =
+    !inTransferProbe &&
+    (action.type === 'no_action' ||
+      (action.type === 'mount' && recallSupersedableMountKinds.has(action.component.kind)));
+  // The recall throttle is a read-then-insert (`computeRecall` reads the uncapped
+  // recalled-KC count; the row is persisted below). Hold the per-session recall lock
+  // across BOTH so two concurrent frames for the same regressed KC can't each read
+  // zero prior recalls and both mount a recall (F-14 finding #3 / AC#4 under
+  // concurrency). The whole decide→persist→send tail runs inside the lock.
+  await withRecallLock(event.sessionId, async () => {
+    let recallAction: Action | null = null;
+    if (recallEligible) {
+      // F-14 finding #5 — the reflex fires ONLY through the `POLYMATH_ENABLE_TEST_SEAMS`-
+      // gated synthetic-L1-BKT seam, NOT on a bare `lessonId > 1` heuristic. The build
+      // plan is explicit: there is NO production recall trigger until F-15 preserves a
+      // *distinguishable* L1 `learner_state` in-session. Without that, `learner_state`
+      // is keyed `(sessionId, kc)` with ONE row per pair and L1/L2 share KC names, so a
+      // bare `lessonId > 1` trigger reads the learner's LIVE, mid-L2-updated BKT and
+      // fires on ordinary low L2 BKT (normal learning) — a "your BKT is low" card
+      // mislabeled "you mastered this in Lesson 1". So gate on the seam alone here;
+      // F-15 supplies the real preserved-L1 trigger (a frozen snapshot it can pass in).
+      const useReflex = opts.testL1Bkt !== undefined;
+      if (useReflex) {
+        // L1 KCs come from lesson 1's content (always loadable); the cross-lesson
+        // reflex reminds the learner of a *prior*-lesson KC regardless of which L2
+        // item is current. `currentItemId` is the item the learner is working.
+        const l1Kcs = getLesson(1).content.knowledgeComponents;
+        // `explain_back_recording_ended` is handled+returned earlier, so the only
+        // item-bearing kinds reachable here are submit / request_hint / transfer_submitted.
+        const currentItemId =
+          event.kind === 'submit' ||
+          event.kind === 'request_hint' ||
+          event.kind === 'transfer_submitted'
+            ? event.itemId
+            : '';
+        const hit = await computeRecall(
+          deps.db,
+          event.sessionId,
+          currentItemId,
+          l1Kcs,
+          opts.testL1Bkt,
+        );
+        if (hit) {
+          recallAction = {
+            type: 'mount',
+            component: {
+              kind: 'CrossLessonRecall',
+              kc: hit.kc,
+              currentItemId: hit.currentItemId,
+              priorBktAtRegression: hit.priorBktAtRegression,
+              reminderBody: hit.reminderBody,
+            },
+            rationale: `cross-lesson recall: L1 KC "${hit.kc}" regressed to BKT ${hit.priorBktAtRegression.toFixed(3)} mid-L2 (server reflex, F-14)`,
+          };
+        }
+      }
+    }
+    const finalAction: Action = recallAction ?? action;
 
-  await deps.db.insert(events).values({
-    sessionId: event.sessionId,
-    kind: event.kind,
-    payload: {
-      event,
-      action,
-      learnerSnapshot: learnerDerived.snapshot,
-      // The transfer verdict (when this turn is a transfer_submitted) is recorded
-      // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
-      ...(transferVerdict ? { transferVerdict } : {}),
-      // F-12: the explain-back verdict (when this turn is explain_back_recording_ended)
-      // persisted at `payload.explainBackVerdict` — the F-11→F-12 seam. `toLoggedEvent`
-      // reads `.passed` on a later fold so the gate's explain-back condition clears.
-      // (F-11's route will produce this verdict; F-12 reads/persists the shared slot.)
-      ...(explainBackVerdict ? { explainBackVerdict } : {}),
-      // F-12 AC#5: the per-turn mastery-gate evaluation, so the replay can show the
-      // gate failing then passing across the session (the demo "show the gate").
-      gateEvaluation: { passed: gateEvaluation.passed, blockers: gateEvaluation.blockers },
-      // F-12 AC#3: the statechart-style decision on a proposed mastery transition
-      // (present only on a transition→mastered turn).
-      ...(statechart ?? {}),
-      validation: {
-        layer: validationLayer,
-        status: validationStatus,
-        detail: layer2.ok ? (downgraded ? 'downgraded malformed proposal' : 'ok') : layer2.detail,
+    // ADR-010 Layer 3: a HintCard level-3 mount is logged as unverified_prose.
+    // All other mounts go through the Layer-2 validator (layer 2); non-mounts
+    // are layer 1. This is set on the pre-rejection `shaped` action so the log
+    // reflects the original proposal even when it was downgraded.
+    // The transfer-pass reflex replaced the proposal with a deterministic
+    // server-authored ExplainBackPrompt mount; record THAT as a clean pass (it never
+    // went through the LLM, so the proposal-based layer below would mislabel it). The
+    // F-14 cross-lesson recall reflex is likewise a server-authored mount → clean pass.
+    const reflexFired = action !== validatedAction || recallAction !== null;
+    const isL3Hint =
+      shaped.type === 'mount' &&
+      shaped.component.kind === 'HintCard' &&
+      shaped.component.level === 3;
+    const validationLayer = reflexFired ? 2 : isL3Hint ? 3 : shaped.type === 'mount' ? 2 : 1;
+    const validationStatus = reflexFired
+      ? 'pass'
+      : isL3Hint
+        ? 'unverified_prose'
+        : layer2.ok
+          ? 'pass'
+          : 'reject';
+
+    await deps.db.insert(events).values({
+      sessionId: event.sessionId,
+      kind: event.kind,
+      payload: {
+        event,
+        action: finalAction,
+        learnerSnapshot: learnerDerived.snapshot,
+        // The transfer verdict (when this turn is a transfer_submitted) is recorded
+        // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
+        ...(transferVerdict ? { transferVerdict } : {}),
+        // F-12: the explain-back verdict (when this turn is explain_back_recording_ended)
+        // persisted at `payload.explainBackVerdict` — the F-11→F-12 seam. `toLoggedEvent`
+        // reads `.passed` on a later fold so the gate's explain-back condition clears.
+        // (F-11's route will produce this verdict; F-12 reads/persists the shared slot.)
+        ...(explainBackVerdict ? { explainBackVerdict } : {}),
+        // F-12 AC#5: the per-turn mastery-gate evaluation, so the replay can show the
+        // gate failing then passing across the session (the demo "show the gate").
+        gateEvaluation: { passed: gateEvaluation.passed, blockers: gateEvaluation.blockers },
+        // F-12 AC#3: the statechart-style decision on a proposed mastery transition
+        // (present only on a transition→mastered turn).
+        ...(statechart ?? {}),
+        validation: {
+          layer: validationLayer,
+          status: validationStatus,
+          detail: layer2.ok ? (downgraded ? 'downgraded malformed proposal' : 'ok') : layer2.detail,
+        },
       },
-    },
-  });
+    });
 
-  send(ws, { kind: 'action', sessionId: event.sessionId, action });
+    send(ws, { kind: 'action', sessionId: event.sessionId, action: finalAction });
+  });
 }
 
 export interface PolymathServer {
@@ -1286,10 +1434,21 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     // `lessonIdForEvent` reads the clamped binding, never the raw frame). The web
     // client sets it from its own `?lesson` param.
     const allowLessonOverride = devSeams && reqUrl.searchParams.get('lesson') !== null;
+    // F-14 dev seam: `?testL1Bkt=NOT:0.72,AND:0.5` injects a synthetic prior-lesson
+    // KC → BKT map so the cross-lesson recall reflex is drivable standalone (no real
+    // L1 `learner_state` exists in an L2 session until F-15). Gated (devSeams) — inert
+    // in production. A malformed pair is skipped (degrade, never crash); empty → no map
+    // → the real `learner_state` read is used instead.
+    const testL1Bkt = devSeams ? parseTestL1Bkt(reqUrl.searchParams.get('testL1Bkt')) : undefined;
     ws.on('message', (data) => {
       // The frame handler must never reject unhandled — an unawaited rejection
       // (e.g. a DB error on a bad sessionId) would crash the process.
-      handleClientFrame(deps, ws, data.toString(), { testForceMastered, testExplainBackVerdict, allowLessonOverride }).catch((err) => {
+      handleClientFrame(deps, ws, data.toString(), {
+        testForceMastered,
+        testExplainBackVerdict,
+        allowLessonOverride,
+        testL1Bkt,
+      }).catch((err) => {
         console.error('error handling client frame', err);
         try {
           send(ws, { kind: 'error', message: 'internal error' });
