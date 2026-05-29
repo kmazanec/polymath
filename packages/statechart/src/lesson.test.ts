@@ -169,6 +169,44 @@ describe('createLessonMachine (F-13 lesson factory — parameterised spine)', ()
     expect(Object.keys(l2.states).sort()).toEqual([...PhaseName.options].sort());
     expect(l2.states.mastered.type).toBe('final');
   });
+
+  // Lesson 3 (NAND universality) rides the SAME generic spine — no new machine.
+  function startL3(masteryReady = false) {
+    const actor = createActor(createLessonMachine({ lessonId: 3 }), {
+      input: { lessonId: 3, masteryReady },
+    });
+    actor.start();
+    return actor;
+  }
+
+  it('L3 exposes the full locked phase set (AC#6 — same 4-condition gate spine)', () => {
+    const l3 = createLessonMachine({ lessonId: 3 });
+    expect(Object.keys(l3.states).sort()).toEqual([...LESSON_PHASES].sort());
+    expect(l3.states.mastered.type).toBe('final');
+  });
+
+  it('L3 starts in introducing with lessonId 3 in context', () => {
+    const actor = startL3();
+    expect(actor.getSnapshot().value).toBe('introducing');
+    expect(actor.getSnapshot().context.lessonId).toBe(3);
+  });
+
+  it('L3 phase behaviour is identical to L1/L2 and reaches mastered only when the gate holds', () => {
+    const refused = startL3(false);
+    refused.send({ type: 'start_practice' });
+    expect(refused.getSnapshot().value).toBe('practicing');
+    refused.send({ type: 'submit' });
+    expect(refused.getSnapshot().value).toBe('assessed');
+    refused.send({ type: 'mastery_ok' });
+    expect(refused.getSnapshot().value).toBe('assessed'); // gate unsatisfied → blocked
+
+    const ok = startL3(true);
+    ok.send({ type: 'start_practice' });
+    ok.send({ type: 'submit' });
+    ok.send({ type: 'mastery_ok' });
+    expect(ok.getSnapshot().value).toBe('mastered');
+    expect(ok.getSnapshot().status).toBe('done');
+  });
 });
 
 describe('lesson_2 re-instantiation parity (F-15 L1→L2 advance)', () => {

@@ -136,6 +136,16 @@ describe('loadLesson', () => {
       expect(loadLessonIfExists(99)).toBeUndefined();
     });
 
+    // AC#1: a learner mastering L2 sees a "continue to Lesson 3" affordance. The
+    // mastery-celebration reflex offers nextLessonId = lessonId + 1 ONLY when that
+    // lesson loads + validates. With lessons/3/ authored, loadLessonIfExists(3) now
+    // resolves, so the L2→L3 affordance is enabled (it was a dead button before).
+    it('returns the lesson for L3 (enabling the L2→L3 continue affordance, AC#1)', () => {
+      const l3 = loadLessonIfExists(3);
+      expect(l3).not.toBeUndefined();
+      expect(l3!.content.lessonId).toBe(3);
+    });
+
     it('returns undefined (no throw) when the lesson content is invalid', () => {
       // A lesson dir whose truthTable disagrees with the validator throws in
       // loadLesson; the existence check must swallow it (degrade, not crash).
