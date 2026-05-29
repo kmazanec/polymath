@@ -12,6 +12,11 @@ import { AskTutorButton } from './voice/AskTutorButton.js';
 import { AboutSessionData } from './components/AboutSessionData.js';
 import { ConsentModal } from './observability/ConsentModal.js';
 import { initPostHog, capture, groupBySession } from './observability/posthog.js';
+import {
+  IntelligibilityCheck,
+  shouldSampleIntelligibility,
+  type IntelligibilityAnswer,
+} from './components/IntelligibilityCheck.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
 
@@ -194,6 +199,10 @@ export function App(): ReactElement {
    *  replacement would destroy the in-progress item with no restore path). Dismissing
    *  it simply clears this slot and resumes the practice flow at the same item (AC#3). */
   const [recall, setRecall] = useState<ComponentSpec | null>(null);
+  /** The intelligibility-sampling prompt: the kind of the just-mounted component the
+   *  learner is asked to rate, or null when not sampling. Set on ~1-in-3 workspace
+   *  mounts; cleared (and the beacon sent) when the learner answers (ADR-011 metric 2). */
+  const [intelligibilityFor, setIntelligibilityFor] = useState<string | null>(null);
   /** The id of the item currently mounted, echoed on submit. */
   const currentItemId = useRef<string>('l1-and');
   /** When the current item was mounted (for the submit's response-time report). */
@@ -283,6 +292,16 @@ export function App(): ReactElement {
                 if (r.mount.kind === 'TransferProbe') {
                   currentProbeItemId.current = r.mount.itemId;
                   activeHiddenReps.current = r.mount.hiddenReps;
+                }
+                // Intelligibility sampling (ADR-011 metric 2): on ~1-in-3 workspace
+                // mounts, ask the learner whether the change made sense. NEVER during a
+                // transfer probe — the probe measures unaided transfer and an extra
+                // prompt would perturb it. The answer emits an `intelligibility_response`
+                // beacon the agent persists for the metric.
+                if (r.mount.kind !== 'TransferProbe' && shouldSampleIntelligibility()) {
+                  setIntelligibilityFor(r.mount.kind);
+                } else {
+                  setIntelligibilityFor(null);
                 }
               }
             }
@@ -439,6 +458,20 @@ export function App(): ReactElement {
     capture('hint_request', { itemId: currentItemId.current }); // no-op when analytics off
   }, [sessionId]);
 
+  // ADR-011 metric 2: the learner's yes/no/skip answer to the intelligibility prompt is
+  // emitted as an `intelligibility_response` beacon (the agent persists it under
+  // `events.app IS NULL` for the intelligibility counter-metric). Clearing the slot
+  // dismisses the prompt either way.
+  const onIntelligibilityAnswer = useCallback(
+    (answer: IntelligibilityAnswer): void => {
+      const mountedKind = intelligibilityFor;
+      setIntelligibilityFor(null);
+      if (!sessionId || !mountedKind) return;
+      socketRef.current?.send({ kind: 'intelligibility_response', sessionId, mountedKind, answer });
+    },
+    [sessionId, intelligibilityFor],
+  );
+
   // F-11: when the explain-back window closes, dispatch the completion signal to
   // the server (the deterministic reflex's input). Per the approved design the
   // learner's transcript + prosody arrive SERVER-SIDE via the F-10 WebRTC bridge;
@@ -585,6 +618,13 @@ export function App(): ReactElement {
           Ask
         </button>
       </form>
+
+      {/* ADR-011 metric 2: the intelligibility sampling prompt, in its own side slot so
+          it never replaces the workspace. Shown on ~1-in-3 non-probe mounts; answering
+          (or skipping) clears it and emits the beacon. */}
+      {intelligibilityFor && (
+        <IntelligibilityCheck mountedKind={intelligibilityFor} onAnswer={onIntelligibilityAnswer} />
+      )}
 
       {/* The spoken counterpart to the text question form: the mic permission is
           requested only when this is clicked, never at session start. Mounts once

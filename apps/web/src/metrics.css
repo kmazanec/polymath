@@ -1,0 +1,166 @@
+/*
+ * Counter-metrics dashboard styles — self-contained and dependency-free, imported by
+ * MetricsDashboard.tsx only. Consumes the global design tokens via `var(--token,
+ * fallback)` so it works whether or not the polish workstream's tokens are present.
+ * The four tile states are distinguished by BOTH colour and a text badge (never hue
+ * alone) — deuteranopia-safe.
+ *
+ * The `@media print` block produces a clean, demo-deck-ready dashboard: the auth form,
+ * the info tooltips and the page chrome drop out, the grid flows for paper, and tile
+ * borders stay visible in monochrome print.
+ */
+
+.metrics-dashboard {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: var(--space-4, 1.5rem);
+  color: var(--color-text, #14181f);
+}
+
+.metrics-dashboard__intro {
+  color: var(--color-text-muted, #4a5260);
+  max-width: 48ch;
+}
+
+.metrics-dashboard__auth {
+  display: flex;
+  gap: var(--space-2, 0.5rem);
+  align-items: end;
+  flex-wrap: wrap;
+  margin: var(--space-3, 1rem) 0;
+}
+
+.metrics-dashboard__auth label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 0.25rem);
+  font-size: 0.875rem;
+}
+
+.metrics-dashboard__auth input {
+  padding: var(--space-1, 0.25rem) var(--space-2, 0.5rem);
+  border: 1px solid var(--color-border, #c8cdd6);
+  border-radius: var(--radius-1, 0.25rem);
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #14181f);
+}
+
+.metrics-dashboard__error {
+  border: 1px solid var(--color-fail, #c2570a);
+  border-radius: var(--radius-1, 0.25rem);
+  padding: var(--space-2, 0.5rem) var(--space-3, 1rem);
+  color: var(--color-fail, #c2570a);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--space-3, 1rem);
+}
+
+.metric-tile {
+  border: 2px solid var(--color-border, #c8cdd6);
+  border-radius: var(--radius-2, 0.5rem);
+  padding: var(--space-3, 1rem);
+  background: var(--color-surface, #f4f5f7);
+}
+
+/* State colour cues (always paired with the text badge below). */
+.metric-tile[data-state='pass'] {
+  border-color: var(--color-pass, #1d6fb8);
+}
+.metric-tile[data-state='fail'] {
+  border-color: var(--color-fail, #c2570a);
+}
+.metric-tile[data-state='insufficient_data'],
+.metric-tile[data-state='unconfigured'] {
+  border-color: var(--color-border, #c8cdd6);
+  background: var(--color-surface, #f4f5f7);
+  opacity: 0.92;
+}
+
+.metric-tile__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: var(--space-2, 0.5rem);
+}
+
+.metric-tile__label {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.metric-tile__source {
+  cursor: help;
+  color: var(--color-text-muted, #4a5260);
+}
+
+.metric-tile__value {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: var(--space-2, 0.5rem) 0 0;
+}
+
+.metric-tile__threshold {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #4a5260);
+}
+
+.metric-tile__state {
+  margin: var(--space-2, 0.5rem) 0 0;
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.metric-tile__state[data-state='pass'] {
+  color: var(--color-pass, #1d6fb8);
+}
+.metric-tile__state[data-state='fail'] {
+  color: var(--color-fail, #c2570a);
+}
+.metric-tile__state[data-state='insufficient_data'],
+.metric-tile__state[data-state='unconfigured'] {
+  color: var(--color-text-muted, #4a5260);
+}
+
+.metric-tile__note {
+  margin: var(--space-1, 0.25rem) 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted, #4a5260);
+}
+
+.limitations-memo {
+  margin-top: var(--space-4, 1.5rem);
+  border-top: 1px solid var(--color-border, #c8cdd6);
+  padding-top: var(--space-3, 1rem);
+}
+
+.metrics-dashboard__generated {
+  margin-top: var(--space-3, 1rem);
+  font-size: 0.78rem;
+  color: var(--color-text-muted, #4a5260);
+}
+
+/* Demo-deck print: drop the chrome, keep the data, ensure tile borders print. */
+@media print {
+  .metrics-dashboard__auth,
+  .metrics-dashboard__error,
+  .metric-tile__source {
+    display: none !important;
+  }
+  .metrics-dashboard {
+    max-width: none;
+    padding: 0;
+  }
+  .metric-tile {
+    break-inside: avoid;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .metrics-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

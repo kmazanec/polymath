@@ -43,6 +43,7 @@ import { mintRealtimeToken } from './voice/token.js';
 import { createRateLimiter } from './voice/rateLimiter.js';
 import { buildReport } from './report/buildReport.js';
 import { buildMetricsPayload, computeUiChurn } from './metrics/index.js';
+import { circuitSuppressionArm } from './metrics/splitTest.js';
 import { handleExplainBack, type ExplainBackRouteDeps } from './explainback/route.js';
 import {
   createSubject,
@@ -194,6 +195,13 @@ const withRecallLock = makeKeyedLock();
  * The `payload.action.{type,topicClassification}` slot is exactly what
  * `toLoggedEvent` reads from the bounded fold; this just counts it across all rows.
  */
+/** The default-OFF env opt-in for the visual-utility circuit-suppression split-test
+ *  (metric 3, D6). Off ⇒ no arm is ever assigned, so the split-test stays dormant and
+ *  the metric reports `unconfigured`. Must match the reader in `metrics/index.ts`. */
+function circuitSplitTestEnabled(): boolean {
+  return (process.env['POLYMATH_ENABLE_CIRCUIT_SPLIT_TEST'] ?? '').trim() === 'true';
+}
+
 async function countOffTopicAnswers(db: Db, sessionId: string): Promise<number> {
   const rows = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -1648,11 +1656,23 @@ export async function handleClientFrame(
           ? 'pass'
           : 'reject';
 
+    // Visual-utility split-test (metric 3, DORMANT by default): on a `submit` to a
+    // matched item, annotate which suppression arm the turn ran in. Append-only — the
+    // field is absent on every non-matched turn and when the split-test env is off, so
+    // it never reshapes the payload and never touches `spec.visibleReps` (the marker is
+    // a metrics annotation, orthogonal to the probe-integrity boundary).
+    const splitArm =
+      event.kind === 'submit'
+        ? circuitSuppressionArm(event.itemId, circuitSplitTestEnabled())
+        : undefined;
+    const persistedEvent =
+      splitArm === undefined ? event : { ...event, circuitSuppressed: splitArm };
+
     await deps.db.insert(events).values({
       sessionId: event.sessionId,
       kind: event.kind,
       payload: {
-        event,
+        event: persistedEvent,
         action: finalAction,
         learnerSnapshot: learnerDerived.snapshot,
         // The transfer verdict (when this turn is a transfer_submitted) is recorded
