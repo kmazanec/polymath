@@ -96,7 +96,17 @@ describe.skipIf(!canRunPg)('GET /api/metrics', () => {
   });
 
   it('PERSISTS intelligibility_response beacons and folds them into the intelligibility metric', async () => {
-    // Mint a real session, then fire ≥ MIN_N (=5) yes/no intelligibility beacons over WS.
+    // The dashboard aggregates intelligibility GLOBALLY across every polymath session,
+    // and the test Postgres is a shared, NON-truncated container (reused across files
+    // and re-runs) — so we assert the DELTA this batch contributes, never an absolute
+    // global sampleN (which would be red on every CI re-run as rows accumulate).
+    const beforeRes = await fetch(`${baseUrl}/api/metrics`, { headers: auth });
+    const before = ((await beforeRes.json()) as MetricsPayload).metrics.find(
+      (m) => m.id === 'intelligibility',
+    )!;
+    const beforeN = before.sampleN;
+
+    // Mint a real session, then fire yes/no/skip intelligibility beacons over WS.
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
@@ -113,9 +123,11 @@ describe.skipIf(!canRunPg)('GET /api/metrics', () => {
     const res = await fetch(`${baseUrl}/api/metrics`, { headers: auth });
     const body = (await res.json()) as MetricsPayload;
     const intelligibility = body.metrics.find((m) => m.id === 'intelligibility')!;
-    // 4 yes / (4 yes + 1 no) = 0.8; the skip is excluded → sampleN = 5, state determinable.
-    expect(intelligibility.sampleN).toBe(5);
-    expect(intelligibility.value).toBeCloseTo(0.8, 5);
+    // This batch contributes 4 yes + 1 no = 5 to the denominator; the skip is excluded.
+    expect(intelligibility.sampleN).toBe(beforeN + 5);
+    // With ≥ MIN_N folded the metric is determinable (value/pass non-null), proving the
+    // beacons were PERSISTED under `events.app IS NULL` and the legitimate fold works.
+    expect(intelligibility.value).not.toBeNull();
     expect(['pass', 'fail']).toContain(intelligibility.state);
   });
 });
