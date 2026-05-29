@@ -14,6 +14,11 @@ import {
 } from './ExplainBackPrompt.js';
 import { MasteryCelebration } from './MasteryCelebration.js';
 import { CrossLessonRecall } from './CrossLessonRecall.js';
+import {
+  PlaygroundCanvas,
+  type PlaygroundSubmitPayload,
+  type PlaygroundRequestScaffoldPayload,
+} from './PlaygroundCanvas.js';
 
 /**
  * The curated component registry renderer (ADR-005). A single exhaustive switch
@@ -55,6 +60,15 @@ export interface RenderOptions {
    *  `advance_lesson` event (a server reflex re-derives L1 mastery + mounts L2). Absent
    *  → the button stays inert (e.g. the registry default in isolated component tests). */
   onContinue?: (nextLessonId: number) => void;
+  /** ADR-013 stretch playground: the unified "check my work" dispatch (the
+   *  persisted `playground_submit` record). The client-side verdict is the truth;
+   *  the server recompute is defense-in-depth. */
+  onPlaygroundSubmit?: (payload: PlaygroundSubmitPayload) => void;
+  /** ADR-013 stretch playground: a scaffold-on-request ask (`playground_request_scaffold`).
+   *  The agent answers but never directs. */
+  onPlaygroundRequestScaffold?: (payload: PlaygroundRequestScaffoldPayload) => void;
+  /** ADR-013 stretch playground: exit (`exit_playground`) → session-end celebration. */
+  onExitPlayground?: () => void;
 }
 
 /** A safe no-op explain-back seam for when no real voice client is wired (tests,
@@ -119,12 +133,22 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
       // F-14: text-only cross-lesson recall card (ADR-012). No rep workspace — the
       // probe-integrity boundary; dismiss resumes practice at the current item.
       return <CrossLessonRecall spec={spec} onDismiss={opts.onCrossLessonRecallDismiss} />;
+    case 'PlaygroundCanvas':
+      // ADR-013 stretch: the free-build capstone. Composes the three rep editors
+      // (honoring `visibleReps`) + a learner target input; the unified verdict is
+      // computed client-side via `playgroundEquivalence` (correctness off the
+      // network) and dispatched for the server-side persisted record.
+      return (
+        <PlaygroundCanvas
+          spec={spec}
+          onPlaygroundSubmit={opts.onPlaygroundSubmit}
+          onRequestScaffold={opts.onPlaygroundRequestScaffold}
+          onExitPlayground={opts.onExitPlayground}
+        />
+      );
     case 'IntroExplanation':
     case 'WorkedExample':
     case 'ConfidenceCheck':
-    // ADR-012 stretch: the free-build playground. Contract shape + exhaustive
-    // case land here; the interactive canvas is built by the owning feature.
-    case 'PlaygroundCanvas':
       return <Tbd kind={spec.kind} />;
     default: {
       // Exhaustiveness: if a new ComponentSpec variant is added without a case
