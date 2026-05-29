@@ -21,6 +21,17 @@ export const sessions = pgTable('sessions', {
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
   lessonProgress: jsonb('lesson_progress'),
+  /** I3/I4 barrier (D3): which app owns this session. NULL = polymath (the default,
+   *  back-compatible), 'baseline' = the F-16 chat-baseline experiment arm. Polymath's
+   *  analytics/replay/counter-metric queries filter by sessionId only, so baseline
+   *  rows would silently fold in without this discriminator — F-16/F-17/F-21 filter
+   *  on it explicitly. Nullable + additive (no backfill). */
+  app: text('app'),
+  /** I3/I4 barrier (D3): the experiment subject this session belongs to (F-17
+   *  linkage so the CSV joins sessions→subject automatically rather than via
+   *  hand-pasted UUIDs). Nullable; a soft reference (F-17 owns the
+   *  `experiment_subjects` table + may add the FK when it creates it). */
+  subjectId: uuid('subject_id'),
 });
 
 export const events = pgTable('events', {
@@ -32,6 +43,10 @@ export const events = pgTable('events', {
   kind: text('kind').notNull(),
   /** The full structured record (inbound event + agent decision + validation). */
   payload: jsonb('payload').notNull(),
+  /** I3/I4 barrier (D3): the app this event belongs to. NULL = polymath, 'baseline'
+   *  = F-16. Mirrors `sessions.app` so an event-level query can filter without a
+   *  join. Nullable + additive. */
+  app: text('app'),
 });
 
 export const learnerState = pgTable(

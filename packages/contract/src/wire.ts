@@ -132,6 +132,17 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     kind: z.literal('session_end'),
     sessionId: SessionId,
   }),
+  // I3 barrier (F-15): the L1→L2 lesson advance. Append-only NEW event kind (the
+  // advance is NOT `transition.to`, which is a `PhaseName`/intra-lesson enum, and
+  // NOT a new `Action` variant). Handled as a server reflex that re-derives L1
+  // mastery server-side (the earned-it guard) before writing
+  // `sessions.lessonProgress` and deterministically mounting L2's first item on the
+  // SAME sessionId (so prior-lesson `learner_state` survives for F-14's recall).
+  z.object({
+    kind: z.literal('advance_lesson'),
+    sessionId: SessionId,
+    toLessonId: z.number(),
+  }),
 ]);
 export type ClientEvent = z.infer<typeof ClientEvent>;
 

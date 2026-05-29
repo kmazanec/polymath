@@ -2,7 +2,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { desc, eq, sql } from 'drizzle-orm';
-import { equivalent, parse, variables } from '@polymath/booleans';
+import { scoreEquivalence } from '@polymath/booleans';
 import {
   ClientEvent,
   noAction,
@@ -156,10 +156,45 @@ function getLesson(lessonId: number): Lesson {
   return lesson;
 }
 
-/** The lesson a session is working on. F-05 is L1-only; later features read
- *  `sessions.lessonProgress`. Kept a single function so that grows in one place. */
-function lessonIdForEvent(event: ClientEvent): number {
-  return event.kind === 'session_start' ? event.lessonId : 1;
+/**
+ * The persisted shape of `sessions.lesson_progress` (jsonb). The durable
+ * lesson-arc record: which lesson a session is currently working on. Written by
+ * the F-15 L1→L2 advance reflex; read by `currentLessonId` on every subsequent
+ * turn. Defined as a typed interface (F-15/F-18/F-20 read it). A missing/absent
+ * column → lesson 1 (the default, pre-advance state).
+ */
+export interface LessonProgress {
+  currentLessonId: number;
+}
+
+/**
+ * The lesson a session is working on — the BARRIER lesson-binding signature
+ * (F-15 owns the durable write; F-13 wires the L2 read for `?lesson=2`; F-14
+ * reads cross-lesson state through it).
+ *
+ * For a `session_start` event the lesson travels on the event itself (the session
+ * is being (re)started on that lesson). For every other turn the binding is read
+ * from the durable `sessions.lessonProgress.currentLessonId`, NOT hardcoded to 1
+ * — the pre-barrier `lessonIdForEvent` silently folded every L2 turn against L1
+ * content/config/kc-vocab after the first frame. Unknown/absent progress → 1.
+ */
+export async function currentLessonId(db: Db, sessionId: string): Promise<number> {
+  const rows = await db
+    .select({ progress: sessions.lessonProgress })
+    .from(sessions)
+    .where(eq(sessions.id, sessionId))
+    .limit(1);
+  const progress = rows[0]?.progress as LessonProgress | null | undefined;
+  const id = progress?.currentLessonId;
+  return typeof id === 'number' && Number.isInteger(id) && id >= 1 ? id : 1;
+}
+
+/** The lesson a turn binds to. `session_start` carries its own lessonId (the
+ *  session is being (re)started on it); any other event reads the durable
+ *  per-session binding via `currentLessonId`. */
+async function lessonIdForEvent(db: Db, event: ClientEvent): Promise<number> {
+  if (event.kind === 'session_start') return event.lessonId;
+  return currentLessonId(db, event.sessionId);
 }
 
 /** Project a logged event payload into the consumer's `LoggedEvent` shape. The
@@ -370,14 +405,12 @@ async function readTransferCandidates(
     }));
 }
 
-/** Distinct-variable cap before the 2^n truth-table enumeration in `equivalent`.
- *  The L1 `parse` grammar permits 26 single-letter vars; a 2000-char learner
- *  submission could otherwise force a 2^26-row enumeration on the event loop. */
-const MAX_TRANSFER_VARS = 10;
-
 /** Validate a `transfer_submitted` event against the probed bank item's canonical
- *  expression via `@polymath/booleans.equivalent` (ADR-010: the validator is the
- *  source of truth; the server decides the transfer verdict, not the agent).
+ *  expression via the shared `scoreEquivalence` (ADR-010: the validator is the
+ *  source of truth; the server decides the transfer verdict, not the agent). The
+ *  scorer applies the var cap + parse-error→false guard — an over-wide or
+ *  unparseable submission is simply `false`, never an event-loop-blocking 2^n
+ *  enumeration or a crash.
  *
  *  Integrity: the submission is only honored against the item with a *currently
  *  unresolved* probe for this session. A `transfer_submitted` naming a different
@@ -404,17 +437,7 @@ async function computeTransferVerdict(
   const canonical = rows[0]?.expr;
   if (!canonical) return { itemId: event.itemId, correct: false };
 
-  let correct = false;
-  try {
-    // Cap distinct vars before enumerating (DoS guard): an over-wide submission is
-    // simply wrong, never an event-loop-blocking 2^n enumeration.
-    if (variables(parse(event.submission)).length <= MAX_TRANSFER_VARS) {
-      correct = equivalent(event.submission, canonical);
-    }
-  } catch {
-    correct = false; // an unparseable submission is simply wrong, never a crash
-  }
-  return { itemId: event.itemId, correct };
+  return { itemId: event.itemId, correct: scoreEquivalence(event.submission, canonical) };
 }
 
 /** The itemId of the currently-UNRESOLVED transfer probe, or null. Scanning
@@ -878,7 +901,7 @@ export async function handleClientFrame(
 
   // Assemble the turn input the agent reasons over: lesson content, the learner
   // snapshot, and recent history (ADR-003: fresh-per-turn, structured state only).
-  const lesson = getLesson(lessonIdForEvent(event));
+  const lesson = getLesson(await lessonIdForEvent(deps.db, event));
 
   // F-11/F-12 SERIAL JOIN (Option A — same-turn mastery celebration). The explain-back
   // rubric is a deterministic SERVER REFLEX — it does NOT go through proposeMove (off

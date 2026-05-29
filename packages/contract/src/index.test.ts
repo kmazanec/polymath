@@ -73,6 +73,13 @@ const componentSamples: Record<ComponentKind, ComponentSpec> = {
     answer: 'a',
     topicClassification: 'on_topic',
   },
+  CrossLessonRecall: {
+    kind: 'CrossLessonRecall',
+    kc: 'and_intro',
+    currentItemId: 'L2-03',
+    priorBktAtRegression: 0.72,
+    reminderBody: 'Remember: AND is true only when both inputs are true.',
+  },
 };
 
 describe('ComponentSpec', () => {
@@ -80,7 +87,7 @@ describe('ComponentSpec', () => {
     // If a variant is added to the union without updating COMPONENT_KINDS (or
     // vice versa), this object literal stops type-checking — compile-time guard.
     expect(new Set(COMPONENT_KINDS)).toEqual(new Set(Object.keys(componentSamples)));
-    expect(COMPONENT_KINDS.length).toBe(12);
+    expect(COMPONENT_KINDS.length).toBe(13);
   });
 
   it('round-trips every variant through Zod', () => {

@@ -533,3 +533,10 @@ class PseudoParser {
     throw new BooleanParseError(`Unexpected token "${tok.type}" — operand expected`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// I3/I4 barrier — the shared var-capped, parse-safe equivalence scorer.
+// Strictly additive; the locked signatures above are unchanged.
+// ---------------------------------------------------------------------------
+
+export { MAX_EQUIVALENCE_VARS, scoreEquivalence } from './scoreEquivalence.js';

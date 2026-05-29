@@ -108,6 +108,9 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
     case 'IntroExplanation':
     case 'WorkedExample':
     case 'ConfidenceCheck':
+    // I3 barrier: CrossLessonRecall enters the union here so the exhaustive switch
+    // compiles; F-14 replaces this stub with the real text-only recall renderer.
+    case 'CrossLessonRecall':
       return <Tbd kind={spec.kind} />;
     default: {
       // Exhaustiveness: if a new ComponentSpec variant is added without a case

@@ -112,6 +112,20 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     answer: z.string(),
     topicClassification: z.enum(['on_topic', 'off_topic']),
   }),
+  // I3 barrier (F-14): a cross-lesson recall card. When a learner regresses on a
+  // prior-lesson KC (L1 BKT drops below threshold mid-L2), the SERVER reflex mounts
+  // a short text reminder of that KC. TEXT-ONLY by design — NO rep rendering and NO
+  // `visibleReps` field — so a recall card can never expose a held-out probe rep
+  // (the probe-integrity boundary). Mounted via the existing `mount` Action; the
+  // server is the truth-maker (the BKT check IS the earned-it gate), so this is not
+  // an LLM-emitted menu move.
+  z.object({
+    kind: z.literal('CrossLessonRecall'),
+    kc: z.string(),
+    currentItemId: z.string(),
+    priorBktAtRegression: z.number(),
+    reminderBody: z.string(),
+  }),
 ]);
 export type ComponentSpec = z.infer<typeof ComponentSpec>;
 
@@ -130,5 +144,6 @@ export const COMPONENT_KINDS = [
   'ConfidenceCheck',
   'MasteryCelebration',
   'AgentAnswer',
+  'CrossLessonRecall',
 ] as const;
 export type ComponentKind = (typeof COMPONENT_KINDS)[number];

@@ -8,6 +8,13 @@
       "when": 1779940103072,
       "tag": "0000_wakeful_sharon_ventura",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780025638983,
+      "tag": "0001_clammy_black_bolt",
+      "breakpoints": true
     }
   ]
 }

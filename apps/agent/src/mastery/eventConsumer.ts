@@ -1,13 +1,7 @@
 import { type BKTConfig, type BKTParams, initBKT, updateBKT } from '@polymath/bkt';
-import { equivalent, parse, variables } from '@polymath/booleans';
+import { scoreEquivalence } from '@polymath/booleans';
 import type { LessonContent, MasteryConfig } from '@polymath/contract';
 import type { LearnerState } from './gate.js';
-
-/** Distinct-variable cap before the 2^n enumeration inside `equivalent` — the same
- *  guard `computeTransferVerdict` uses. Every server-side `equivalent` call on a
- *  client-controlled submission must apply it, or a wide expression blocks the
- *  event loop. */
-const MAX_SUBMIT_VARS = 10;
 
 /**
  * The single writer of derived learner state (ADR-009/011). It folds a session's
@@ -81,10 +75,10 @@ function bktConfig(config: MasteryConfig): BKTConfig {
 }
 
 /** Server-side correctness of a submission against the item's canonical target
- *  (`booleans.equivalent`, var-capped). Identifies the item by `itemId` matched
- *  against the lesson's itemId OR targetExpression. Unknown item / unparseable /
- *  over-cap → false. The single source of truth for correctness — never the
- *  client's `submit.correct` flag. */
+ *  (the shared `scoreEquivalence` — var-capped, parse-safe). Identifies the item
+ *  by `itemId` matched against the lesson's itemId OR targetExpression. Unknown
+ *  item / unparseable / over-cap → false. The single source of truth for
+ *  correctness — never the client's `submit.correct` flag. */
 export function recomputeCorrect(
   lesson: LessonContent,
   itemId: string | undefined,
@@ -93,12 +87,7 @@ export function recomputeCorrect(
   if (!itemId || submission === undefined) return false;
   const item = lesson.items.find((i) => i.itemId === itemId || i.targetExpression === itemId);
   if (!item) return false;
-  try {
-    if (variables(parse(submission)).length > MAX_SUBMIT_VARS) return false;
-    return equivalent(submission, item.targetExpression);
-  } catch {
-    return false;
-  }
+  return scoreEquivalence(submission, item.targetExpression);
 }
 
 /** Fold the session's events into the derived state. `lesson` maps items → KCs. */
