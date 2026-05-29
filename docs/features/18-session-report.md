@@ -165,13 +165,22 @@ field, never a re-shape (contract change protocol).
 
 ### QA evidence (real running stack, docker compose)
 
-Operator gate live (`NODE_ENV=production`, `POLYMATH_OPERATOR_SECRET` set):
-- experiment-arm seeded session → `200` `{"preTestScore":0.25,"postTestScore":0.75,
-  "growthMultiplier":2,...,"source":"experiment"}`; the browser view renders the
-  PRE 25% / POST 75% / **GROWTH 2.0×** tiles after entering the secret.
-- fresh in-session session → `200` `source:"in_session"`, `preTestScore:null`,
-  `growthMultiplier:null` (the "pre-test not run" graceful tile, AC#4).
-- unknown id → `404 {"error":"unknown session"}`; wrong/absent secret → `401`.
+Operator gate live (`NODE_ENV=production`, `POLYMATH_OPERATOR_SECRET=demo-secret-123`):
+- Endpoint matrix against the running agent (`buildReport` integration test seeds the
+  experiment-arm path): `200` + a `SessionSummarySchema`-valid body with secret; `401`
+  on absent/wrong secret (Bearer + `X-Operator-Secret`, constant-time); `404` on an
+  unknown id (`{"error":"unknown session"}`); `503` when the secret is UNSET in
+  production (fail-closed) — observed earlier on the default compose agent.
+- Real-browser QA (Playwright, full compose stack on Caddy): the view first renders the
+  **auth-required** state on the initial `401`; after entering the secret it retries
+  with the header and renders the populated dashboard. A fresh in-session session shows
+  the graceful tiles — Pre-test "**pre-test not run**", Growth "**not measured**",
+  Time-on-task `0m 37s`, Mastery "Not started" — i.e. `source:"in_session"`,
+  `preTestScore:null`, `growthMultiplier:null` (AC#4 confirmed in the DOM; never an
+  empty/0 field). The only console error is the expected initial 401 the view handles.
+- The experiment-arm `source:"experiment"` body with a real `growthMultiplier`
+  (`(0.75−0.25)/max(0.25,0.25) = 2.0`) is verified by the `buildReport` integration
+  test against a seeded subject; the in-page render of that arm awaits a demo subject.
 
 ### Deferred
 
