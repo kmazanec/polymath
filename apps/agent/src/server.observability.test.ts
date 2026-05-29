@@ -11,7 +11,7 @@ import { eq, and, isNull } from 'drizzle-orm';
 import type { UiChurnResponse } from './metrics/uiChurn.js';
 
 /**
- * F-20 observability: the `ui_mount` beacon persistence + the
+ * Observability: the `ui_mount` beacon persistence + the
  * `GET /api/session/:id/observability/ui-churn` endpoint.
  *
  * Acceptance:
@@ -55,7 +55,7 @@ async function newSession(): Promise<string> {
   return body.sessionId;
 }
 
-describe.skipIf(!canRunPg)('F-20 ui_mount beacon + ui-churn endpoint', () => {
+describe.skipIf(!canRunPg)('ui_mount beacon + ui-churn endpoint', () => {
   beforeAll(async () => {
     const POSTGRES_URL = await ensureTestPg();
     await runMigrations(POSTGRES_URL);
