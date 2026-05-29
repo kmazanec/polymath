@@ -171,6 +171,44 @@ describe('createLessonMachine (F-13 lesson factory — parameterised spine)', ()
   });
 });
 
+describe('lesson_2 re-instantiation parity (F-15 L1→L2 advance)', () => {
+  // F-15's macro transition is session-level RE-INSTANTIATION, not a parent machine:
+  // the client unmounts the L1 `LessonSession` (a `final` mastered state) and re-mounts
+  // the SAME `lessonMachine` with `input.lessonId:2`. This asserts the spine behaves
+  // identically for L2 — same phases, same guards, same `lessonId` carried in context —
+  // so the re-mount needs no new machine (which would break the locked PhaseName spine).
+  function startL2(masteryReady = false) {
+    const actor = createActor(lessonMachine, { input: { lessonId: 2, masteryReady } });
+    actor.start();
+    return actor;
+  }
+
+  it('starts a lessonId:2 actor in introducing with lessonId 2 in context', () => {
+    const actor = startL2();
+    expect(actor.getSnapshot().value).toBe('introducing');
+    expect(actor.getSnapshot().context.lessonId).toBe(2);
+  });
+
+  it('drives the same introducing → practicing → assessed → mastered arc for L2', () => {
+    const actor = startL2(true);
+    actor.send({ type: 'start_practice' });
+    expect(actor.getSnapshot().value).toBe('practicing');
+    actor.send({ type: 'submit' });
+    expect(actor.getSnapshot().value).toBe('assessed');
+    actor.send({ type: 'mastery_ok' });
+    expect(actor.getSnapshot().value).toBe('mastered');
+    expect(actor.getSnapshot().status).toBe('done');
+  });
+
+  it('REFUSES L2 mastery when canDeclareMastery is false (same guard wiring as L1)', () => {
+    const actor = startL2(false);
+    actor.send({ type: 'start_practice' });
+    actor.send({ type: 'submit' });
+    actor.send({ type: 'mastery_ok' });
+    expect(actor.getSnapshot().value).not.toBe('mastered');
+  });
+});
+
 describe('lesson_1 machine definition (Stately-importable)', () => {
   it('state nodes match the locked PhaseName contract enum exactly', () => {
     // spine ↔ contract: no missing phase, no extra phase

@@ -36,7 +36,7 @@ import {
 } from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
 import { computeRecall } from './agent/recallReflex.js';
-import { loadLesson, type Lesson } from './lessons/loader.js';
+import { loadLesson, loadLessonIfExists, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
 import { createRateLimiter } from './voice/rateLimiter.js';
 import { handleExplainBack, type ExplainBackRouteDeps } from './explainback/route.js';
@@ -576,16 +576,30 @@ function rejectUnauthorizedAction(
 /** F-12: build the MasteryCelebration mount for an AUTHORIZED mastery transition.
  *  `conceptsMastered` is the set of KCs the learner has actually mastered (BKT ≥ the
  *  lesson's threshold) — sourced from the derived learner_state, not the agent's
- *  claim (AC#6). `nextLessonId` is left unset here; the "continue to Lesson 2"
- *  affordance is wired in F-15. */
+ *  claim (AC#6).
+ *
+ *  F-15: `nextLessonId` is set to `lessonId + 1` ONLY when that next lesson actually
+ *  loads (`loadLessonIfExists` — a NON-FATAL existence check). A hardcoded `2` before
+ *  `lessons/2/` exists would render an enabled "continue" button whose
+ *  `advance_lesson` reflex then crashes/refuses; gating on the existence check makes
+ *  the affordance enabled ⇔ a real next lesson is present (fail-closed). The client
+ *  enables the button iff `nextLessonId !== undefined`. */
 function masteryCelebrationAction(masteryState: LearnerState, lesson: Lesson): Action {
   const conceptsMastered = Object.entries(masteryState.bktByKc)
     .filter(([, p]) => p >= lesson.masteryConfig.bktMasteryThreshold)
     .map(([kc]) => kc)
     .sort();
+  const candidateNext = lesson.content.lessonId + 1;
+  const nextExists = loadLessonIfExists(candidateNext) !== undefined;
   return {
     type: 'mount',
-    component: { kind: 'MasteryCelebration', conceptsMastered },
+    component: {
+      kind: 'MasteryCelebration',
+      conceptsMastered,
+      // F-15: only offer the next lesson when it exists + validates (guarded existence
+      // check). Undefined → the client keeps the affordance disabled.
+      ...(nextExists ? { nextLessonId: candidateNext } : {}),
+    },
     rationale: 'mastery gate satisfied server-side — celebrating mastered concepts (F-12)',
   };
 }
@@ -931,6 +945,110 @@ async function handleExplainBackTurn(
   send(ws, { kind: 'action', sessionId: event.sessionId, action });
 }
 
+/**
+ * F-15 L1→L2 ADVANCE REFLEX (the I3 merge sink). A dedicated SERVER reflex (modeled
+ * on the explain-back branch) — NOT the LLM, NOT the agent menu, NOT XState (the
+ * server runs no actor; this branch IS the macro guard, mirroring
+ * `rejectUnauthorizedAction`'s earned-it pattern).
+ *
+ * The single highest-risk correctness invariants (BUILD-PLAN):
+ *   - SAME sessionId, ALWAYS. We never mint a new session — the prior-lesson
+ *     `learner_state` rows must survive under this sessionId so F-14's cross-lesson
+ *     recall/regression detector can read them.
+ *   - DETERMINISTIC mount of L2's `content.items[0]` (a server reflex, ~<500ms),
+ *     never the LLM (which is ~5-10s at a phase boundary and would miss AC#2).
+ *   - The `alreadyStarted` reflex is SIDESTEPPED: we mount L2's first item here
+ *     directly and never re-send `session_start`, so the heuristic provider's
+ *     "session already in progress → no_action" path is never hit on advance.
+ *
+ * The EARNED-IT GUARD (real AC#4 server enforcement, fail-closed):
+ *   - L1 mastery is re-derived server-side from the event log (the same
+ *     `evaluateMasteryGate` over the freshly-folded learner state) — never trusted
+ *     from the client frame. If the gate does NOT pass, the advance is REFUSED with
+ *     `no_action` and the blocking gate is persisted (no lesson change, no mount).
+ *   - `toLessonId` must be exactly `currentLessonId + 1` (no skipping) and must
+ *     actually load (`loadLessonIfExists`) — otherwise refuse. A missing/forged
+ *     target is *block*, never a half-valid advance.
+ */
+async function handleAdvanceLessonTurn(
+  deps: ServerDeps,
+  ws: WebSocket,
+  event: Extract<ClientEvent, { kind: 'advance_lesson' }>,
+  fromLesson: Lesson,
+): Promise<void> {
+  // Re-derive the CURRENT (L1) learner state + the full mastery gate server-side from
+  // the event log — the earned-it guard. `advance_lesson` carries no submission, so the
+  // fold just re-reads the persisted log; the gate is the authoritative L1-mastered
+  // signal (never the client). No transfer/explain-back verdict is introduced this turn.
+  const learnerDerived = await updateAndReadLearnerState(
+    deps.db,
+    event.sessionId,
+    event,
+    fromLesson,
+    undefined,
+    undefined,
+  );
+  const gateEvaluation = evaluateMasteryGate(learnerDerived.masteryState, fromLesson.masteryConfig);
+
+  // Guard #1: the target must be exactly the next lesson (no skipping) AND must load.
+  const expectedNext = fromLesson.content.lessonId + 1;
+  const nextLesson =
+    event.toLessonId === expectedNext ? loadLessonIfExists(event.toLessonId) : undefined;
+
+  // Guard #2: L1 mastery must hold server-side. Fail-closed: any unmet condition (or a
+  // bad/forged target) → no_action, no lesson change, no mount. The blockers are named
+  // so the replay records *why* (AC#3-style), mirroring the mastery earned-it rejection.
+  const refuseReason = !gateEvaluation.passed
+    ? `mastery_gate_failed: ${gateEvaluation.blockers.join(',')}`
+    : !nextLesson
+      ? `next_lesson_unavailable: ${event.toLessonId}`
+      : null;
+
+  let action: Action;
+  let statechart: { statechartDecision: 'accept' | 'reject'; statechartReason: string };
+  if (refuseReason || !nextLesson) {
+    action = noAction('agent_unsure', refuseReason ?? `next_lesson_unavailable: ${event.toLessonId}`);
+    statechart = { statechartDecision: 'reject', statechartReason: refuseReason ?? 'next_lesson_unavailable' };
+  } else {
+    // ACCEPTED. Write the durable lesson-arc binding on the SAME session (so the next
+    // turn's `currentLessonId` reads L2 and prior-lesson learner_state survives), then
+    // DETERMINISTICALLY mount L2's first item (server reflex — not the LLM).
+    const progress: LessonProgress = { currentLessonId: event.toLessonId };
+    await deps.db.update(sessions).set({ lessonProgress: progress }).where(eq(sessions.id, event.sessionId));
+
+    const first = nextLesson.content.items[0];
+    action = first
+      ? {
+          type: 'mount',
+          component: {
+            kind: 'TruthTablePractice',
+            expression: first.targetExpression,
+            claimedTruthTable: first.truthTable,
+            visibleReps: ['truth_table'],
+          },
+          rationale: `L1 mastery earned — advancing to lesson ${event.toLessonId} and mounting its first item "${first.itemId}" (server reflex, F-15)`,
+        }
+      : noAction('wait_for_learner', `lesson ${event.toLessonId} has no items to mount`);
+    statechart = { statechartDecision: 'accept', statechartReason: 'l1_mastery_earned' };
+  }
+
+  // Persist exactly one event row for the advance turn, carrying the gate evaluation +
+  // the accept/reject decision so the replay shows the guard's verdict.
+  await deps.db.insert(events).values({
+    sessionId: event.sessionId,
+    kind: event.kind,
+    payload: {
+      event,
+      action,
+      learnerSnapshot: learnerDerived.snapshot,
+      gateEvaluation: { passed: gateEvaluation.passed, blockers: gateEvaluation.blockers },
+      ...statechart,
+    },
+  });
+
+  send(ws, { kind: 'action', sessionId: event.sessionId, action });
+}
+
 /** Handle one inbound WebSocket frame: validate → run agent → validate output →
  *  persist → reply. Exported for direct unit/integration testing. */
 export async function handleClientFrame(
@@ -1017,6 +1135,16 @@ export async function handleClientFrame(
     await withExplainBackLock(event.sessionId, event.targetItemId, () =>
       handleExplainBackTurn(deps, ws, event, lesson, opts),
     );
+    return;
+  }
+
+  // F-15 L1→L2 advance: a dedicated SERVER reflex (re-derives L1 mastery as the
+  // earned-it guard, writes sessions.lessonProgress on the SAME session, and
+  // deterministically mounts L2's first item — never the LLM). `lesson` here is the
+  // CURRENT (from) lesson, resolved via `currentLessonId` above. Handled BEFORE the
+  // generic agent turn so it never touches the menu / `alreadyStarted` reflex.
+  if (event.kind === 'advance_lesson') {
+    await handleAdvanceLessonTurn(deps, ws, event, lesson);
     return;
   }
   // The transfer verdict (server-computed) must be known before deriving learner

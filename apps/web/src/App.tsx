@@ -1,13 +1,13 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { useMachine } from '@xstate/react';
-import { lessonMachine } from '@polymath/statechart';
+import { lessonMachine, type LessonEvent } from '@polymath/statechart';
 import type { ComponentSpec, Rep, ServerMessage } from '@polymath/contract';
 import { AgentSocket } from './ws/client.js';
 import { adaptAction } from './ws/actionAdapter.js';
 import { AnimateOrNot } from './motion/AnimateOrNot.js';
 import { renderComponent, type RepSubmitPayload } from './components/registry.js';
 import { transferRepRefusal } from './copy/refusals.js';
-import { introForLesson } from './lessonIntroContent.js';
+import { introForLesson, LESSON_2_INTRO } from './lessonIntroContent.js';
 import { AskTutorButton } from './voice/AskTutorButton.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
@@ -69,14 +69,112 @@ function currentPhase(value: unknown): 'introducing' | 'practicing' | 'transferr
   return 'introducing';
 }
 
-export function App(): ReactElement {
-  // F-13: the lesson the session runs (1 by default; 2 via the `?lesson=2` dev seam).
-  // Captured once on mount — it parameterises the lesson spine input, the session_start
-  // frame, and the intro. The `lessonMachine` default export IS lesson 1, but the
-  // input drives `context.lessonId`, so a `?lesson=2` run carries lessonId 2.
-  const lessonIdRef = useRef<number>(lessonFromUrl());
-  const lessonId = lessonIdRef.current;
+/** The imperative bridge between App (which owns the socket + its message closure)
+ *  and the per-lesson `LessonSession` (which owns the XState spine). The session
+ *  registers its `send` here on mount so App's stable WS closure can dispatch lesson
+ *  events to the *currently mounted* spine — and re-instantiating the session on an
+ *  L1→L2 advance swaps the target without App needing a new closure. `setPhase`
+ *  lifts the spine's phase up so App can mirror it into `phaseRef` (the transfer
+ *  refusal context) and gate the Hint button. */
+interface LessonBridge {
+  send: ((event: LessonEvent) => void) | null;
+  setPhase: (phase: 'introducing' | 'practicing' | 'transferring') => void;
+}
+
+/** One lesson's worth of UI: the XState spine + the mounted workspace. App renders
+ *  this keyed on the current lessonId, so advancing L1→L2 UNMOUNTS the L1 instance
+ *  (whose spine has reached a `final`/`assessed` dead end carrying `lessonId:1`) and
+ *  RE-MOUNTS a fresh one with `input.lessonId:2` — the real macro transition the
+ *  plan specifies (the locked spine cannot be re-entered from a `final` state, so a
+ *  session-level re-instantiation, not a parent machine, is the mechanism). The
+ *  fresh spine starts in `introducing` for L2; the server's deterministic L2 mount
+ *  then drives it to `practicing`. */
+function LessonSession({
+  lessonId,
+  bridge,
+  mounted,
+  hint,
+  answer,
+  conn,
+  onSubmit,
+  explainBackDeps,
+  onExplainBackEnd,
+  onContinue,
+  onRequestHint,
+}: {
+  lessonId: number;
+  bridge: LessonBridge;
+  mounted: ComponentSpec;
+  hint: ComponentSpec | null;
+  answer: ComponentSpec | null;
+  conn: ConnState;
+  onSubmit: (payload: RepSubmitPayload) => void;
+  explainBackDeps: import('./components/registry.js').RenderOptions['explainBackDeps'];
+  onExplainBackEnd: (payload: { targetItemId: string; transcript: string; durationMs: number }) => void;
+  onContinue: (nextLessonId: number) => void;
+  onRequestHint: () => void;
+}): ReactElement {
   const [snapshot, send] = useMachine(lessonMachine, { input: { lessonId } });
+  const phase = currentPhase(snapshot.value);
+
+  // Register this spine's dispatcher with App's WS closure, and lift the phase up so
+  // App can mirror it into the transfer-refusal ref and gate the Hint button. The
+  // register/unregister is keyed on the actor identity so an L1→L2 re-mount swaps the
+  // live target cleanly.
+  useEffect(() => {
+    bridge.send = send;
+    return () => {
+      if (bridge.send === send) bridge.send = null;
+    };
+  }, [bridge, send]);
+  useEffect(() => {
+    bridge.setPhase(phase);
+  }, [bridge, phase]);
+
+  return (
+    <>
+      {/* Key the workspace by the mounted item's identity so the agent mounting a
+          *new* item of the same kind remounts a fresh component — without the key,
+          React reuses the instance and the prior item's submitted/cells state (and
+          its disabled submit button) would bleed into the new item, blocking it. */}
+      <AnimateOrNot phase={phase}>
+        <div key={mountKey(mounted)}>
+          {renderComponent(mounted, { onSubmit, explainBackDeps, onExplainBackEnd, onContinue })}
+        </div>
+      </AnimateOrNot>
+
+      {hint && <aside className="hint-slot">{renderComponent(hint)}</aside>}
+
+      {answer && <div className="agent-answer-slot">{renderComponent(answer)}</div>}
+
+      {(phase === 'practicing' || phase === 'transferring') && (
+        <button
+          type="button"
+          className="hint-button"
+          onClick={onRequestHint}
+          disabled={conn !== 'open' || phase === 'transferring'}
+          aria-label="Request a hint"
+          data-phase={phase}
+        >
+          Hint
+        </button>
+      )}
+    </>
+  );
+}
+
+export function App(): ReactElement {
+  /** The lesson the spine is currently bound to. Bumping it (on an L1→L2 advance)
+   *  re-instantiates `LessonSession` — a fresh spine in `introducing` for L2 — which
+   *  is the macro transition (AC#2). The INITIAL value comes from F-13's `?lesson=2`
+   *  dev seam (`lessonFromUrl()`), so a `?lesson=2` run starts bound to L2; defaults
+   *  to L1. It parameterises the spine input, the `session_start` frame, and the
+   *  intro. */
+  const [lessonId, setLessonId] = useState(lessonFromUrl);
+  const [phase, setPhase] = useState<'introducing' | 'practicing' | 'transferring'>('introducing');
+  /** The imperative bridge to the active spine (see `LessonBridge`). A stable ref so
+   *  App's WS closure dispatches to whichever `LessonSession` is currently mounted. */
+  const bridgeRef = useRef<LessonBridge>({ send: null, setPhase });
   const [conn, setConn] = useState<ConnState>('connecting');
   const [sessionId, setSessionId] = useState<string | null>(null);
   /** The component the agent has mounted (the inner loop's output). Starts on the
@@ -139,7 +237,10 @@ export function App(): ReactElement {
             // A mount refused by the transfer-probe guard is simply dropped — the
             // held-out rep is never revealed (ADR-005 refusal #2).
             if (r.refused) return;
-            if (r.lessonEvents) for (const e of r.lessonEvents) send(e);
+            // Dispatch lesson events to the CURRENTLY mounted spine via the bridge.
+            // After an L1→L2 advance this is the freshly re-instantiated L2 spine —
+            // App keeps one stable WS closure across the re-instantiation.
+            if (r.lessonEvents) for (const e of r.lessonEvents) bridgeRef.current.send?.(e);
             if (r.mount) {
               // A HintCard renders in the side hint slot, leaving the practice item
               // mounted (the learner keeps solving). A CrossLessonRecall is likewise a
@@ -179,7 +280,12 @@ export function App(): ReactElement {
       cancelled = true;
       socketRef.current?.close();
     };
-  }, [send]);
+    // The socket lives for App's lifetime and routes lesson events to whichever
+    // `LessonSession` is mounted (via the stable `bridgeRef`), so it has no reactive
+    // deps — re-instantiating the L2 spine must NOT tear down the session socket
+    // (that would mint/re-announce and break F-14's cross-lesson recall).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // When a new item is mounted, remember its id so a submit can name it, and stamp
   // the mount time so a submit can report how long the learner took (the rule
@@ -283,6 +389,41 @@ export function App(): ReactElement {
     [sessionId],
   );
 
+  // F-15: the "continue to Lesson 2" handler. The macro L1→L2 transition has two
+  // halves that must BOTH fire:
+  //  (1) SERVER reflex — send a single `advance_lesson` event on the SAME session
+  //      (never minting a new one — that would silently zero F-14's cross-lesson
+  //      recall); the server re-derives L1 mastery (the earned-it guard) and
+  //      DETERMINISTICALLY mounts L2's first item (~<500ms). That L2 mount arrives as
+  //      the next `action` over this socket and re-fills the workspace. `socketRef`
+  //      stays in App so this routes to the active socket without a stale closure.
+  //  (2) CLIENT re-instantiation (AC#2) — bump `lessonId`, which re-keys
+  //      `LessonSession` so React unmounts the L1 spine (now at a `final`/dead-end
+  //      state carrying `lessonId:1`) and re-mounts a FRESH spine with
+  //      `input.lessonId:2`, starting in `introducing`. The locked spine has no edge
+  //      back out of `mastered`, so a re-instantiation — not a parent machine — is the
+  //      mechanism (the statechart re-instantiation-parity test proves the L2 actor
+  //      walks introducing→practicing→mastered identically). Without (2) the spine is
+  //      stuck where L1 left it and AC#2 ("transitions to lesson_2.introducing") is
+  //      false on the client.
+  // The durable lesson-arc record lives server-side in `sessions.lessonProgress`.
+  //
+  // NOTE (convergence with F-13/F-14): the server-side lesson binding lives in
+  // server.ts (handleAdvanceLessonTurn).
+  const onContinue = useCallback(
+    (nextLessonId: number): void => {
+      if (!sessionId) return;
+      socketRef.current?.send({ kind: 'advance_lesson', sessionId, toLessonId: nextLessonId });
+      // Reset the mounted workspace + side slots to a clean intro for the new lesson
+      // (the server's L2 first-item mount lands next), then re-instantiate the spine.
+      setMounted(LESSON_2_INTRO);
+      setHint(null);
+      setAnswer(null);
+      setLessonId(nextLessonId);
+    },
+    [sessionId],
+  );
+
   // F-11: the TTS seam for the explain-back prompt (the ~3s read). Best-effort via
   // the Web Speech API; wrapped so an unavailable/throwing synth (iOS Safari quirk)
   // degrades silently — the recording window still opens. The WebRTC-bridge capture
@@ -301,10 +442,9 @@ export function App(): ReactElement {
     startRecording: () => () => '', // server-side bridge captures the transcript
   }).current;
 
-  const phase = currentPhase(snapshot.value);
-
   // Mirror the phase into a ref for the WS closure, and clear the active probe's
   // held-out reps once we leave the transferring phase (nothing hidden otherwise).
+  // `phase` is lifted from the active `LessonSession` spine via `setPhase`.
   useEffect(() => {
     phaseRef.current = phase;
     if (phase !== 'transferring') {
@@ -315,40 +455,36 @@ export function App(): ReactElement {
 
   return (
     <main>
-      {/* Key the workspace by the mounted item's identity so the agent mounting a
-          *new* item of the same kind remounts a fresh component — without the key,
-          React reuses the instance and the prior item's submitted/cells state (and
-          its disabled submit button) would bleed into the new item, blocking it. */}
-      <AnimateOrNot phase={phase}>
-        <div key={mountKey(mounted)}>
-          {renderComponent(mounted, { onSubmit, explainBackDeps, onExplainBackEnd })}
-        </div>
-      </AnimateOrNot>
+      {/* Key the lesson session by the current `lessonId` so an L1→L2 advance
+          unmounts the L1 spine (a `final`/dead-end state) and re-mounts a FRESH spine
+          for L2 in `introducing` — the macro transition (AC#2). The session owns the
+          XState spine + the mounted workspace; App owns the socket + per-lesson UI
+          state and routes lesson events down via the stable `bridgeRef`. */}
+      <LessonSession
+        key={lessonId}
+        lessonId={lessonId}
+        bridge={bridgeRef.current}
+        mounted={mounted}
+        hint={hint}
+        answer={answer}
+        conn={conn}
+        onSubmit={onSubmit}
+        explainBackDeps={explainBackDeps}
+        onExplainBackEnd={onExplainBackEnd}
+        onContinue={onContinue}
+        onRequestHint={onRequestHint}
+      />
 
-      {hint && <aside className="hint-slot">{renderComponent(hint)}</aside>}
-
-      {/* F-14: the cross-lesson recall callout, in its own side slot so the
-          in-progress practice item (the main workspace) survives. Dismissing it
-          clears the slot and resumes the practice flow at that same item (AC#3). */}
+      {/* F-14: the cross-lesson recall callout, in its own App-level side slot —
+          BESIDE the keyed `LessonSession`, not inside it — so the in-progress practice
+          item (the session's main workspace) survives, AND the callout survives the
+          L1→L2 re-instantiation (it is owned by App, which keeps one session socket for
+          its lifetime). Dismissing it clears the slot and resumes the practice flow at
+          that same item (AC#3). */}
       {recall && (
         <aside className="recall-slot">
           {renderComponent(recall, { onCrossLessonRecallDismiss })}
         </aside>
-      )}
-
-      {answer && <div className="agent-answer-slot">{renderComponent(answer)}</div>}
-
-      {(phase === 'practicing' || phase === 'transferring') && (
-        <button
-          type="button"
-          className="hint-button"
-          onClick={onRequestHint}
-          disabled={conn !== 'open' || phase === 'transferring'}
-          aria-label="Request a hint"
-          data-phase={phase}
-        >
-          Hint
-        </button>
       )}
 
       <form

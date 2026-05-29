@@ -4,11 +4,11 @@ import { WebSocket } from 'ws';
 import { Action } from '@polymath/contract';
 import { createDb, type Db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
-import { events, sessions } from './db/schema.js';
+import { events, learnerState, sessions } from './db/schema.js';
 import { canRunPg, ensureTestPg } from './db/testPg.js';
 import { StubAgentClient } from './agent/stubClient.js';
 import type { AgentClient } from './agent/client.js';
-import { createServer, type PolymathServer } from './server.js';
+import { createServer, currentLessonId, type PolymathServer } from './server.js';
 import { deriveState, toLearnerState, type LoggedEvent } from './mastery/eventConsumer.js';
 import { loadLesson } from './lessons/loader.js';
 import type { ExplainBackJudge } from '@polymath/graph';
@@ -408,6 +408,189 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     expect(gateSeries.some((g) => g.passed === true)).toBe(true); // then passed
     expect(replay.events.some((e) => e.payload.explainBackVerdict?.passed === true)).toBe(true);
     expect(replay.events.some((e) => e.payload.statechartDecision === 'accept')).toBe(true);
+  });
+
+  /**
+   * F-15 helper: drive a fresh session through L1 to a mounted MasteryCelebration,
+   * reusing the exact PASS path above (rule gate → transfer probe → pass →
+   * server-side transcript → synthetic explain-back PASS). Returns the sessionId of a
+   * session whose L1 mastery gate has passed server-side and whose celebration mounted.
+   */
+  async function driveToL1Mastery(): Promise<{ sessionId: string; celebration: Action }> {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    const ws1 = new WebSocket(wsUrl);
+    const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
+      const frames: Record<string, unknown>[] = [
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+      ];
+      const out: Action[] = [];
+      let sent = 0;
+      ws1.on('open', () => ws1.send(JSON.stringify(frames[sent++])));
+      ws1.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          out.push(Action.parse(msg.action));
+          if (sent < frames.length) ws1.send(JSON.stringify(frames[sent++]));
+          else resolve(out);
+        }
+      });
+      ws1.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    ws1.close();
+    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+    const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+    if (!probedItemId) throw new Error('no transfer probe fired');
+
+    await driveSequence(sessionId, [
+      { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
+    ]);
+    server.explainBackCaptureRegistry.setTranscript(
+      sessionId,
+      probedItemId,
+      'For this AND gate the output is true only when both A and B are true across every row of the truth table.',
+    );
+    const wsEb = new WebSocket(`${wsUrl}?testExplainBackVerdict=pass`);
+    const celebration = await new Promise<Action>((resolve, reject) => {
+      wsEb.on('open', () =>
+        wsEb.send(
+          JSON.stringify({
+            kind: 'explain_back_recording_ended',
+            sessionId,
+            targetItemId: probedItemId,
+            transcript: 'An AND gate outputs true only when both inputs are true.',
+            durationMs: 20000,
+          }),
+        ),
+      );
+      wsEb.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') resolve(Action.parse(msg.action));
+      });
+      wsEb.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 8000);
+    });
+    wsEb.close();
+    return { sessionId, celebration };
+  }
+
+  /**
+   * F-15 AC#2/AC#6 — the celebration's "continue to Lesson 2" affordance is REAL: the
+   * server-minted MasteryCelebration carries `nextLessonId:2` (guarded by the non-fatal
+   * `loadLesson(2)` existence check; the placeholder L2 makes it load). Without a next
+   * lesson the field is absent and the client keeps the button disabled.
+   */
+  it('mounts a MasteryCelebration carrying nextLessonId=2 once L1 mastery is earned (AC#2)', async () => {
+    const { celebration } = await driveToL1Mastery();
+    expect(celebration.type).toBe('mount');
+    if (celebration.type === 'mount' && celebration.component.kind === 'MasteryCelebration') {
+      expect(celebration.component.nextLessonId).toBe(2);
+    } else {
+      throw new Error('expected a MasteryCelebration mount');
+    }
+  });
+
+  /**
+   * F-15 AC#3 + the F-14 ENABLER — the data-path proof. After L1 mastery, an
+   * `advance_lesson` reflex (i) writes `sessions.lessonProgress.currentLessonId=2` on the
+   * SAME session, (ii) leaves the L1 KC `learner_state` rows intact under that same
+   * session (so F-14's regression detector can read them), (iii) deterministically mounts
+   * L2's first item server-side (NOT the LLM), and (iv) a subsequent L2 `submit` folds
+   * against L2 content (currentLessonId now resolves to 2).
+   */
+  it('advance_lesson advances to L2 on the SAME session, preserves L1 learner_state, mounts L2 item[0] (AC#2,#3,#5)', async () => {
+    const { sessionId } = await driveToL1Mastery();
+
+    // L1 learner_state rows exist before the advance (the BKT the F-14 detector reads).
+    const l1Rows = await db.select().from(learnerState).where(eq(learnerState.sessionId, sessionId));
+    expect(l1Rows.length).toBeGreaterThan(0);
+    const l1Kcs = new Set(l1Rows.map((r) => r.kc));
+
+    // Fire the advance reflex.
+    const [advanceAction] = await driveSequence(sessionId, [
+      { kind: 'advance_lesson', sessionId, toLessonId: 2 },
+    ]);
+
+    // AC#2: the reflex deterministically mounts L2's first item (a TruthTablePractice).
+    expect(advanceAction!.type).toBe('mount');
+    if (advanceAction!.type === 'mount') {
+      expect(advanceAction!.component.kind).toBe('TruthTablePractice');
+      if (advanceAction!.component.kind === 'TruthTablePractice') {
+        // L2 item[0] expression — F-13's canonical lessons/2 content (reconciled at the
+        // I3 merge sink; F-15 was built against a placeholder before F-13's content landed).
+        expect(advanceAction!.component.expression).toBe('(A AND B) OR (NOT C)');
+      }
+    }
+
+    // AC#5: the durable binding flipped to lesson 2 on the SAME session.
+    expect(await currentLessonId(db, sessionId)).toBe(2);
+    const sessRows = await db.select().from(sessions).where(eq(sessions.id, sessionId));
+    expect((sessRows[0]!.lessonProgress as { currentLessonId: number }).currentLessonId).toBe(2);
+
+    // AC#3 / F-14 enabler: the L1 KC learner_state rows survive under the SAME session.
+    const afterRows = await db.select().from(learnerState).where(eq(learnerState.sessionId, sessionId));
+    for (const kc of l1Kcs) {
+      expect(afterRows.some((r) => r.kc === kc)).toBe(true);
+    }
+
+    // A subsequent L2 submit now binds to lesson 2 (currentLessonId resolves to 2) and
+    // round-trips an action without error — the lesson-binding read sees the advance.
+    const [l2Action] = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l2-and-or-c', submission: '(A AND B) OR (NOT C)', correct: true, responseTimeMs: 5000 },
+    ]);
+    expect(l2Action!.type).toBeTruthy();
+  });
+
+  /**
+   * F-15 AC#4 — the REAL server guard (fail-closed). An `advance_lesson` from a session
+   * that has NOT earned L1 mastery is REFUSED with `no_action` (no lesson change, no
+   * mount) — the server re-derives L1 mastery from the event log; it never trusts the
+   * client frame. This is the macro-transition guard's real enforcement (the server runs
+   * no XState; this branch is the truth-maker, like the mastery earned-it rejection).
+   */
+  it('refuses advance_lesson with no_action when L1 mastery is not earned, and does NOT change the lesson (AC#4)', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+    // A single correct submit is nowhere near the mastery gate.
+    await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
+    ]);
+    const [refused] = await driveSequence(sessionId, [
+      { kind: 'advance_lesson', sessionId, toLessonId: 2 },
+    ]);
+    expect(refused!.type).toBe('no_action');
+
+    // Fail-closed: the durable binding is unchanged (still lesson 1).
+    expect(await currentLessonId(db, sessionId)).toBe(1);
+
+    // The replay records WHY (a reject decision naming the mastery blockers).
+    await new Promise((r) => setTimeout(r, 200));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { kind: string; payload: { statechartDecision?: string; statechartReason?: string } }[];
+    };
+    const advanceTurn = replay.events.find((e) => e.kind === 'advance_lesson');
+    expect(advanceTurn?.payload.statechartDecision).toBe('reject');
+    expect(advanceTurn?.payload.statechartReason).toContain('mastery_gate_failed');
+  });
+
+  /**
+   * F-15 — a non-adjacent / non-existent target is REFUSED (no skipping lessons; a
+   * forged `toLessonId` is block, never a half-valid advance). Even from a mastered L1
+   * session, advancing to lesson 3 (which doesn't exist) yields no_action and no change.
+   */
+  it('refuses advance_lesson to a non-adjacent/non-existent lesson even when L1 is mastered', async () => {
+    const { sessionId } = await driveToL1Mastery();
+    const [refused] = await driveSequence(sessionId, [
+      { kind: 'advance_lesson', sessionId, toLessonId: 3 },
+    ]);
+    expect(refused!.type).toBe('no_action');
+    expect(await currentLessonId(db, sessionId)).toBe(1);
   });
 
   /**

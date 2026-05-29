@@ -18,13 +18,16 @@ export const LESSON_1_INTRO: Extract<ComponentSpec, { kind: 'LessonIntro' }> = {
 };
 
 /**
- * The Lesson 2 intro (F-13). PLACEHOLDER copy in Polymath's three-representation
+ * The Lesson 2 intro (F-13 / F-15). Copy in Polymath's three-representation
  * voice — the final wording is Keith's pedagogical authoring (see the spec's Manual
  * setup). Composition is the lesson: nesting AND/OR/NOT into compound expressions,
  * and meeting XOR not as a new gate but as something you *build* — true when exactly
  * one input is true, i.e. `(A AND NOT B) OR (NOT A AND B)`. NB: never the string
  * "A XOR B" — the alphabet is still only AND/OR/NOT; XOR is a composition you read
- * off the truth table.
+ * off the truth table. It also doubles as the transient bridge the client shows the
+ * instant a learner advances (F-15), covering the ~<500ms until the server's
+ * deterministic L2 first-item mount lands, so the workspace is never blank during the
+ * macro transition.
  */
 export const LESSON_2_INTRO: Extract<ComponentSpec, { kind: 'LessonIntro' }> = {
   kind: 'LessonIntro',

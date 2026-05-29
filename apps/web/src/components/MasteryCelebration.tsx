@@ -8,12 +8,25 @@ type MasteryCelebrationSpec = Extract<ComponentSpec, { kind: 'MasteryCelebration
  * transition→mastered. It lists the concepts the learner has actually mastered
  * (`spec.conceptsMastered`, sourced server-side from `learner_state` BKT, not the
  * agent's claim) and offers a "Continue to Lesson 2" affordance. The affordance is
- * a DISABLED placeholder until F-15 wires the L1→L2 transition; it only enables when
- * a `nextLessonId` is present, so a mastered learner sees a real next step exists
- * without the (not-yet-built) navigation firing.
+ * enabled only when a `nextLessonId` is present (server-set, guarded by the non-fatal
+ * `loadLesson(next)` existence check), so a mastered learner sees a real next step
+ * exists.
+ *
+ * F-15 wires its click to `onContinue(nextLessonId)`, which the App turns into an
+ * `advance_lesson` event — a SERVER reflex re-derives L1 mastery (the earned-it guard)
+ * and deterministically mounts L2's first item on the SAME session. Absent `onContinue`
+ * (isolated component tests, no socket) the button is inert even when enabled.
  */
-export function MasteryCelebration({ spec }: { spec: MasteryCelebrationSpec }): ReactElement {
+export function MasteryCelebration({
+  spec,
+  onContinue,
+}: {
+  spec: MasteryCelebrationSpec;
+  onContinue?: (nextLessonId: number) => void;
+}): ReactElement {
   const concepts = spec.conceptsMastered;
+  const nextLessonId = spec.nextLessonId;
+  const disabled = nextLessonId === undefined;
   return (
     <section className="mastery-celebration" aria-labelledby="mastery-celebration-title">
       <h1 id="mastery-celebration-title">Mastered!</h1>
@@ -34,10 +47,16 @@ export function MasteryCelebration({ spec }: { spec: MasteryCelebrationSpec }): 
       <button
         type="button"
         className="continue-to-next-lesson"
-        // F-15 wires the actual transition; until a next lesson is offered the
-        // affordance is a visible-but-disabled placeholder (no handler yet).
-        disabled={spec.nextLessonId === undefined}
-        aria-disabled={spec.nextLessonId === undefined}
+        // Enabled iff the server offered a next lesson (it loaded + validated). Clicking
+        // fires onContinue(nextLessonId); the App sends `advance_lesson` and the server
+        // reflex (re-derived L1 mastery guard) mounts L2 on the same session.
+        disabled={disabled}
+        aria-disabled={disabled}
+        onClick={
+          disabled || onContinue === undefined
+            ? undefined
+            : () => onContinue(nextLessonId)
+        }
       >
         Continue to Lesson 2
       </button>

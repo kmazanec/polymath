@@ -73,3 +73,22 @@ export function loadLesson(lessonId: number, root: string = lessonsRoot): Lesson
 
   return { content, masteryConfig, kcVocabulary };
 }
+
+/**
+ * F-15: the NON-FATAL existence check the L1→L2 advance's `nextLessonId` guard and
+ * the advance reflex read. `loadLesson` THROWS for a missing directory (ENOENT) or
+ * a content/validator disagreement; the advance must never let either crash a turn
+ * (or, via the celebration's `nextLessonId`, the boot path). This returns the loaded
+ * `Lesson` when it exists + validates, else `undefined` — so the "continue to Lesson
+ * 2" affordance stays DISABLED (a dead button) until a real `lessons/2/` is present
+ * and clean, and the advance reflex refuses (`no_action`) rather than mounting a
+ * non-existent lesson. (CLAUDE.md fail-closed: a missing input is *block*, never a
+ * half-valid pass.)
+ */
+export function loadLessonIfExists(lessonId: number, root: string = lessonsRoot): Lesson | undefined {
+  try {
+    return loadLesson(lessonId, root);
+  } catch {
+    return undefined;
+  }
+}

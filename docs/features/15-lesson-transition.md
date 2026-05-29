@@ -100,4 +100,41 @@ None.
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+**Barrier already shipped the contract pieces** (commit ccc49ff): `advance_lesson`
+ClientEvent, `MasteryCelebration.nextLessonId`, `LessonProgress` interface,
+`currentLessonId`/`lessonIdForEvent`, `sessions.lesson_progress` jsonb (migration 0001).
+F-15 consumed these — no contract reshape.
+
+**Server (`apps/agent/src/server.ts`):**
+- `masteryCelebrationAction` now sets `nextLessonId = lessonId+1` guarded by a NON-FATAL
+  `loadLessonIfExists(next)` (new in `lessons/loader.ts`). Absent/invalid next lesson →
+  field omitted → client keeps the button disabled (fail-closed).
+- `handleAdvanceLessonTurn` — a dedicated early reflex branch (modeled on the explain-back
+  branch), handled BEFORE the generic agent turn so it never touches the LLM menu or the
+  heuristic `alreadyStarted` reflex. Re-derives L1 mastery server-side
+  (`evaluateMasteryGate`) as the real AC#4 earned-it guard; refuses with `no_action` +
+  a persisted reject decision when unmet OR when `toLessonId !== currentLessonId+1` OR the
+  next lesson doesn't load. On accept: writes `sessions.lessonProgress={currentLessonId}`
+  on the SAME session (no new session → F-14's L1 learner_state survives), then
+  DETERMINISTICALLY mounts L2's `content.items[0]` as a TruthTablePractice (server reflex,
+  not the LLM). Persists exactly one event row with the gate evaluation + accept/reject.
+
+**`alreadyStarted`:** SIDESTEPPED, not changed — the advance reflex mounts L2 directly and
+never re-sends `session_start`, so `stubClient.ts`'s "session in progress → no_action" path
+is never hit on advance. `stubClient.ts` was left untouched.
+
+**Client:** `RenderOptions.onContinue` → `registry.tsx` → `MasteryCelebration` button
+`onClick` (enabled iff `nextLessonId`). `App.tsx` `onContinue` sends `advance_lesson` on the
+SAME `sessionId` via the stable `socketRef`; the server's L2 mount arrives as the next
+`action` and re-fills the workspace. A full XState re-instantiation (extract a
+`LessonSession` child keyed on `lessonId`) was deliberately left for the F-13/F-14/F-15
+convergence to keep this advance edit localized; the spine is locked + the server reflex is
+the real macro guard (no client machine transition added).
+
+**Placeholder `lessons/2/`** (content/mastery_config/kc_vocabulary) — validator-passing
+PLACEHOLDER so the existence check passes and the advance path is testable. **Merge blocks
+on Keith/F-13 authoring the real L2 content** (the 12 practice items + prose). The truth
+tables are computed via @polymath/booleans so the loader cannot throw.
+
+**Convergence note:** the advance-reflex + lesson-binding edits in `server.ts` are localized
+and commented; reconcile with F-13's L2 read + F-14's recall reflex at the I3 merge.

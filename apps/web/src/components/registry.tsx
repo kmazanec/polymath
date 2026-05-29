@@ -51,6 +51,10 @@ export interface RenderOptions {
    *  callout (server-throttled to ≤1 per session per KC), so the app re-requests the
    *  next item rather than re-mounting the card. */
   onCrossLessonRecallDismiss?: (currentItemId: string) => void;
+  /** F-15: the "continue to Lesson 2" handler for `MasteryCelebration`. App sends the
+   *  `advance_lesson` event (a server reflex re-derives L1 mastery + mounts L2). Absent
+   *  → the button stays inert (e.g. the registry default in isolated component tests). */
+  onContinue?: (nextLessonId: number) => void;
 }
 
 /** A safe no-op explain-back seam for when no real voice client is wired (tests,
@@ -110,7 +114,7 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
         />
       );
     case 'MasteryCelebration':
-      return <MasteryCelebration spec={spec} />;
+      return <MasteryCelebration spec={spec} onContinue={opts.onContinue} />;
     case 'CrossLessonRecall':
       // F-14: text-only cross-lesson recall card (ADR-012). No rep workspace — the
       // probe-integrity boundary; dismiss resumes practice at the current item.

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadLesson } from './loader.js';
+import { loadLesson, loadLessonIfExists } from './loader.js';
 
 /** Resolve a repo path from this test file (NOT process.cwd(), which differs
  *  between `pnpm --filter @polymath/agent test` and a root `pnpm test` run). */
@@ -76,6 +76,47 @@ describe('loadLesson', () => {
     // The over-generic single words were removed (they matched off-topic English).
     expect(lesson.kcVocabulary).not.toContain('true');
     expect(lesson.kcVocabulary).not.toContain('output');
+  });
+
+  // F-15: the non-fatal existence check the L1→L2 advance reflex's `nextLessonId`
+  // guard reads. A `loadLesson(2)` that throws (ENOENT before `lessons/2/` exists, or
+  // a bad-content throw) must NOT crash the turn/boot — it returns `undefined` so the
+  // "continue to Lesson 2" affordance stays disabled (a dead button is better than a
+  // boot crash), and is enabled only once a real L2 loads.
+  describe('loadLessonIfExists (F-15 nextLessonId guard)', () => {
+    it('returns the lesson when it exists + validates', () => {
+      const lesson = loadLessonIfExists(1);
+      expect(lesson).not.toBeUndefined();
+      expect(lesson!.content.lessonId).toBe(1);
+    });
+
+    it('returns undefined (no throw) for a missing lesson directory', () => {
+      expect(loadLessonIfExists(99)).toBeUndefined();
+    });
+
+    it('returns undefined (no throw) when the lesson content is invalid', () => {
+      // A lesson dir whose truthTable disagrees with the validator throws in
+      // loadLesson; the existence check must swallow it (degrade, not crash).
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'polymath-lesson-bad-'));
+      const dir = path.join(tmp, '8');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, 'content.json'),
+        JSON.stringify({
+          lessonId: 8,
+          title: 'bad-truthtable',
+          knowledgeComponents: ['AND'],
+          items: [
+            { itemId: 'x', kc: 'AND', difficultyTier: 1, targetExpression: 'A AND B', variables: ['A', 'B'], truthTable: [1, 1, 1, 1] },
+          ],
+        }),
+      );
+      const cfg = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, 'lessons/1/mastery_config.json'), 'utf8'),
+      );
+      fs.writeFileSync(path.join(dir, 'mastery_config.json'), JSON.stringify(cfg));
+      expect(loadLessonIfExists(8, tmp)).toBeUndefined();
+    });
   });
 
   it('FAILS CLOSED (empty list, no throw) when kc_vocabulary.json is absent', () => {

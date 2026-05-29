@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import type { ComponentSpec } from '@polymath/contract';
 import { renderComponent } from './registry.js';
 
@@ -32,6 +32,25 @@ describe('MasteryCelebration component (F-12)', () => {
     const { container } = render(renderComponent(spec));
     const button = container.querySelector('.continue-to-next-lesson') as HTMLButtonElement | null;
     expect(button!.disabled).toBe(false);
+  });
+
+  it('F-15: clicking the enabled affordance fires onContinue with the nextLessonId', () => {
+    const onContinue = vi.fn();
+    const spec: ComponentSpec = { kind: 'MasteryCelebration', conceptsMastered: ['AND'], nextLessonId: 2 };
+    const { container } = render(renderComponent(spec, { onContinue }));
+    const button = container.querySelector('.continue-to-next-lesson') as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(onContinue).toHaveBeenCalledWith(2);
+  });
+
+  it('F-15: a disabled affordance (no nextLessonId) cannot fire onContinue', () => {
+    const onContinue = vi.fn();
+    const spec: ComponentSpec = { kind: 'MasteryCelebration', conceptsMastered: ['AND'] };
+    const { container } = render(renderComponent(spec, { onContinue }));
+    const button = container.querySelector('.continue-to-next-lesson') as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(onContinue).not.toHaveBeenCalled();
   });
 
   it('renders a graceful message when no concepts are listed', () => {
