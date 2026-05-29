@@ -11,7 +11,7 @@ import { computeGrowthMultiplier } from './growth.js';
  * and is PURE: it imports NO Drizzle / DB. The agent does all the I/O (loads the
  * session row, experiment pre/post tables, the bounded event fold, learner_state)
  * and passes the already-assembled numbers in as `SummaryInput`. Keeping the
- * pipeline DB-free is what lets F-24/F-25 reuse it without dragging in agent deps
+ * pipeline DB-free is what lets downstream wrappers reuse it without dragging in agent deps
  * (the same separation `explainback/` keeps).
  *
  * EVERYTHING is deterministic and fails closed (CLAUDE.md): no LLM call, a missing
