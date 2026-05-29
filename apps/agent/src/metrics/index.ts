@@ -5,7 +5,9 @@ export type { MetricResult, MetricsPayload } from './types.js';
 export type {
   UiChurnResponse,
   UiChurnPhaseEntry,
+  UiChurnEventRow,
 } from './uiChurn.js';
+export { computeUiChurn } from './uiChurn.js';
 
 /**
  * Assemble the metrics dashboard payload (the body of `GET /api/metrics`).
