@@ -83,6 +83,42 @@
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
       "expectMove": "answer_question",
       "expectTopic": "on_topic"
+    },
+    {
+      "id": "l3-session-start-kicks-off-nand",
+      "lessonId": 3,
+      "event": { "kind": "session_start", "lessonId": 3 },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+    },
+    {
+      "id": "l3-not-from-nand-wrong-submit-does-not-advance",
+      "lessonId": 3,
+      "event": { "kind": "submit", "itemId": "l3-not-from-nand", "submission": "A", "correct": false },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["rephrase", "simpler_item", "worked_example"]
+    },
+    {
+      "id": "l3-xor-from-nand-hint",
+      "lessonId": 3,
+      "event": { "kind": "request_hint", "itemId": "l3-xor" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "propose_hint"
+    },
+    {
+      "id": "l3-xor-correct-submit-advances",
+      "lessonId": 3,
+      "event": { "kind": "submit", "itemId": "l3-xor", "submission": "(A AND NOT B) OR (NOT A AND B)", "correct": true },
+      "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+    },
+    {
+      "id": "l3-nand-universality-question-is-on-topic",
+      "lessonId": 3,
+      "event": { "kind": "learner_question", "question": "why can you build any gate from just NAND?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "on_topic"
     }
   ]
 }
