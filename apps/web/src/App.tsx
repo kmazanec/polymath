@@ -30,7 +30,9 @@ type ConnState = 'connecting' | 'open' | 'closed';
  */
 function lessonFromUrl(): number {
   const raw = new URLSearchParams(window.location.search).get('lesson');
-  return raw === '2' ? 2 : 1;
+  if (raw === '2') return 2;
+  if (raw === '3') return 3;
+  return 1;
 }
 
 const REP_PHRASES: Record<Rep, RegExp> = {
