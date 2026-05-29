@@ -1,8 +1,9 @@
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql, eq } from 'drizzle-orm';
 import { createDb, type Db } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
+import { seedTransferBank } from '../db/seed.js';
 import { canRunPg, ensureTestPg } from '../db/testPg.js';
 import { StubAgentClient } from '../agent/stubClient.js';
 import { createServer, type PolymathServer } from '../server.js';
@@ -53,6 +54,17 @@ describe.skipIf(!canRunPg)('F-17 experiment lifecycle', () => {
     const { port } = server.httpServer.address() as AddressInfo;
     baseUrl = `http://localhost:${port}`;
   }, 60000);
+
+  // Re-assert this suite's precondition before EVERY test: the L1 transfer bank is
+  // fully seeded (8 items — design (ii) has zero slack, so a partial bank yields a
+  // 409 from pretest/start). `seedTransferBank` is idempotent. This makes the suite
+  // order-independent against the shared test Postgres: `seed.test.ts` deletes/re-seeds
+  // `transfer_bank` to exercise its own behavior, and in the full cross-project
+  // `pnpm test` run that DELETE could otherwise leave the bank short for an experiment
+  // `it`. Owning the precondition here removes that cross-suite coupling.
+  beforeEach(async () => {
+    await seedTransferBank(db);
+  });
 
   afterAll(async () => {
     await server.close();
