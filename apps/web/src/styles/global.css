@@ -1,0 +1,54 @@
+/*
+ * Global stylesheet — imported ONCE from main.tsx, after tokens.css.
+ *
+ * Owned by the accessibility/polish workstream. Ships the app-wide accessibility
+ * primitives the contract promises so view-scoped stylesheets can rely on them:
+ *  - `.visually-hidden` — content available to screen readers but off-screen.
+ *  - `:focus-visible`   — a visible, high-contrast keyboard focus ring.
+ *  - `prefers-reduced-motion` — animations/transitions disabled for users who ask.
+ * This is the minimum-viable form; the polish workstream extends it.
+ */
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Visible focus ring for keyboard users (never `outline: none` without a replacement). */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Screen-reader-only content. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

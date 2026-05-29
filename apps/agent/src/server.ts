@@ -39,6 +39,8 @@ import { computeRecall } from './agent/recallReflex.js';
 import { loadLesson, loadLessonIfExists, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
 import { createRateLimiter } from './voice/rateLimiter.js';
+import { buildReport } from './report/buildReport.js';
+import { buildMetricsPayload } from './metrics/index.js';
 import { handleExplainBack, type ExplainBackRouteDeps } from './explainback/route.js';
 import {
   createSubject,
@@ -1308,6 +1310,17 @@ export async function handleClientFrame(
     return;
   }
 
+  // Observability telemetry beacons (`ui_mount`, `intelligibility_response`) are NOT
+  // learner actions: they never fold into the mastery state and must never trigger an
+  // agent turn (no mount/no_action proposal). Ack and return early so they stay off the
+  // critical path. The durable persistence + aggregation that consumes these is owned
+  // downstream; the contract barrier only guarantees the frame is accepted and handled
+  // benignly here, so a feature can later attach its writer without re-shaping dispatch.
+  if (event.kind === 'ui_mount' || event.kind === 'intelligibility_response') {
+    send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+    return;
+  }
+
   // F-13: bind the session to the lesson it STARTS on. `session_start` carries its
   // own lessonId (e.g. the `?lesson=2` dev seam); persist it into the durable
   // `sessions.lessonProgress` so EVERY subsequent turn reads L2 via `currentLessonId`
@@ -1793,6 +1806,43 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
         .orderBy(events.ts)
         .then((rows) => sendJson(res, 200, { sessionId, events: rows }))
         .catch(() => sendJson(res, 500, { error: 'failed to load replay' }));
+      return;
+    }
+
+    // GET /api/session/:id/report — the end-of-session summary (`SessionSummary`).
+    // Operator/teaching data keyed by a session UUID, so gate it exactly like
+    // /replay (MR !7 review: a leaked sessionId must not expose the report on the
+    // public port). 404 for an unknown session.
+    const reportMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/report$/);
+    if (req.method === 'GET' && reportMatch) {
+      const denied = checkOperatorAuth(req, deps.operatorSecret);
+      if (denied) {
+        sendJson(res, denied.status, denied.body);
+        return;
+      }
+      const sessionId = reportMatch[1]!;
+      buildReport(deps.db, sessionId)
+        .then((summary) =>
+          summary === null
+            ? sendJson(res, 404, { error: 'unknown session' })
+            : sendJson(res, 200, summary),
+        )
+        .catch(() => sendJson(res, 500, { error: 'failed to build report' }));
+      return;
+    }
+
+    // GET /api/metrics — the operator metrics dashboard payload (`MetricsPayload`).
+    // Aggregate research data, so gated identically to /replay (operator auth; 401
+    // on a bad secret, 503 when the secret is unset in production).
+    if (req.method === 'GET' && url.pathname === '/api/metrics') {
+      const denied = checkOperatorAuth(req, deps.operatorSecret);
+      if (denied) {
+        sendJson(res, denied.status, denied.body);
+        return;
+      }
+      buildMetricsPayload(deps.db)
+        .then((payload) => sendJson(res, 200, payload))
+        .catch(() => sendJson(res, 500, { error: 'failed to build metrics' }));
       return;
     }
 

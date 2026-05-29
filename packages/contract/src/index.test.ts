@@ -10,6 +10,8 @@ import {
   PhaseName,
   Rep,
   ServerMessage,
+  SessionSummarySchema,
+  type SessionSummary,
   noAction,
 } from './index.js';
 
@@ -168,6 +170,8 @@ describe('wire protocol', () => {
     },
     { kind: 'learner_question', sessionId: SID, question: 'q' },
     { kind: 'session_end', sessionId: SID },
+    { kind: 'ui_mount', sessionId: SID, componentKind: 'TruthTablePractice', phase: 'practicing' },
+    { kind: 'intelligibility_response', sessionId: SID, mountedKind: 'HintCard', answer: 'yes' },
   ];
 
   it('round-trips every client event', () => {
@@ -393,5 +397,32 @@ describe('lesson config schemas', () => {
       ],
     };
     expect(LessonContent.parse(content)).toEqual(content);
+  });
+});
+
+describe('session summary', () => {
+  const valid: SessionSummary = {
+    preTestScore: null,
+    postTestScore: 0.8,
+    growthMultiplier: 1.2,
+    timeOnTaskMs: 600000,
+    transferSuccessRate: 0.75,
+    masteryStatus: 'mastered',
+    explainBackVerdict: { passed: true, reasons: [] },
+    kcsMastered: ['AND', 'OR'],
+    kcsStuck: [],
+    source: 'experiment',
+  };
+
+  it('round-trips a valid session summary', () => {
+    expect(SessionSummarySchema.parse(valid)).toEqual(valid);
+  });
+
+  it('is strict: rejects an unexpected extra key', () => {
+    expect(() => SessionSummarySchema.parse({ ...valid, surprise: 1 })).toThrow();
+  });
+
+  it('rejects an unknown mastery status', () => {
+    expect(() => SessionSummarySchema.parse({ ...valid, masteryStatus: 'nope' })).toThrow();
   });
 });

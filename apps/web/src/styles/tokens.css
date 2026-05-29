@@ -1,0 +1,54 @@
+/*
+ * Design tokens — the single :root custom-property block for the web app.
+ *
+ * Owned by the accessibility/polish workstream; every view consumes these via
+ * `var(--token, fallback)` rather than hard-coding colours, so a contrast or theme
+ * fix lands in one place. The palette is chosen to satisfy WCAG 2.1 AA contrast and
+ * to stay distinguishable under deuteranopia (red/green colour blindness) — the
+ * pass/fail signals never rely on hue alone.
+ *
+ * This barrier ships a minimum-viable token set so view-scoped stylesheets have real
+ * variables to reference; the polish workstream tunes the exact values.
+ */
+:root {
+  /* Surfaces / text */
+  --color-bg: #ffffff;
+  --color-surface: #f4f5f7;
+  --color-text: #14181f;
+  --color-text-muted: #4a5260;
+  --color-border: #c8cdd6;
+
+  /* Accent + status. Deuteranopia-safe: pass=blue, fail=orange (not green/red). */
+  --color-accent: #1d4ed8;
+  --color-pass: #1d6fb8;
+  --color-fail: #c2570a;
+  --color-warn: #8a6d00;
+
+  /* Focus ring (visible, high-contrast). */
+  --color-focus: #1d4ed8;
+
+  /* Spacing + radius scale. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --radius-1: 0.25rem;
+  --radius-2: 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0f1217;
+    --color-surface: #1a1f29;
+    --color-text: #eef1f6;
+    --color-text-muted: #aab3c2;
+    --color-border: #3a4150;
+
+    --color-accent: #7aa2ff;
+    --color-pass: #6fb1e6;
+    --color-fail: #f0954a;
+    --color-warn: #d6b94a;
+
+    --color-focus: #7aa2ff;
+  }
+}

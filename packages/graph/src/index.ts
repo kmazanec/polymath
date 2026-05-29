@@ -17,3 +17,4 @@ export * from './explainback/preconditions.js';
 export * from './explainback/retryPrompts.js';
 export * from './explainback/judge.js';
 export * from './explainback/subgraph.js';
+export * from './summary/growth.js';

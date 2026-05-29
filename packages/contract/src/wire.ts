@@ -132,6 +132,31 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     kind: z.literal('session_end'),
     sessionId: SessionId,
   }),
+  // Observability beacons (append-only NEW event kinds). Pure telemetry — the
+  // server ACKs them and never runs the inner agent / `proposeMove` on them.
+  // Persistence + aggregation are owned by the observability/metrics workstreams;
+  // this contract only fixes the wire shape so a beacon validates at the boundary.
+  //
+  // `ui_mount` — fired by the client each time it mounts a `ComponentSpec`, used to
+  // measure UI churn (mounts per minute, by phase). `componentKind` is a free string
+  // (not the locked `ComponentSpec` `kind` enum) so a future component the server
+  // doesn't yet know about still produces a valid beacon; bounded like every
+  // learner-controlled string in this contract.
+  z.object({
+    kind: z.literal('ui_mount'),
+    sessionId: SessionId,
+    componentKind: z.string().max(120),
+    phase: z.string().max(60),
+  }),
+  // `intelligibility_response` — the learner's yes/no/skip answer to an
+  // "was this clear?" intelligibility probe on a just-mounted component. Folds into
+  // the intelligibility metric. `mountedKind` echoes the component being rated.
+  z.object({
+    kind: z.literal('intelligibility_response'),
+    sessionId: SessionId,
+    mountedKind: z.string().max(120),
+    answer: z.enum(['yes', 'no', 'skip']),
+  }),
   // I3 barrier (F-15): the L1→L2 lesson advance. Append-only NEW event kind (the
   // advance is NOT `transition.to`, which is a `PhaseName`/intra-lesson enum, and
   // NOT a new `Action` variant). Handled as a server reflex that re-derives L1
