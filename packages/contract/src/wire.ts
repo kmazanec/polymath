@@ -108,6 +108,13 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     sessionId: SessionId,
     itemId: z.string(),
     submission: z.string().max(MAX_EXPRESSION_LEN),
+    /** Milliseconds the learner spent on the transfer item before submitting (client
+     *  clock, append-only optional — mirrors `submit.responseTimeMs`). Counter-metric 4
+     *  (dependency check, F-21) folds transfer time-to-correct against practice
+     *  time-to-correct; without this the transfer arm is structurally unmeasurable. An
+     *  absent value is simply not counted (older clients / replays). Bounded to a sane
+     *  day so a bad client clock can't poison the median. */
+    responseTimeMs: z.number().int().nonnegative().max(86_400_000).optional(),
   }),
   z.object({
     kind: z.literal('explain_back_recording_ended'),

@@ -161,6 +161,9 @@ describe('wire protocol', () => {
     { kind: 'submit', sessionId: SID, itemId: 'i', submission: 'A AND B' },
     { kind: 'request_hint', sessionId: SID, itemId: 'i' },
     { kind: 'transfer_submitted', sessionId: SID, itemId: 'i', submission: 'A' },
+    // With the append-only optional responseTimeMs (F-21 metric-4 dependency check
+    // reads it; mirrors submit.responseTimeMs). Round-trips with the field present.
+    { kind: 'transfer_submitted', sessionId: SID, itemId: 'i', submission: 'A', responseTimeMs: 4200 },
     {
       kind: 'explain_back_recording_ended',
       sessionId: SID,
@@ -178,6 +181,27 @@ describe('wire protocol', () => {
     for (const ev of clientEvents) {
       expect(ClientEvent.parse(ev)).toEqual(ev);
     }
+  });
+
+  it('transfer_submitted carries an optional responseTimeMs (F-21 metric-4 data source)', () => {
+    // The dependency-check counter-metric folds transfer time-to-correct against
+    // practice time-to-correct; it reads payload.event.responseTimeMs on
+    // transfer_submitted rows. The field is append-only OPTIONAL: absent for older
+    // clients/replays (still parses), present from the live web client.
+    const withTime = ClientEvent.parse({
+      kind: 'transfer_submitted', sessionId: SID, itemId: 'i', submission: 'A', responseTimeMs: 4200,
+    });
+    expect(withTime).toMatchObject({ kind: 'transfer_submitted', responseTimeMs: 4200 });
+    const withoutTime = ClientEvent.parse({
+      kind: 'transfer_submitted', sessionId: SID, itemId: 'i', submission: 'A',
+    });
+    expect(withoutTime).not.toHaveProperty('responseTimeMs');
+    // Same bound as submit.responseTimeMs — a bad client clock can't poison the median.
+    expect(() =>
+      ClientEvent.parse({
+        kind: 'transfer_submitted', sessionId: SID, itemId: 'i', submission: 'A', responseTimeMs: 86_400_001,
+      }),
+    ).toThrow();
   });
 
   it('round-trips every server message', () => {

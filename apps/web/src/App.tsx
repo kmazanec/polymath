@@ -398,6 +398,11 @@ export function App(): ReactElement {
           sessionId,
           itemId: currentProbeItemId.current,
           submission: payload.submission,
+          // Mirror the practice `submit` timing so counter-metric 4 (dependency check)
+          // can fold transfer time-to-correct against practice time-to-correct. The
+          // mount-time stamp (itemMountedAt) is refreshed on every mount, including the
+          // TransferProbe mount, so this is a valid time-to-submit for the probe item.
+          responseTimeMs: Date.now() - itemMountedAt.current,
         });
         return;
       }

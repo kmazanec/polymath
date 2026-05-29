@@ -16,6 +16,12 @@ import type { MetricEventRow } from './inputs.js';
 function submit(ts: number, correct: boolean, responseTimeMs: number): MetricEventRow {
   return { kind: 'submit', ts, submitCorrect: correct, responseTimeMs };
 }
+// `responseTimeMs` on a transfer row is now wire-backed: the `transfer_submitted`
+// ClientEvent carries an optional responseTimeMs (see wire.ts + index.test.ts), the web
+// client sends it, and fetchMetricInputs maps payload.event.responseTimeMs onto this
+// row for transfer_submitted just as it does for submit. So these fixtures reflect a
+// shape production actually produces (previously the field was fabricated here while
+// the wire never sent it — F-21 review, I5).
 function transfer(ts: number, correct: boolean, responseTimeMs: number): MetricEventRow {
   return { kind: 'transfer_submitted', ts, transferCorrect: correct, responseTimeMs };
 }
