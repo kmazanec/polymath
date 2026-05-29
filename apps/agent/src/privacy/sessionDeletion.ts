@@ -1,4 +1,4 @@
-import { and, eq, isNull, lte } from 'drizzle-orm';
+import { and, eq, isNull, lte, sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { events, learnerState, sessions } from '../db/schema.js';
 
@@ -44,15 +44,19 @@ export async function scheduleSessionDeletion(
   now: Date = new Date(),
   graceHours: number = sessionDataGraceHours(),
 ): Promise<void> {
-  const deleteAfter = new Date(now.getTime() + graceHours * MS_PER_HOUR);
-  // endedAt: COALESCE so a re-close keeps the first end time; deleteAfter is recomputed
-  // from the (preserved) end — but since we use `now` here, anchor deleteAfter to the
-  // existing endedAt when present so the grace is measured from the real end.
+  const graceMs = graceHours * MS_PER_HOUR;
+  // endedAt: COALESCE so a re-close (a reconnect cycle) keeps the FIRST end time and
+  // doesn't keep pushing the window out — otherwise a client that reconnects forever
+  // postpones deletion indefinitely (a fail-open drift on a privacy control). The
+  // grace is anchored to the *preserved* end (`endedAt + grace`), measured from the
+  // real first end; on the first close (endedAt currently NULL) that resolves to
+  // `now + grace`. Computed in SQL so the COALESCE sees the existing row value.
+  const interval = `${graceMs} milliseconds`;
   await db
     .update(sessions)
     .set({
-      endedAt: now,
-      deleteAfter,
+      endedAt: sql`coalesce(${sessions.endedAt}, ${now})`,
+      deleteAfter: sql`coalesce(${sessions.endedAt}, ${now}) + ${interval}::interval`,
     })
     .where(and(eq(sessions.id, sessionId), isNull(sessions.app)));
 }

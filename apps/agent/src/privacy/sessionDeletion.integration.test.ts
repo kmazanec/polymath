@@ -77,6 +77,21 @@ describe.skipIf(!canRunPg)('session-data deletion', () => {
     expect(delta).toBeLessThan(25 * 3600_000);
   });
 
+  it('a re-close keeps the FIRST end time and does not extend the window', async () => {
+    const id = await seedSession({ app: null });
+    const firstEnd = new Date();
+    await scheduleSessionDeletion(db, id, firstEnd, 24);
+    const [first] = await db.select().from(sessions).where(eq(sessions.id, id));
+    const firstDeleteAfter = first!.deleteAfter!.getTime();
+    // A reconnect/double-close an hour later must NOT push endedAt or deleteAfter out
+    // (otherwise a client reconnecting forever postpones deletion — a fail-open drift).
+    const laterClose = new Date(firstEnd.getTime() + 3600_000);
+    await scheduleSessionDeletion(db, id, laterClose, 24);
+    const [second] = await db.select().from(sessions).where(eq(sessions.id, id));
+    expect(second!.endedAt!.getTime()).toBe(first!.endedAt!.getTime());
+    expect(second!.deleteAfter!.getTime()).toBe(firstDeleteAfter);
+  });
+
   it('does NOT delete a session still within its grace window', async () => {
     const id = await seedSession({ app: null });
     // Scheduled to delete 24h from now → not yet expired.
