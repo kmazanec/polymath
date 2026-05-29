@@ -21,6 +21,17 @@ async function main(): Promise<void> {
   await runMigrations(POSTGRES_URL);
 
   const { db, pool } = createDb(POSTGRES_URL);
+  // `createServer` defaults the F-11 explain-back voice-capture registry and sources
+  // the server-side transcript/prosody integrity seams from it (the route NEVER trusts
+  // the client-supplied event.transcript — CLAUDE.md "server never trusts the client").
+  // The registry is reachable as `server.explainBackCaptureRegistry`: the (deferred)
+  // live LiveKit bridge `register()`s a phase-scoped RealtimeSession per explain-back
+  // utterance so a real spoken explain-back produces a server-side transcript. Until
+  // that live device capture lands (deferred cross-platform smoke — needs real
+  // keys/devices, see docs/voice-cross-platform-smoke.md), nothing populates the
+  // registry, so every real explain-back runs on an empty transcript and FAILS CLOSED
+  // at precondition #3 — never a silent client-trusting pass. The keyed judge
+  // (makeExplainBackJudge) self-gates on OPENAI_API_KEY.
   const server = createServer({ db, agent: new StubAgentClient(), allowedOrigins });
 
   server.httpServer.listen(PORT, () => {

@@ -1,6 +1,12 @@
 import { desc, eq } from 'drizzle-orm';
 import type { Action, ClientEvent, ExplainBackVerdict } from '@polymath/contract';
-import { runExplainBack, retryPromptForFirst, type ExplainBackJudge, type ProsodyFeatures } from '@polymath/graph';
+import {
+  runExplainBack,
+  retryPromptForFirst,
+  checkPreconditions,
+  type ExplainBackJudge,
+  type ProsodyFeatures,
+} from '@polymath/graph';
 import type { Db } from '../db/client.js';
 import { events } from '../db/schema.js';
 import type { Lesson } from '../lessons/loader.js';
@@ -49,13 +55,16 @@ export interface ExplainBackRouteDeps {
    *  bridge). Absent → the judge sees no prosody (never a block on its own). */
   prosodyFor?: (sessionId: string, targetItemId: string) => ProsodyFeatures | undefined;
   /** Server-side authoritative transcript captured by the F-10 WebRTC bridge for
-   *  this explain-back utterance. When present it OVERRIDES the client-supplied
-   *  `event.transcript` (the server must not trust the client for the central
-   *  integrity input — CLAUDE.md "server never trusts the client"). The bare
-   *  `explain_back_recording_ended` event is only the completion SIGNAL; the spoken
-   *  content arrives server-side via this seam. Absent (bridge capture not wired /
-   *  deferred device smoke) → fall back to the client transcript, which the
-   *  preconditions + judge still gate (and which fails CLOSED when empty). */
+   *  this explain-back utterance. This is the ONLY integrity source for the spoken
+   *  content: the bare `explain_back_recording_ended` event is merely the completion
+   *  SIGNAL, and the client-supplied `event.transcript` is NEVER used as an integrity
+   *  input (CLAUDE.md "server never trusts the client" + "the explain-back is the
+   *  integrity boundary"). A client could otherwise POST a crafted transcript and
+   *  pass the rubric without ever speaking — a forgery / paid-judge-abuse hole.
+   *  Absent (bridge capture not wired / deferred device smoke) → the rubric runs on
+   *  an EMPTY transcript → fails CLOSED at precondition #3 (`too_few_words`). The
+   *  only non-bridge verdict path is the explicit dev/test `syntheticVerdict` seam
+   *  below (NODE_ENV-gated, inert in prod). */
   transcriptFor?: (sessionId: string, targetItemId: string) => string | undefined;
   /** Transfer-bank rows for resolving a probed item's tokens (read-only). */
   transferItems?: TransferBankItemRef[];
@@ -201,37 +210,46 @@ export async function handleExplainBack(
     };
   }
 
-  // (3) Resolve the verdict. The dev/test seam (`syntheticVerdict`, NODE_ENV-gated by
-  // the caller) SHORT-CIRCUITS the real judge: the integration tests inject it because
-  // the real LLM judge needs an OPENAI_API_KEY they lack. Otherwise derive the
-  // precondition inputs server-side and run the real rubric (preconditions → judge,
-  // fail closed throughout). kcVocabulary empty → #4 fails closed; itemTokens empty
-  // (unknown/forged/over-cap) → #5 fails closed.
+  // (3) Resolve the verdict. The precondition INPUTS are derived server-side either
+  // way (the deterministic anti-cheat ALWAYS runs — even on the dev/test seam):
+  //   - the bridge transcript is the ONLY integrity source. The client-supplied
+  //     `event.transcript` is NEVER trusted (CLAUDE.md "server never trusts the
+  //     client" — a client could POST a crafted transcript and pass the rubric
+  //     without speaking). Absent bridge transcript → empty → fails CLOSED at #3.
+  //   - kcVocabulary empty → #4 fails closed; itemTokens empty (unknown/forged/
+  //     over-cap) → #5 fails closed.
+  const kcVocabulary = lesson.kcVocabulary;
+  const itemTokens = deriveItemTokens(event.targetItemId, lesson, deps.transferItems ?? []);
+  const prosody = deps.prosodyFor?.(event.sessionId, event.targetItemId);
+  const transcript = deps.transcriptFor?.(event.sessionId, event.targetItemId) ?? '';
+  const preconditionInput = {
+    transcript,
+    durationMs: effectiveDurationMs,
+    maxDurationSec,
+    kcVocabulary,
+    itemTokens,
+    ...(prosody ? { prosody } : {}),
+  };
+
   let verdict: ExplainBackVerdict;
   if (deps.syntheticVerdict) {
-    verdict = deps.syntheticVerdict;
+    // The dev/test seam (`syntheticVerdict`, NODE_ENV-gated by the caller) skips only
+    // the paid LLM JUDGE — it does NOT skip the deterministic preconditions, and it
+    // requires a non-empty SERVER transcript (CLUSTER D thread 8: a synthetic pass
+    // must never fold with an empty/absent transcript). The preconditions run first;
+    // a precondition failure FAILS CLOSED with the real reason regardless of what the
+    // seam claims. Only when the structural anti-cheat clears is the synthetic verdict
+    // honored. (A synthetic FAIL is honored as-is — the seam can always force a fail.)
+    const pre = checkPreconditions(preconditionInput);
+    if (!deps.syntheticVerdict.passed) {
+      verdict = deps.syntheticVerdict;
+    } else if (!pre.passed) {
+      verdict = { passed: false, reasons: [pre.failedReason ?? 'too_few_words'] };
+    } else {
+      verdict = deps.syntheticVerdict;
+    }
   } else {
-    const kcVocabulary = lesson.kcVocabulary;
-    const itemTokens = deriveItemTokens(event.targetItemId, lesson, deps.transferItems ?? []);
-    const prosody = deps.prosodyFor?.(event.sessionId, event.targetItemId);
-
-    // The server-derived bridge transcript is authoritative when present; the
-    // client-supplied `event.transcript` is only a fallback (never trusted over the
-    // bridge). An empty/absent transcript fails CLOSED at precondition #3.
-    const bridgeTranscript = deps.transcriptFor?.(event.sessionId, event.targetItemId);
-    const transcript = bridgeTranscript ?? event.transcript;
-
-    verdict = await runExplainBack(
-      {
-        transcript,
-        durationMs: effectiveDurationMs,
-        maxDurationSec,
-        kcVocabulary,
-        itemTokens,
-        ...(prosody ? { prosody } : {}),
-      },
-      { ...(deps.judge ? { judge: deps.judge } : {}) },
-    );
+    verdict = await runExplainBack(preconditionInput, { ...(deps.judge ? { judge: deps.judge } : {}) });
   }
 
   // (4) Decide the FAIL-path action (the caller replaces this on a PASS with the
