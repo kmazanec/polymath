@@ -244,10 +244,11 @@ export function App(): ReactElement {
 
   useEffect(() => {
     let cancelled = false;
-    // F-13 AC#8: forward `?lesson=2` on the WS upgrade so the server's dev seam can
-    // honor an L2 binding (it stays inert unless POLYMATH_ENABLE_TEST_SEAMS is set and
-    // NODE_ENV!=='production'). Omitted for the default L1 run.
-    const lessonQuery = lessonId === 2 ? '?lesson=2' : '';
+    // F-13 AC#8: forward `?lesson=N` on the WS upgrade so the server's dev seam can
+    // honor a lesson > 1 binding (it stays inert unless POLYMATH_ENABLE_TEST_SEAMS is
+    // set and NODE_ENV!=='production'). Omitted for the default L1 run. L3 (NAND)
+    // reuses the same seam, so the query is generalised over any lesson > 1.
+    const lessonQuery = lessonId > 1 ? `?lesson=${String(lessonId)}` : '';
     const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/agent${lessonQuery}`;
 
     void fetch('/api/session', { method: 'POST' })
