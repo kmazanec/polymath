@@ -69,6 +69,9 @@ export interface RenderOptions {
   onPlaygroundRequestScaffold?: (payload: PlaygroundRequestScaffoldPayload) => void;
   /** ADR-013 stretch playground: exit (`exit_playground`) → session-end celebration. */
   onExitPlayground?: () => void;
+  /** ADR-013 stretch playground: the agent's most recent scaffold answer (AC#5),
+   *  rendered in the canvas's side slot. Null until a hint is requested + delivered. */
+  playgroundScaffold?: string | null;
   /** ADR-013 stretch playground: the "Try the Playground" affordance on the final
    *  lesson's `MasteryCelebration`. Absent → the button is not rendered. */
   onTryPlayground?: () => void;
@@ -149,6 +152,7 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
           onPlaygroundSubmit={opts.onPlaygroundSubmit}
           onRequestScaffold={opts.onPlaygroundRequestScaffold}
           onExitPlayground={opts.onExitPlayground}
+          scaffold={opts.playgroundScaffold}
         />
       );
     case 'IntroExplanation':

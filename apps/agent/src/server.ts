@@ -37,6 +37,7 @@ import {
   type LoggedEvent,
 } from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
+import { compileMove, type TacticalMove } from './agent/menu.js';
 import { computeRecall } from './agent/recallReflex.js';
 import { loadLesson, loadLessonIfExists, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
@@ -1419,21 +1420,58 @@ async function handlePlaygroundSubmitTurn(
   send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
 }
 
-/** `playground_request_scaffold`: the agent answers but NEVER directs. Persist the
- *  ask and ack; the scaffold itself is the agent's `verify_playground_equivalence`
- *  move (an on-topic answer mount), which the client requests separately. We keep
- *  this turn off the graded path entirely. */
+/** A deterministic, Socratic scaffold for a playground hint request (ADR-013 AC#5).
+ *  The agent SCAFFOLDS, never directs: it nudges the learner toward checking their
+ *  own work across the three representations — it never reveals the target's answer
+ *  key (the playground is ungraded free-build; the equivalence VERDICT is the
+ *  client-side `playgroundEquivalence`, never the LLM — D26-3). Kept off the graded
+ *  path and free of any `equivalent()`/`truthTable()` over learner input, so there is
+ *  no new DoS/var-cap surface. A live LLM provider may later enrich this copy, but the
+ *  offline default must always produce a usable scaffold so the gesture works with no
+ *  key (the heuristic-provider discipline). */
+function playgroundScaffoldText(
+  event: Extract<ClientEvent, { kind: 'playground_request_scaffold' }>,
+): string {
+  const target = event.targetExpression.trim();
+  const opener = event.learnerQuestion?.trim()
+    ? `On "${event.learnerQuestion.trim()}": `
+    : '';
+  return (
+    `${opener}I won't give you the answer — that's the whole point of the playground. ` +
+    `Work it in all three forms and let them check each other: fill the truth table for ` +
+    `${target ? `\`${target}\`` : 'your target'} row by row, wire the same function as a ` +
+    `circuit, and write it as pseudocode — then press Submit and the workspace tells you ` +
+    `which representations already agree. Where two of them disagree, the odd one out is ` +
+    `where your bug is. Start from the rows where the output is true.`
+  );
+}
+
+/** `playground_request_scaffold`: the agent SCAFFOLDS on request (AC#5) — it must
+ *  actually deliver something to the learner, not just ack. We build the scaffold-only
+ *  `verify_playground_equivalence` move, compile it to a wire `Action` (an on-topic
+ *  answer mount), and re-validate it at the wire boundary like every outbound action
+ *  (the server never trusts even its own move). The move can ONLY compile to an
+ *  answer/no_action — never a transition — so the playground stays ungraded; the
+ *  equivalence verdict is the client's, never this turn's. */
 async function handlePlaygroundRequestScaffoldTurn(
   deps: ServerDeps,
   ws: WebSocket,
   event: Extract<ClientEvent, { kind: 'playground_request_scaffold' }>,
 ): Promise<void> {
+  const move: TacticalMove = {
+    move: 'verify_playground_equivalence',
+    scaffold: playgroundScaffoldText(event),
+    rationale: 'playground scaffold-on-request (ADR-013): nudge across reps, never the answer',
+  };
+  // compileMove → an `answer_question` action; validateOutboundAction is the wire-boundary
+  // re-check (a malformed action would downgrade to no_action, never crash the socket).
+  const { action } = validateOutboundAction(compileMove(move));
   await deps.db.insert(events).values({
     sessionId: event.sessionId,
     kind: event.kind,
-    payload: { event },
+    payload: { event, action },
   });
-  send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+  send(ws, { kind: 'action', sessionId: event.sessionId, action });
 }
 
 /** `exit_playground`: mount a session-end celebration (server-sourced

@@ -116,6 +116,22 @@ describe('PlaygroundCanvas (ADR-013 free-build capstone)', () => {
     expect(onRequestScaffold.mock.calls[0][0].targetExpression).toBe('A AND B');
   });
 
+  it('AC#5: renders a delivered scaffold (the hint the learner actually receives)', () => {
+    const scaffold =
+      "I won't give you the answer — fill the truth table, wire the circuit, and write the pseudocode, then Submit to see which representations agree.";
+    const { queryByLabelText, rerender, getByLabelText: getLbl, getByRole } = render(
+      <PlaygroundCanvas spec={SPEC} />,
+    );
+    setTarget(getLbl, getByRole, 'A AND B');
+    // No scaffold yet → nothing shown.
+    expect(queryByLabelText(/tutor hint/i)).toBeNull();
+    // Once the agent's scaffold is threaded in, it is rendered (announced via role=status).
+    rerender(<PlaygroundCanvas spec={SPEC} scaffold={scaffold} />);
+    const hint = getLbl(/tutor hint/i);
+    expect(hint.textContent).toContain('truth table');
+    expect(hint.getAttribute('role')).toBe('status');
+  });
+
   it('AC#6: a Finish button fires onExitPlayground', () => {
     const onExitPlayground = vi.fn();
     const { getByLabelText, getByRole } = render(

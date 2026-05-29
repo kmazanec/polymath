@@ -40,6 +40,11 @@ export interface PlaygroundCanvasProps {
   onRequestScaffold?: (payload: PlaygroundRequestScaffoldPayload) => void;
   /** Sends `exit_playground` → the App mounts the session-end celebration. */
   onExitPlayground?: () => void;
+  /** The agent's most recent scaffold answer (AC#5), threaded from App's `answer`
+   *  state. Null until the learner requests a hint and the server replies with the
+   *  `verify_playground_equivalence` action. Rendered in a side slot so the canvas
+   *  (the learner's in-progress build) is never replaced by it. */
+  scaffold?: string | null;
 }
 
 /** Every gate the learner may drop in the playground circuit (the full I6 grammar). */
@@ -75,6 +80,7 @@ export function PlaygroundCanvas({
   onPlaygroundSubmit,
   onRequestScaffold,
   onExitPlayground,
+  scaffold,
 }: PlaygroundCanvasProps): ReactElement {
   const [draft, setDraft] = useState('');
   const [target, setTarget] = useState<string | null>(null);
@@ -278,6 +284,21 @@ export function PlaygroundCanvas({
             </span>
           ))}
         </p>
+      )}
+
+      {/* AC#5: the agent's scaffold-on-request, shown in a side slot (announced via
+          role="status") so the learner's in-progress build is never replaced. The
+          scaffold nudges across reps; it never reveals the answer (the verdict is the
+          client-side equivalence check above). */}
+      {scaffold && (
+        <aside
+          className="playground-scaffold"
+          role="status"
+          aria-label="tutor hint"
+          style={{ marginTop: '12px' }}
+        >
+          {scaffold}
+        </aside>
       )}
     </section>
   );

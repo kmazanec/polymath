@@ -1684,17 +1684,34 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(sub?.payload.verdict?.allEquivalent).toBe(false);
     });
 
-    it('a scaffold request is recorded and acked off the graded path', async () => {
+    it('DELIVERS a scaffold action on request (AC#5) — scaffold-only, never a transition', async () => {
       const { sessionId } = await driveToL1Mastery();
       await sendOne({ kind: 'enter_playground', sessionId });
-      const scaffold = await sendOne({
+      const reply = await sendOne({
         kind: 'playground_request_scaffold',
         sessionId,
         targetExpression: 'A NAND B',
         learnerQuestion: 'How do I express NAND with the gates I have?',
       });
-      expect(scaffold.kind).toBe('ack');
-      expect(scaffold.event).toBe('playground_request_scaffold');
+      // The learner must actually RECEIVE a scaffold — not a bare ack (the MR !9 gap).
+      expect(reply.kind).toBe('action');
+      const action = Action.parse(reply.action);
+      // Scaffold-only: an on-topic answer the canvas renders. NEVER a transition — the
+      // playground is ungraded and the LLM is never the equivalence verdict (ADR-013 D26-3).
+      expect(action.type).toBe('answer_question');
+      if (action.type === 'answer_question') {
+        expect(action.topicClassification).toBe('on_topic');
+        expect(action.answer.length).toBeGreaterThan(0);
+        // The scaffold nudges across reps; it must NOT just echo the target's answer key.
+        expect(action.answer.toLowerCase()).toMatch(/truth table|circuit|pseudocode|representation/);
+      }
+
+      // It is persisted as an action record, off the graded path (no BKT/mastery write).
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { action?: { type?: string } } }[];
+      };
+      const rec = replay.events.find((e) => e.kind === 'playground_request_scaffold');
+      expect(rec?.payload.action?.type).toBe('answer_question');
     });
   });
 });

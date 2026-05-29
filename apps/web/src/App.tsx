@@ -662,6 +662,10 @@ export function App(): ReactElement {
             onPlaygroundSubmit,
             onPlaygroundRequestScaffold,
             onExitPlayground,
+            // AC#5: thread the agent's scaffold answer into the canvas so a requested
+            // hint is actually shown (the playground view replaces LessonSession, which
+            // is what normally renders `answer`). Only an AgentAnswer carries scaffold text.
+            playgroundScaffold: answer?.kind === 'AgentAnswer' ? answer.answer : null,
           })}
         </div>
       ) : (
