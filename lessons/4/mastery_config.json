@@ -1,0 +1,23 @@
+{
+  "consecutiveCorrectAtHardestTier": 3,
+  "hintsUsedInLastN_items": 0,
+  "responseTimeFloorMs": 2000,
+  "responseTimeCeilingMs": 90000,
+  "responseTimeMedianBandMs": [3000, 75000],
+
+  "bktMasteryThreshold": 0.95,
+  "bktPrior_L0": 0.25,
+  "bktTransition_T": 0.2,
+  "bktGuess_G": 0.15,
+  "bktSlip_S": 0.1,
+
+  "hintRatioMax": 0.2,
+  "retryRatioMax": 0.3,
+
+  "requireHandCuratedTransfer": true,
+  "requireDifferentRepresentation": true,
+  "requireExplainBackPass": true,
+
+  "topicGuardrailBudget": 3,
+  "explainBackJudgeAgreementThreshold": 0.9
+}

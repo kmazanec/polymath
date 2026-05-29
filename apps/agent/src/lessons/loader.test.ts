@@ -120,6 +120,36 @@ describe('loadLesson', () => {
     expect(lesson.kcVocabulary).not.toContain('output');
   });
 
+  // Lesson 4 (De Morgan's law, ADR-012 stretch). Validator-passing content + config
+  // + KC vocab; every item's hand-authored truthTable (including the trap items) must
+  // agree with @polymath/booleans or loadLesson throws.
+  it('loads and validates lesson 4 against the contract + the validator', () => {
+    expect(() => loadLesson(4)).not.toThrow();
+    const lesson = loadLesson(4);
+    expect(lesson.content.lessonId).toBe(4);
+    expect(lesson.content.title).toMatch(/De Morgan/i);
+    expect(lesson.content.knowledgeComponents).toContain('de_morgan');
+    // ~12 practice items across the difficulty tiers.
+    expect(lesson.content.items.length).toBeGreaterThanOrEqual(12);
+    // At least one item carries each canonical De Morgan pair's table.
+    // NOT(A AND B) ≡ (NOT A) OR (NOT B): table [1,1,1,0].
+    expect(
+      lesson.content.items.some((i) => JSON.stringify(i.truthTable) === JSON.stringify([1, 1, 1, 0])),
+    ).toBe(true);
+    // NOT(A OR B) ≡ (NOT A) AND (NOT B): table [1,0,0,0].
+    expect(
+      lesson.content.items.some((i) => JSON.stringify(i.truthTable) === JSON.stringify([1, 0, 0, 0])),
+    ).toBe(true);
+    expect(lesson.masteryConfig.bktMasteryThreshold).toBe(0.95);
+  });
+
+  it('reads the L4 KC vocabulary list (De Morgan terms)', () => {
+    const lesson = loadLesson(4);
+    expect(Array.isArray(lesson.kcVocabulary)).toBe(true);
+    expect(lesson.kcVocabulary).toContain("De Morgan's law");
+    expect(lesson.kcVocabulary).toContain('negation');
+  });
+
   // F-15: the non-fatal existence check the L1→L2 advance reflex's `nextLessonId`
   // guard reads. A `loadLesson(2)` that throws (ENOENT before `lessons/2/` exists, or
   // a bad-content throw) must NOT crash the turn/boot — it returns `undefined` so the

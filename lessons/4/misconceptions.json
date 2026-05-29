@@ -1,3 +1,29 @@
 {
-  "items": []
+  "items": [
+    {
+      "itemId": "l4-nand2-trap",
+      "halfwayTruthTable": [1, 0, 0, 0],
+      "hintBody": "That's the halfway-application misconception: you flipped the negation but didn't flip the operator. NOT (A AND B) is NOT the same as (NOT A) AND (NOT B). De Morgan's law says you must ALSO change the AND to OR: NOT (A AND B) = (NOT A) OR (NOT B)."
+    },
+    {
+      "itemId": "l4-nor2-trap",
+      "halfwayTruthTable": [1, 1, 1, 0],
+      "hintBody": "That's the halfway-application misconception: you flipped the negation but didn't flip the operator. NOT (A OR B) is NOT the same as (NOT A) OR (NOT B). De Morgan's law says you must ALSO change the OR to AND: NOT (A OR B) = (NOT A) AND (NOT B)."
+    },
+    {
+      "itemId": "l4-nand3-trap",
+      "halfwayTruthTable": [1, 0, 0, 0, 0, 0, 0, 0],
+      "hintBody": "That's the halfway-application misconception: you negated each variable but kept the AND. De Morgan's law turns AND into OR under negation: NOT (A AND B AND C) = (NOT A) OR (NOT B) OR (NOT C). Flip the operator too, not just the negations."
+    },
+    {
+      "itemId": "l4-comp-and-or-trap",
+      "halfwayTruthTable": [1, 1, 1, 1, 1, 1, 1, 0],
+      "hintBody": "That's the halfway-application misconception: you pushed the negation in but kept the OR. De Morgan's law flips the connective: NOT ((A AND B) OR C) = NOT (A AND B) AND (NOT C). The outer OR must become AND when the negation distributes."
+    },
+    {
+      "itemId": "l4-comp-a-and-bc-trap",
+      "halfwayTruthTable": [1, 0, 0, 0, 0, 0, 0, 0],
+      "hintBody": "That's the halfway-application misconception: you distributed the negation but kept the AND. De Morgan's law flips the connective: NOT (A AND (B OR C)) = (NOT A) OR NOT (B OR C). Change the outer AND to OR when you negate."
+    }
+  ]
 }

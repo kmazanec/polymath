@@ -1,0 +1,104 @@
+{
+  "lessonId": 4,
+  "title": "Lesson 4 — De Morgan's Law",
+  "_authoring": "PLACEHOLDER content (ADR-012 stretch). Pedagogically coherent with the L4 transfer bank (seed_data/transfer_items.json) and the L4 KCs; every truthTable is computed via @polymath/booleans so loadLesson(4) cannot throw. De Morgan's law is the payoff: NOT(A AND B) = (NOT A) OR (NOT B) and NOT(A OR B) = (NOT A) AND (NOT B). The trap items (l4-*-trap) carry a deliberately-constructed halfway-misconception form whose near-miss output column is authored into lessons/4/misconceptions.json; the misconception detector names it in the hint. Final wording/sequencing across the 4 tiers is Keith's pedagogical authoring (~1 day, see the spec's Manual setup).",
+  "knowledgeComponents": ["de_morgan", "negation"],
+  "items": [
+    {
+      "itemId": "l4-nand2-trap",
+      "kc": "de_morgan",
+      "difficultyTier": 1,
+      "targetExpression": "NOT (A AND B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 1, 1, 0]
+    },
+    {
+      "itemId": "l4-nor2-trap",
+      "kc": "de_morgan",
+      "difficultyTier": 1,
+      "targetExpression": "NOT (A OR B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-nand-equiv",
+      "kc": "de_morgan",
+      "difficultyTier": 1,
+      "targetExpression": "(NOT A) OR (NOT B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 1, 1, 0]
+    },
+    {
+      "itemId": "l4-nor-equiv",
+      "kc": "de_morgan",
+      "difficultyTier": 2,
+      "targetExpression": "(NOT A) AND (NOT B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-nor-primitive",
+      "kc": "negation",
+      "difficultyTier": 2,
+      "targetExpression": "A NOR B",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-neg-and-not",
+      "kc": "negation",
+      "difficultyTier": 2,
+      "targetExpression": "NOT A AND NOT B",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-nand3-trap",
+      "kc": "de_morgan",
+      "difficultyTier": 3,
+      "targetExpression": "NOT (A AND B AND C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 1, 1, 1, 1, 1, 1, 0]
+    },
+    {
+      "itemId": "l4-nor3",
+      "kc": "de_morgan",
+      "difficultyTier": 3,
+      "targetExpression": "NOT (A OR B OR C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 0, 0, 0, 0, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-comp-and-or-trap",
+      "kc": "de_morgan",
+      "difficultyTier": 3,
+      "targetExpression": "NOT ((A AND B) OR C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 0, 1, 0, 1, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-comp-a-and-bc-trap",
+      "kc": "de_morgan",
+      "difficultyTier": 4,
+      "targetExpression": "NOT (A AND (B OR C))",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 1, 1, 1, 1, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-comp-a-or-bc",
+      "kc": "de_morgan",
+      "difficultyTier": 4,
+      "targetExpression": "NOT (A OR (B AND C))",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 1, 1, 0, 0, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-comp-or-and",
+      "kc": "de_morgan",
+      "difficultyTier": 4,
+      "targetExpression": "NOT ((A OR B) AND C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 1, 1, 0, 1, 0, 1, 0]
+    }
+  ]
+}
