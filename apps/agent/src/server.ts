@@ -1315,16 +1315,13 @@ export async function handleClientFrame(
   // Observability telemetry beacons (`ui_mount`, `intelligibility_response`) are NOT
   // learner actions: they never fold into the mastery state and must never trigger an
   // agent turn (no mount/no_action proposal). Ack and return early so they stay off the
-  // critical path. The durable persistence + aggregation that consumes these is owned
-  // downstream; the contract barrier only guarantees the frame is accepted and handled
-  // benignly here, so a feature can later attach its writer without re-shaping dispatch.
+  // critical path.
   if (event.kind === 'ui_mount' || event.kind === 'intelligibility_response') {
     // The `ui_mount` beacon is PERSISTED (app:null, payload:{componentKind,phase}) so
     // the UI-churn endpoint can fold it later — it is append-only and NON-integrity: it
     // does NOT route through the mastery/eventConsumer fold (no BKT/streak/off-topic
     // effect) and must not block the WS happy path. Persist fire-and-forget; a write
-    // failure must not break the round-trip, so we ack regardless. (`intelligibility_response`
-    // persistence + metric is owned downstream — acked benignly here, not yet written.)
+    // failure must not break the round-trip, so we ack regardless.
     if (event.kind === 'ui_mount') {
       try {
         await deps.db.insert(events).values({
@@ -1336,6 +1333,20 @@ export async function handleClientFrame(
       } catch {
         // Beacon write is best-effort telemetry; never fail the round-trip on it.
       }
+    }
+    // The intelligibility beacon is DURABLE: the intelligibility counter-metric folds
+    // the learner's yes/no/skip answers off the `events` table under `events.app IS NULL`
+    // (the polymath turn-write convention). Persist it with the whole frame under
+    // `payload.event` so the metric reads `mountedKind` + `answer` exactly where the
+    // pure fold expects them.
+    if (event.kind === 'intelligibility_response') {
+      await deps.db
+        .insert(events)
+        .values({ sessionId: event.sessionId, kind: event.kind, payload: { event } })
+        .catch(() => {
+          // A telemetry write failure must never break the connection — the beacon is
+          // best-effort, off the critical path; degrade to a dropped sample.
+        });
     }
     send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
     return;
