@@ -263,6 +263,60 @@ describe('equivalent', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// NOR + De Morgan (ADR-012 stretch grammar). NOR is a strictly-additive infix
+// primitive at OR-precedence (pairs with NAND at AND-precedence). De Morgan's
+// law is the pedagogical payoff for Lesson 4: NOT(A OR B) ≡ (NOT A) AND (NOT B)
+// and NOT(A AND B) ≡ (NOT A) OR (NOT B). The locked function signatures are
+// unchanged — NOR flows through parse/evaluate/truthTable/equivalent/astToExpression.
+// ---------------------------------------------------------------------------
+describe('NOR primitive + De Morgan equivalence', () => {
+  it('parses "A NOR B" to a nor node at OR-precedence', () => {
+    const ast = parse('A NOR B');
+    expect(ast.kind).toBe('nor');
+  });
+
+  it('evaluates NOR as !(l || r)', () => {
+    const ast = parse('A NOR B');
+    expect(evaluate(ast, { A: false, B: false })).toBe(true);
+    expect(evaluate(ast, { A: true, B: false })).toBe(false);
+    expect(evaluate(ast, { A: false, B: true })).toBe(false);
+    expect(evaluate(ast, { A: true, B: true })).toBe(false);
+  });
+
+  it('produces an MSB-first truth table for "A NOR B"', () => {
+    const tt = truthTable('A NOR B');
+    expect(tt.vars).toEqual(['A', 'B']);
+    // out = !(A || B): true only when both false (row 00).
+    expect(tt.out.map((v) => (v ? 1 : 0))).toEqual([1, 0, 0, 0]);
+  });
+
+  it('round-trips "A NOR B" through astToExpression', () => {
+    expect(astToExpression(parse('A NOR B'))).toBe('A NOR B');
+    expect(equivalent(astToExpression(parse('A NOR B')), 'A NOR B')).toBe(true);
+  });
+
+  it('confirms De Morgan: NOT (A OR B) ≡ (NOT A) AND (NOT B)', () => {
+    expect(equivalent('NOT (A OR B)', '(NOT A) AND (NOT B)')).toBe(true);
+  });
+
+  it('confirms De Morgan: NOT (A AND B) ≡ (NOT A) OR (NOT B)', () => {
+    expect(equivalent('NOT (A AND B)', '(NOT A) OR (NOT B)')).toBe(true);
+  });
+
+  it('confirms "A NOR B" ≡ NOT (A OR B) (NOR is De Morgan-dual of NAND)', () => {
+    expect(equivalent('A NOR B', 'NOT (A OR B)')).toBe(true);
+    expect(equivalent('A NAND B', 'NOT (A AND B)')).toBe(true);
+  });
+
+  it('distinguishes the halfway De Morgan error from the correct dual', () => {
+    // The halfway misconception keeps the connective when distributing NOT:
+    // NOT(A AND B) → (NOT A) AND (NOT B) [WRONG], vs the correct (NOT A) OR (NOT B).
+    expect(equivalent('NOT (A AND B)', '(NOT A) AND (NOT B)')).toBe(false);
+    expect(equivalent('NOT (A OR B)', '(NOT A) OR (NOT B)')).toBe(false);
+  });
+});
+
 describe('Ast type export', () => {
   it('is usable as a type', () => {
     const ast: Ast = parse('A');
