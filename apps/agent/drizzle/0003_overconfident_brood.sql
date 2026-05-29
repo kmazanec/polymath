@@ -1,0 +1,3 @@
+ALTER TABLE "followup_results" ADD CONSTRAINT "followup_results_subject_item_uq" UNIQUE("subject_id","item_id");--> statement-breakpoint
+ALTER TABLE "post_test_results" ADD CONSTRAINT "post_test_results_subject_cond_item_uq" UNIQUE("subject_id","condition","item_id");--> statement-breakpoint
+ALTER TABLE "pre_test_results" ADD CONSTRAINT "pre_test_results_subject_item_uq" UNIQUE("subject_id","item_id");

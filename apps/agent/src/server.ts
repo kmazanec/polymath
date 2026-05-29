@@ -1,7 +1,7 @@
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { scoreEquivalence } from '@polymath/booleans';
 import {
   ClientEvent,
@@ -12,7 +12,7 @@ import {
   type ServerMessage,
 } from '@polymath/contract';
 import type { Db } from './db/client.js';
-import { events, learnerState, sessions, transferBank } from './db/schema.js';
+import { events, experimentSubjects, learnerState, sessions, transferBank } from './db/schema.js';
 import type {
   AgentClient,
   AgentInput,
@@ -97,6 +97,18 @@ export interface ServerDeps {
    *  provider when `OPENAI_API_KEY` is set, else `undefined` → the `/api/baseline/*`
    *  write routes fail CLOSED with a 503 (the `/api/realtime/session` pattern). */
   baselineChat?: BaselineChatProvider;
+  /** F-17 operator-auth secret for the experiment-operator + replay routes (MR !7
+   *  review). The experiment subject routes (`/api/experiment/subjects*`) and the
+   *  session-replay route stream research/teaching data keyed only by a UUID; without
+   *  a gate, anyone who obtains a subject/session UUID on the public agent port could
+   *  read or mutate it. Injectable for tests; defaults to `POLYMATH_OPERATOR_SECRET`
+   *  in `createServer`. FAIL-CLOSED in production: when this is unset, the gated routes
+   *  return 503 in production (no secret ⇒ no operator access), while dev/CI
+   *  (`NODE_ENV!=='production'`) stay open so local runs + the offline integration
+   *  suite need no secret. When set, the gated routes require it (Bearer or
+   *  `X-Operator-Secret`), else 401. The learner-facing followup route is EXEMPT — it
+   *  carries its own per-subject random token. */
+  operatorSecret?: string;
 }
 
 /** Cap inbound WS frames — protocol messages are small JSON. Prevents a single
@@ -183,7 +195,14 @@ async function countOffTopicAnswers(db: Db, sessionId: string): Promise<number> 
     .select({ n: sql<number>`count(*)::int` })
     .from(events)
     .where(
+      // `app IS NULL` scopes to Polymath rows only (D3 discriminator; NULL=polymath,
+      // 'baseline'=F-16). A baseline session uses its own sessionId so they don't
+      // collide today, but the integrity queries must honor the discriminator the
+      // barrier added precisely to keep baseline rows out of Polymath metrics — a
+      // future shared-session path would otherwise fold baseline turns into this
+      // monotonic guardrail (MR !7 review).
       sql`${events.sessionId} = ${sessionId}
+        AND ${events.app} IS NULL
         AND ${events.payload} -> 'action' ->> 'type' = 'answer_question'
         AND ${events.payload} -> 'action' ->> 'topicClassification' = 'off_topic'`,
     );
@@ -332,7 +351,9 @@ async function updateAndReadLearnerState(
     db
       .select({ kind: events.kind, payload: events.payload })
       .from(events)
-      .where(eq(events.sessionId, sessionId))
+      // `app IS NULL` keeps baseline rows (D3 discriminator) out of the Polymath
+      // integrity fold (BKT/streak/hints/rule gate) — MR !7 review.
+      .where(and(eq(events.sessionId, sessionId), isNull(events.app)))
       .orderBy(desc(events.ts))
       .limit(MAX_SESSION_EVENTS),
     countOffTopicAnswers(db, sessionId),
@@ -842,6 +863,48 @@ async function readExperimentBody(
  * source of truth — nothing on disk). Unmatched experiment paths fall through to
  * a 404.
  */
+/**
+ * Operator-auth gate for the experiment-operator + replay routes (MR !7 review).
+ * Returns `null` when the request is authorized to proceed, or a `{ status, body }`
+ * to send otherwise. Three states, fail-closed in production:
+ *  - secret configured → require a matching `Authorization: Bearer <secret>` or
+ *    `X-Operator-Secret: <secret>` (constant-time compare); mismatch/absent → 401.
+ *  - secret unset + production → 503 (no operator access without a configured secret;
+ *    the `/api/realtime/session` env-gated-fail-closed pattern).
+ *  - secret unset + non-production → allow (local dev + the offline integration suite
+ *    run with no secret).
+ * The learner-facing `/api/experiment/followup/:token` route does NOT call this — it
+ * authenticates with its own per-subject random token.
+ */
+function checkOperatorAuth(
+  req: http.IncomingMessage,
+  secret: string | undefined,
+): { status: number; body: unknown } | null {
+  if (!secret) {
+    if (process.env['NODE_ENV'] === 'production') {
+      return { status: 503, body: { error: 'operator routes not configured' } };
+    }
+    return null; // dev/CI: no secret required
+  }
+  const header = req.headers['authorization'];
+  const bearer = typeof header === 'string' && header.startsWith('Bearer ')
+    ? header.slice('Bearer '.length)
+    : undefined;
+  const xHeader = req.headers['x-operator-secret'];
+  const presented = bearer ?? (typeof xHeader === 'string' ? xHeader : undefined);
+  if (presented === undefined) {
+    return { status: 401, body: { error: 'operator auth required' } };
+  }
+  // Constant-time compare; length-mismatch is a definite non-match (timingSafeEqual
+  // throws on unequal lengths, so guard first).
+  const a = Buffer.from(presented);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return { status: 401, body: { error: 'operator auth required' } };
+  }
+  return null;
+}
+
 async function handleExperimentRoute(
   deps: ServerDeps,
   req: http.IncomingMessage,
@@ -851,6 +914,17 @@ async function handleExperimentRoute(
   const { pathname } = url;
   const method = req.method ?? 'GET';
   const routeDeps = { db: deps.db };
+
+  // Operator-auth gate (MR !7): everything EXCEPT the learner-facing followup route
+  // (which carries its own per-subject random token) requires operator auth. Applied
+  // once here so a new operator route can't forget it.
+  if (!pathname.startsWith('/api/experiment/followup/')) {
+    const denied = checkOperatorAuth(req, deps.operatorSecret);
+    if (denied) {
+      sendJson(res, denied.status, denied.body);
+      return;
+    }
+  }
 
   // POST /api/experiment/subjects — create a subject (counterbalanced + token).
   if (method === 'POST' && pathname === '/api/experiment/subjects') {
@@ -1614,10 +1688,17 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
   // routes fail CLOSED (503), and a keyed deploy actually runs GPT-5 (fairness).
   const defaultedBaselineChat = rawDeps.baselineChat ?? makeOpenAiBaselineChatProvider();
 
+  // Operator-auth secret for the experiment-operator + replay routes (MR !7). Defaults
+  // from POLYMATH_OPERATOR_SECRET; unset → fail-closed in production, open in dev/CI
+  // (see `checkOperatorAuth`). A blank/whitespace env value is treated as unset.
+  const envOperatorSecret = (process.env['POLYMATH_OPERATOR_SECRET'] ?? '').trim();
+  const defaultedOperatorSecret = rawDeps.operatorSecret ?? (envOperatorSecret || undefined);
+
   const deps: ServerDeps = {
     ...rawDeps,
     ...(defaultedJudge ? { explainBackJudge: defaultedJudge } : {}),
     ...(defaultedBaselineChat ? { baselineChat: defaultedBaselineChat } : {}),
+    ...(defaultedOperatorSecret ? { operatorSecret: defaultedOperatorSecret } : {}),
     explainBackCaptureRegistry: captureRegistry,
     explainBackTranscriptFor: transcriptFor,
     explainBackProsodyFor: prosodyFor,
@@ -1635,26 +1716,41 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       // Optional F-16/F-17 linkage: a session can be created THROUGH a subject
       // (so the CSV joins automatically) and/or tagged with its `app` arm. Both
       // are additive + nullable — an unadorned `POST /api/session` (the default
-      // polymath path) is unchanged. A non-UUID subjectId / unknown app is
-      // ignored rather than failing the create (session creation must stay robust).
+      // polymath path) is unchanged.
       void readJsonBody(req)
         .catch(() => null)
-        .then((body) => {
+        .then(async (body) => {
           const b = (body ?? {}) as { subjectId?: unknown; app?: unknown };
           const subjectId =
             typeof b.subjectId === 'string' && UUID_RE.test(b.subjectId) ? b.subjectId : undefined;
           const app = b.app === 'baseline' ? 'baseline' : undefined;
-          return deps.db
+          // MR !7: when a subjectId is EXPLICITLY provided, verify the subject exists
+          // before linking. `sessions.subjectId` is a soft reference (no FK by design),
+          // so a typo would otherwise silently create an UNLINKED session and the
+          // experiment CSV would miss its polymath_session_id until manual repair.
+          // Surfacing 404 here is a caller error worth reporting; an unadorned create
+          // (no subjectId) is untouched and still robust.
+          if (subjectId !== undefined) {
+            const subj = await deps.db
+              .select({ id: experimentSubjects.id })
+              .from(experimentSubjects)
+              .where(eq(experimentSubjects.id, subjectId))
+              .limit(1);
+            if (subj.length === 0) {
+              sendJson(res, 404, { error: 'unknown subjectId' });
+              return undefined;
+            }
+          }
+          const rows = await deps.db
             .insert(sessions)
             .values({
               ...(subjectId ? { subjectId } : {}),
               ...(app ? { app } : {}),
             })
             .returning({ id: sessions.id, startedAt: sessions.startedAt });
-        })
-        .then((rows) => {
-          const row = rows![0]!;
+          const row = rows[0]!;
           sendJson(res, 201, { sessionId: row.id, startedAt: row.startedAt });
+          return undefined;
         })
         .catch(() => sendJson(res, 500, { error: 'failed to create session' }));
       return;
@@ -1676,6 +1772,15 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
 
     const replayMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/replay$/);
     if (req.method === 'GET' && replayMatch) {
+      // The replay streams the full teaching transcript (learner submissions, gate
+      // evaluations, explain-back verdict metadata) for a session UUID — operator/debug
+      // data, not learner-facing. Gate it like the experiment-operator routes (MR !7
+      // review): a leaked sessionId must not expose the transcript on the public port.
+      const denied = checkOperatorAuth(req, deps.operatorSecret);
+      if (denied) {
+        sendJson(res, denied.status, denied.body);
+        return;
+      }
       const sessionId = replayMatch[1]!;
       // Chronological order is load-bearing for AC#5 (the replay must "show the gate
       // failing then passing"): a default `select` returns rows in arbitrary order, so

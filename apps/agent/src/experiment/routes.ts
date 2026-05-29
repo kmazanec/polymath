@@ -189,6 +189,17 @@ function scoreItem(bank: ExperimentBankItem[], itemId: string, submission: strin
   return scoreEquivalence(submission, item.targetExpression);
 }
 
+/** Postgres unique-violation SQLSTATE. The result-table one-shot uniqueness
+ *  constraints (migration 0003) raise this when a concurrent re-submit races past
+ *  the non-atomic application-level already-submitted check (MR !7). */
+const PG_UNIQUE_VIOLATION = '23505';
+
+/** True if an error is a Postgres unique-constraint violation (drizzle surfaces the
+ *  driver error with a `.code`). */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: string }).code === PG_UNIQUE_VIOLATION;
+}
+
 /** POST /api/experiment/subjects — create a subject, assign counterbalanced order
  *  from the creation ordinal, mint a random follow-up token. */
 export async function createSubject(deps: ExperimentRouteDeps): Promise<RouteResult> {
@@ -233,6 +244,25 @@ async function startTest(
   if (!subject) return { status: 404, body: { error: 'unknown subject' } };
 
   const bank = await loadExperimentBank(deps.db);
+
+  // IDEMPOTENT START (MR !7): a second start for the SAME phase must NOT sample +
+  // insert another `n` usage rows. That would grow `servedItemSet` past `n`, so the
+  // subsequent submit's "responses must cover exactly the served items once each"
+  // guard could never be satisfied and the subject would be soft-locked out of the
+  // phase. Instead, re-serve the items already recorded for this phase. (A double
+  // click / retried request / re-opened tab is the common trigger.)
+  const alreadyServed = await servedItemSet(deps.db, subjectId, phase);
+  if (alreadyServed.size > 0) {
+    const items = bank.filter((b) => alreadyServed.has(b.itemId));
+    return {
+      status: 200,
+      body: {
+        subjectId,
+        items: items.map((i) => ({ itemId: i.itemId, targetRep: i.targetRep, hiddenReps: i.hiddenReps })),
+      },
+    };
+  }
+
   const used = await usedItemSet(deps.db, subjectId);
   let items: ExperimentBankItem[];
   try {
@@ -307,7 +337,16 @@ export async function submitPretest(
     submission: r.submission,
     correct: scoreItem(bank, r.itemId, r.submission),
   }));
-  await deps.db.insert(preTestResults).values(scored);
+  try {
+    await deps.db.insert(preTestResults).values(scored);
+  } catch (err) {
+    // Atomic backstop (MR !7): a concurrent submit raced past the check above and
+    // inserted first; the unique(subject_id,item_id) rejects this one → 409.
+    if (isUniqueViolation(err)) {
+      return { status: 409, body: { error: 'pretest already submitted for this subject' } };
+    }
+    throw err;
+  }
   return {
     status: 201,
     body: { subjectId, scored: scored.map((s) => ({ itemId: s.itemId, correct: s.correct })) },
@@ -356,7 +395,16 @@ export async function submitPosttest(
     submission: r.submission,
     correct: scoreItem(bank, r.itemId, r.submission),
   }));
-  await deps.db.insert(postTestResults).values(scored);
+  try {
+    await deps.db.insert(postTestResults).values(scored);
+  } catch (err) {
+    // Atomic backstop (MR !7): unique(subject_id,condition,item_id) — a concurrent
+    // same-condition re-submit that raced the check above → 409.
+    if (isUniqueViolation(err)) {
+      return { status: 409, body: { error: `posttest already submitted for condition '${condition}'` } };
+    }
+    throw err;
+  }
 
   // Open the follow-up window once BOTH conditions' post-tests are recorded.
   const conditionsDone = await deps.db
@@ -495,7 +543,16 @@ export async function submitFollowup(
       correct: scoreItem(bank, itemId, submission),
     });
   }
-  await deps.db.insert(followupResults).values(scored);
+  try {
+    await deps.db.insert(followupResults).values(scored);
+  } catch (err) {
+    // Atomic backstop (MR !7): unique(subject_id,item_id) — a concurrent re-submit
+    // (e.g. the 24h follow-up URL opened twice) that raced the check above → 409.
+    if (isUniqueViolation(err)) {
+      return { status: 409, body: { error: 'follow-up already submitted for this subject' } };
+    }
+    throw err;
+  }
   return {
     status: 201,
     body: { subjectId, scored: scored.map((s) => ({ itemId: s.itemId, correct: s.correct })) },

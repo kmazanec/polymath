@@ -61,7 +61,11 @@ export async function readRecalledKcs(db: Db, sessionId: string): Promise<string
     .select({ kc: sql<string>`${events.payload} -> 'action' -> 'component' ->> 'kc'` })
     .from(events)
     .where(
+      // `app IS NULL` scopes to Polymath rows (D3 discriminator) — consistent with the
+      // other integrity reads so a future shared-session path can't fold a baseline row
+      // into this monotonic recall throttle (MR !7 review).
       sql`${events.sessionId} = ${sessionId}
+        AND ${events.app} IS NULL
         AND ${events.payload} -> 'action' -> 'component' ->> 'kind' = 'CrossLessonRecall'`,
     )
     .groupBy(sql`${events.payload} -> 'action' -> 'component' ->> 'kc'`);

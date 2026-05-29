@@ -7,6 +7,7 @@ import {
   real,
   text,
   timestamp,
+  unique,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -137,43 +138,63 @@ export const subjectItemUsage = pgTable(
 );
 
 /** AC#2: 4 pre-test responses per subject, scored against the bank canonical. */
-export const preTestResults = pgTable('pre_test_results', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  subjectId: uuid('subject_id')
-    .notNull()
-    .references(() => experimentSubjects.id),
-  itemId: text('item_id').notNull(),
-  submission: text('submission').notNull(),
-  correct: boolean('correct').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const preTestResults = pgTable(
+  'pre_test_results',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subjectId: uuid('subject_id')
+      .notNull()
+      .references(() => experimentSubjects.id),
+    itemId: text('item_id').notNull(),
+    submission: text('submission').notNull(),
+    correct: boolean('correct').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // DB-level one-shot backstop (MR !7): the route-level already-submitted check is
+  // not atomic under concurrency — two simultaneous submits can both see no rows and
+  // both insert a full set, doubling the rows `fractionCorrect` averages over. A
+  // unique(subject_id,item_id) makes the second insert raise 23505, handled as 409.
+  (t) => [unique('pre_test_results_subject_item_uq').on(t.subjectId, t.itemId)],
+);
 
 /** AC#3: post-test responses. `condition` records which arm's post-test this is
  *  ('polymath' | 'baseline') — design (ii) shares ONE held-out 4-item bank across
  *  both arms, so the same item ids appear under each condition. */
-export const postTestResults = pgTable('post_test_results', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  subjectId: uuid('subject_id')
-    .notNull()
-    .references(() => experimentSubjects.id),
-  condition: text('condition').notNull(),
-  itemId: text('item_id').notNull(),
-  submission: text('submission').notNull(),
-  correct: boolean('correct').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const postTestResults = pgTable(
+  'post_test_results',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subjectId: uuid('subject_id')
+      .notNull()
+      .references(() => experimentSubjects.id),
+    condition: text('condition').notNull(),
+    itemId: text('item_id').notNull(),
+    submission: text('submission').notNull(),
+    correct: boolean('correct').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // One-shot backstop per CONDITION (MR !7): design (ii) shares the held-out item set
+  // across both arms, so the same item id appears under each condition — the uniqueness
+  // is (subject_id, condition, item_id). The 23505 on a concurrent re-submit → 409.
+  (t) => [unique('post_test_results_subject_cond_item_uq').on(t.subjectId, t.condition, t.itemId)],
+);
 
 /** AC#4: 24h follow-up responses. Design (ii): the followup reuses pre/post items
  *  in a DIFFERENT surface form, recorded as `target_rep_override` (the only proxy
  *  for "different surface form" — the bank has no separate field). */
-export const followupResults = pgTable('followup_results', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  subjectId: uuid('subject_id')
-    .notNull()
-    .references(() => experimentSubjects.id),
-  itemId: text('item_id').notNull(),
-  targetRepOverride: text('target_rep_override').notNull(),
-  submission: text('submission').notNull(),
-  correct: boolean('correct').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const followupResults = pgTable(
+  'followup_results',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    subjectId: uuid('subject_id')
+      .notNull()
+      .references(() => experimentSubjects.id),
+    itemId: text('item_id').notNull(),
+    targetRepOverride: text('target_rep_override').notNull(),
+    submission: text('submission').notNull(),
+    correct: boolean('correct').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // One-shot backstop (MR !7): unique(subject_id,item_id); concurrent re-submit → 409.
+  (t) => [unique('followup_results_subject_item_uq').on(t.subjectId, t.itemId)],
+);

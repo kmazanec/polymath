@@ -28,6 +28,29 @@ import type { loadLesson } from '../lessons/loader.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_BODY_BYTES = 16 * 1024;
+
+/**
+ * Per-session serialization for the baseline write handlers (MR !7 review).
+ * `handleBaselineChat`/`handleBaselineTransfer` are read-modify-write (read the log,
+ * derive progress, call the LLM, append a turn). Two concurrent POSTs for the same
+ * in-progress item can both pass the not-yet-complete check, both invoke the LLM, and
+ * append duplicate turns — the score tally is idempotent (distinct-id counting), but
+ * the LLM call and the log are not. Serialize per sessionId with the same keyed-lock
+ * pattern server.ts uses for explain-back/recall. A promise-chain mutex: each key's
+ * work is appended to that key's tail so same-session turns run strictly in order,
+ * while different sessions stay fully concurrent.
+ */
+function makeKeyedLock(): <T>(key: string, fn: () => Promise<T>) => Promise<T> {
+  const tails = new Map<string, Promise<unknown>>();
+  return <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+    const prior = tails.get(key) ?? Promise.resolve();
+    const run = prior.then(fn, fn);
+    // Keep the chain alive but don't leak rejections into the next waiter's scheduling.
+    tails.set(key, run.then(() => undefined, () => undefined));
+    return run;
+  };
+}
+const withBaselineSessionLock = makeKeyedLock();
 const BODY_TIMEOUT_MS = 5_000;
 
 export interface BaselineRouteDeps {
@@ -168,7 +191,9 @@ export function tryHandleBaselineRoute(
         sendJson(res, 400, { error: 'message is required' });
         return;
       }
-      const result = await handleBaselineChat(service(chat), sessionId, message);
+      const result = await withBaselineSessionLock(sessionId, () =>
+        handleBaselineChat(service(chat), sessionId, message),
+      );
       if (result === null) {
         sendJson(res, 404, { error: 'unknown session' });
         return;
@@ -200,7 +225,9 @@ export function tryHandleBaselineRoute(
         sendJson(res, 400, { error: 'submission is required' });
         return;
       }
-      const result = await handleBaselineTransfer(service(chat), sessionId, itemId, submission);
+      const result = await withBaselineSessionLock(sessionId, () =>
+        handleBaselineTransfer(service(chat), sessionId, itemId, submission),
+      );
       if (result === null) {
         sendJson(res, 404, { error: 'unknown session' });
         return;
