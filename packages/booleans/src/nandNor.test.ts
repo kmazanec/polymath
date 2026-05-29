@@ -90,6 +90,26 @@ describe('NAND primitive', () => {
     expect(parse(round)).toEqual(ast);
   });
 
+  it('round-trips RIGHT-nested NAND/NOR without re-association (MR !9 review)', () => {
+    // NAND/NOR are NON-associative and the parser is left-associative, so a flat
+    // render of a right-nested tree would re-parse to the WRONG grouping and
+    // mis-score a learner's correct pseudocode. Each must survive parse→render→parse
+    // structurally AND remain equivalent.
+    for (const src of [
+      'A NAND (B NAND C)',
+      'A AND (B NAND C)',
+      'A NOR (B NOR C)',
+      'A OR (B NOR C)',
+      'A NAND (B AND C)',
+      '(A NAND B) NAND (C NAND D)',
+    ]) {
+      const ast = parse(src);
+      const round = astToExpression(ast);
+      expect(parse(round), `${src} → ${round} must re-parse to the same tree`).toEqual(ast);
+      expect(equivalent(round, src), `${src} → ${round} must stay equivalent`).toBe(true);
+    }
+  });
+
   it('builds XOR from NAND only and matches the XOR truth table (AC#5)', () => {
     // XOR = (A NAND (A NAND B)) NAND (B NAND (A NAND B)) — the classic 4-NAND XOR.
     const xorFromNand = '(A NAND (A NAND B)) NAND (B NAND (A NAND B))';

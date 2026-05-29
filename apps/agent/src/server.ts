@@ -1959,15 +1959,18 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       return;
     }
 
-    // ADR-012 stretch: the tutor-handoff routes. `/api/session/:id/handoff` (owner;
-    // builds the artifact + lazily mints a share URL) and
-    // `/api/session/:id/handoff/:token` (a shared link authenticated by the random
+    // ADR-012 stretch: the tutor-handoff routes. `GET /api/session/:id/handoff` (owner;
+    // builds + returns the artifact, surfaces an EXISTING share URL but never mints),
+    // `POST /api/session/:id/handoff/share` (explicitly mint-or-fetch the share token —
+    // creating a durable public link is an action, not a read side effect; MR !9), and
+    // `GET /api/session/:id/handoff/:token` (a shared link authenticated by the random
     // per-session token, NOT the session UUID). NO operator auth — the per-request
     // random token is the access control (the followup-route exemption pattern); the
-    // artifact is the learner's own, intentionally shareable. Read-only; the session
-    // read is scoped to Polymath rows (`sessions.app IS NULL`) inside the builder.
+    // artifact is the learner's own, intentionally shareable. The session read is scoped
+    // to Polymath rows (`sessions.app IS NULL`) inside the builder. The route helper
+    // enforces the per-shape method (405 otherwise), so dispatch on GET OR POST.
     if (
-      req.method === 'GET' &&
+      (req.method === 'GET' || req.method === 'POST') &&
       /^\/api\/session\/[^/]+\/handoff(\/[^/]+)?$/.test(url.pathname)
     ) {
       tryHandleHandoffRoute({ db: deps.db }, req.method, url.pathname)

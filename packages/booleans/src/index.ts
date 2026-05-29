@@ -295,32 +295,45 @@ export function astToExpression(ast: Ast): string {
       return ast.name;
     case 'not':
       return `NOT (${astToExpression(ast.operand)})`;
-    case 'and': {
-      const l = parenIfOrLevel(ast.left);
-      const r = parenIfOrLevel(ast.right);
-      return `${l} AND ${r}`;
-    }
+    case 'and':
     case 'nand': {
-      // NAND sits at AND-precedence; parenthesise OR-level children so it
-      // re-parses unambiguously (ADR-012 additive grammar).
+      // AND-level (and/nand share precedence, left-associative). The LEFT child
+      // needs parens only if it is OR-level (lower precedence). The RIGHT child
+      // needs parens if it is ANY binary op at this level or below (and/nand/or/nor):
+      // because the operators are LEFT-associative, an unparenthesised same-level
+      // right child would re-parse as `(a OP b) OP c` — and NAND is NON-associative,
+      // so `A NAND (B NAND C)` ≠ `(A NAND B) NAND C`. (MR !9 review: round-trip bug.)
+      const op = ast.kind === 'and' ? 'AND' : 'NAND';
       const l = parenIfOrLevel(ast.left);
-      const r = parenIfOrLevel(ast.right);
-      return `${l} NAND ${r}`;
+      const r = parenIfBinary(ast.right);
+      return `${l} ${op} ${r}`;
     }
-    case 'or': {
-      return `${astToExpression(ast.left)} OR ${astToExpression(ast.right)}`;
-    }
+    case 'or':
     case 'nor': {
-      // NOR sits at OR-precedence; same flat shape as OR.
-      return `${astToExpression(ast.left)} NOR ${astToExpression(ast.right)}`;
+      // OR-level (or/nor share precedence, left-associative, the lowest level).
+      // The LEFT child never needs parens. The RIGHT child needs parens if it is
+      // itself OR-level (or/nor) — same left-associativity / non-associativity
+      // argument: `A NOR (B NOR C)` ≠ `(A NOR B) NOR C`. (MR !9 review.)
+      const op = ast.kind === 'or' ? 'OR' : 'NOR';
+      const r = parenIfOrLevel(ast.right);
+      return `${astToExpression(ast.left)} ${op} ${r}`;
     }
   }
 }
 
 /** Parenthesise a child when it is an OR-precedence node (`or`/`nor`), so an
- *  AND-precedence parent (`and`/`nand`) re-parses to the same tree. */
+ *  AND-precedence parent re-parses to the same tree. */
 function parenIfOrLevel(node: Ast): string {
   return node.kind === 'or' || node.kind === 'nor'
+    ? `(${astToExpression(node)})`
+    : astToExpression(node);
+}
+
+/** Parenthesise a child when it is ANY binary node (`and`/`nand`/`or`/`nor`).
+ *  Used for the RIGHT operand of a left-associative AND-level parent, where an
+ *  unparenthesised same-or-lower-precedence right child would re-associate. */
+function parenIfBinary(node: Ast): string {
+  return node.kind === 'and' || node.kind === 'nand' || node.kind === 'or' || node.kind === 'nor'
     ? `(${astToExpression(node)})`
     : astToExpression(node);
 }

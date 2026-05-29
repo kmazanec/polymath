@@ -3,6 +3,7 @@ import {
   LESSON_1_INTRO,
   LESSON_2_INTRO,
   LESSON_3_INTRO,
+  LESSON_4_INTRO,
   introForLesson,
 } from './lessonIntroContent.js';
 
@@ -11,6 +12,15 @@ describe('introForLesson', () => {
     expect(introForLesson(1)).toBe(LESSON_1_INTRO);
     expect(introForLesson(2)).toBe(LESSON_2_INTRO);
     expect(introForLesson(3)).toBe(LESSON_3_INTRO);
+    // MR !9: L4 previously fell through to the Lesson 1 copy.
+    expect(introForLesson(4)).toBe(LESSON_4_INTRO);
+  });
+
+  it('the Lesson 4 intro is the De Morgan lesson and names the halfway misconception', () => {
+    expect(LESSON_4_INTRO.kind).toBe('LessonIntro');
+    expect(LESSON_4_INTRO.lessonId).toBe(4);
+    expect(LESSON_4_INTRO.title).toMatch(/De Morgan/i);
+    expect(LESSON_4_INTRO.body.toLowerCase()).toMatch(/flip the connective|flip the/);
   });
 
   it('defaults an unknown lesson id to Lesson 1 (never a blank intro)', () => {

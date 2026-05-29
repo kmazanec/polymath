@@ -1,6 +1,8 @@
 import { eq, and, isNull } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { learnerState, sessions } from '../db/schema.js';
+import { currentLessonId } from '../server.js';
+import { loadLesson } from '../lessons/loader.js';
 
 /**
  * Per-KC mastery snapshot for the teacher report.
@@ -23,18 +25,11 @@ export interface TeacherReportPayload {
   sessionStartedAt: string | null;
   /** All KC rows in ascending KC-name order. */
   kcRows: KcMasteryRow[];
-  /** KCs with BKT probability >= BKT_MASTERY_THRESHOLD (heuristic: 0.95).
-   *  Derived here for UI convenience; the threshold is the standard one. */
+  /** KCs with BKT probability >= the session's per-lesson `bktMasteryThreshold`. */
   masteredKcs: string[];
-  /** KCs with BKT probability < BKT_MASTERY_THRESHOLD.
-   *  These are the "stuck" KCs that guide the focus paragraph. */
+  /** KCs with BKT probability < the threshold — the "stuck" KCs that guide focus. */
   stuckKcs: string[];
 }
-
-/** BKT mastery threshold (matches each lesson's mastery_config.json `bktMasteryThreshold`).
- *  The default L1 config uses 0.95; this constant lets the report derive the same
- *  categorical split without a lesson-config DB read. */
-const BKT_MASTERY_THRESHOLD = 0.95;
 
 /**
  * Build the teacher report payload for a session.
@@ -57,6 +52,12 @@ export async function buildTeacherReport(
 
   const sessionStartedAt = sessionRows[0]?.startedAt?.toISOString() ?? null;
 
+  // Use the SESSION'S per-lesson mastery threshold (MR !9 review) — the same source
+  // buildHandoffArtifact reads — so the teacher report and the handoff never disagree
+  // on mastered vs stuck if a lesson tunes its threshold away from the 0.95 default.
+  const lessonId = await currentLessonId(db, sessionId);
+  const bktMasteryThreshold = loadLesson(lessonId).masteryConfig.bktMasteryThreshold;
+
   // Read the per-KC learner state rows for the session.
   const kcRows = await db
     .select({
@@ -73,7 +74,7 @@ export async function buildTeacherReport(
 
   for (const row of kcRows) {
     const p = row.bktProbability;
-    if (typeof p === 'number' && p >= BKT_MASTERY_THRESHOLD) {
+    if (typeof p === 'number' && p >= bktMasteryThreshold) {
       masteredKcs.push(row.kc);
     } else {
       stuckKcs.push(row.kc);

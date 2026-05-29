@@ -67,9 +67,32 @@ export const LESSON_3_INTRO: Extract<ComponentSpec, { kind: 'LessonIntro' }> = {
     'this lesson by constructing fluently from NAND alone, on your own.',
 };
 
+/**
+ * Lesson 4 — De Morgan's law. Closes the curriculum's algebra: negation distributes
+ * across AND/OR by FLIPPING the connective. Names the Almstrum "halfway-application"
+ * misconception (flip the negation but forget to flip the operator) so the rubric can
+ * catch it. Like the L2/L3 intros it doubles as the transient L3→L4 bridge. (MR !9
+ * review: introForLesson(4) previously fell through to the Lesson 1 copy.)
+ */
+export const LESSON_4_INTRO: Extract<ComponentSpec, { kind: 'LessonIntro' }> = {
+  kind: 'LessonIntro',
+  lessonId: 4,
+  title: "Lesson 4 — De Morgan's law",
+  body:
+    'One last symmetry ties the whole alphabet together. De Morgan’s law says a ' +
+    'negation can move inside a parenthesis if — and only if — you also flip the ' +
+    'connective: NOT (A AND B) becomes (NOT A) OR (NOT B), and NOT (A OR B) becomes ' +
+    '(NOT A) AND (NOT B). The trap most learners fall into is doing only half of it: ' +
+    'pushing the NOT onto each variable but leaving the AND or OR unchanged. You will ' +
+    'work both forms across all three representations; when you make the halfway move, ' +
+    'the tutor will name it and show you the missing flip. You master this lesson by ' +
+    'applying the full law fluently, on your own.',
+};
+
 /** Map a lesson id to its intro spec. Defaults to Lesson 1 for any unknown id. */
 export function introForLesson(lessonId: number): Extract<ComponentSpec, { kind: 'LessonIntro' }> {
   if (lessonId === 2) return LESSON_2_INTRO;
   if (lessonId === 3) return LESSON_3_INTRO;
+  if (lessonId === 4) return LESSON_4_INTRO;
   return LESSON_1_INTRO;
 }

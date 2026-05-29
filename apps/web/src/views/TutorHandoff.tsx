@@ -9,8 +9,10 @@ import './tutorHandoff.css';
  * tutor: what they nailed, where a human helps most, and exactly what to ask next.
  *
  * Reached two ways:
- *   /handoff/:sessionId          — the learner's own (fetches the bare API path,
- *                                  which mints a share URL the page can offer).
+ *   /handoff/:sessionId          — the learner's own (fetches the bare API path; a
+ *                                  shareable link is created only when the learner
+ *                                  clicks "Create shareable link", which POSTs to
+ *                                  /handoff/share — never auto-minted on read, MR !9).
  *   /handoff/:sessionId/:token   — a shared link (fetches the tokened API path).
  *
  * PDF is "Print → Save as PDF" via `@media print` + `window.print()` — no Puppeteer,
@@ -75,6 +77,24 @@ export function TutorHandoff({ fetchArtifact = fetch }: TutorHandoffProps): Reac
 
   const { artifact, shareUrl } = state;
   const shareHref = shareUrl ? `${window.location.origin}${shareUrl}` : null;
+  // The owner view (no :token) may create a share link on demand; a shared view never
+  // re-mints. POST /handoff/share is the only path that mints (MR !9 review).
+  const isOwnerView = !token;
+
+  const createShareLink = (): void => {
+    if (!sessionId) return;
+    void fetchArtifact(`/api/session/${sessionId}/handoff/share`, { method: 'POST' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        return res.json() as Promise<{ shareUrl?: string | null }>;
+      })
+      .then((body) => {
+        if (body.shareUrl) setState({ status: 'loaded', artifact, shareUrl: body.shareUrl });
+      })
+      .catch(() => {
+        /* leave the page as-is; the learner can retry the button */
+      });
+  };
 
   return (
     <main className="handoff">
@@ -82,10 +102,16 @@ export function TutorHandoff({ fetchArtifact = fetch }: TutorHandoffProps): Reac
         <button type="button" className="handoff__print" onClick={() => window.print()}>
           Print / Download PDF
         </button>
-        {shareHref && (
+        {shareHref ? (
           <a className="handoff__share" href={shareHref}>
             Shareable link
           </a>
+        ) : (
+          isOwnerView && (
+            <button type="button" className="handoff__share" onClick={createShareLink}>
+              Create shareable link
+            </button>
+          )
         )}
       </div>
 

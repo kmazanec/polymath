@@ -9,9 +9,18 @@ import { mintShareToken, validateShareToken } from './shareToken.js';
  * The tutor-handoff HTTP route (ADR-012 stretch). Two read-only shapes:
  *
  *   GET /api/session/:id/handoff
- *     The learner's own session. Builds the artifact, lazily mints + persists a
- *     share token (so the page can offer a shareable URL), and returns
- *     `{ artifact, shareUrl }`.
+ *     The learner's own session. Builds + returns the artifact. If a share token has
+ *     ALREADY been minted (via the POST below) it also returns the `shareUrl`, but it
+ *     does NOT mint one — reading your own artifact must not silently create a durable
+ *     public link. Returns `{ artifact, shareUrl: string | null }`.
+ *
+ *   POST /api/session/:id/handoff/share
+ *     Explicitly create (or fetch the existing) share token for the session and return
+ *     `{ shareUrl }`. Minting a durable, publicly-fetchable link is an explicit ACTION,
+ *     never a side effect of a read (MR !9 review): the prior GET auto-minted, so any
+ *     caller who learned the session UUID from a log/screenshot/history could mint a
+ *     permanent share link without the learner's consent. The artifact itself stays the
+ *     learner's own, UUID-readable, documented-exempt-from-operator-auth (D24-3).
  *
  *   GET /api/session/:id/handoff/:token
  *     A shared link. The random per-session token authenticates the request — NOT
@@ -51,12 +60,16 @@ async function ensureShareToken(db: Db, sessionId: string): Promise<string | nul
   const existing = rows[0]!.shareToken;
   if (existing) return existing;
   const token = mintShareToken();
-  // Persist. Concurrent first-shares could both mint; the UNIQUE constraint makes a
-  // collision a no-op write — re-read to return whichever token won.
+  // ATOMIC first-mint (MR !9 review): the UPDATE is conditional on `share_token IS NULL`,
+  // so of two concurrent first-shares only the first writes; the loser's UPDATE matches
+  // zero rows and is a no-op. Then re-read unconditionally and return whichever token
+  // actually won — never the local `token`, which may be the loser's. (A plain
+  // last-write-wins UPDATE could return a token that was immediately overwritten and
+  // would 403 for the learner.)
   await db
     .update(sessions)
     .set({ shareToken: token })
-    .where(and(eq(sessions.id, sessionId), isNull(sessions.app)));
+    .where(and(eq(sessions.id, sessionId), isNull(sessions.app), isNull(sessions.shareToken)));
   const after = await db
     .select({ shareToken: sessions.shareToken })
     .from(sessions)
@@ -86,17 +99,34 @@ export async function tryHandleHandoffRoute(
   method: string,
   pathname: string,
 ): Promise<HandoffRouteResult | null> {
-  const tokened = pathname.match(/^\/api\/session\/([^/]+)\/handoff\/([^/]+)$/);
+  const share = pathname.match(/^\/api\/session\/([^/]+)\/handoff\/share$/);
+  // `:token` is `[^/]+` which would also match the literal `share` segment; the `share`
+  // branch is matched + handled first, so a non-null `share` short-circuits before the
+  // tokened path is consulted.
+  const tokened = share ? null : pathname.match(/^\/api\/session\/([^/]+)\/handoff\/([^/]+)$/);
   const bare = pathname.match(/^\/api\/session\/([^/]+)\/handoff$/);
-  if (!tokened && !bare) return null;
-  if (method !== 'GET') return { status: 405, body: { error: 'method not allowed' } };
+  if (!share && !tokened && !bare) return null;
 
-  const sessionId = (tokened ?? bare)![1]!;
+  const sessionId = (share ?? tokened ?? bare)![1]!;
   if (!UUID_RE.test(sessionId)) {
     return { status: 400, body: { error: 'sessionId must be a UUID' } };
   }
 
+  // The share-mint is the only mutating shape → POST. Everything else is a read → GET.
+  if (share) {
+    if (method !== 'POST') return { status: 405, body: { error: 'method not allowed' } };
+  } else if (method !== 'GET') {
+    return { status: 405, body: { error: 'method not allowed' } };
+  }
+
   const artifactDeps = deps.artifactDeps ?? makeHandoffArtifactDeps(deps.db);
+
+  // POST /handoff/share: explicitly mint-or-fetch the share token (never on a read).
+  if (share) {
+    const token = await ensureShareToken(deps.db, sessionId);
+    if (token === null) return { status: 404, body: { error: 'unknown session' } };
+    return { status: 200, body: { shareUrl: `/handoff/${sessionId}/${token}` } };
+  }
 
   // The tokened (shared) path: authenticate with the per-session random token first.
   if (tokened) {
@@ -117,11 +147,13 @@ export async function tryHandleHandoffRoute(
     return { status: 200, body: { artifact } };
   }
 
-  // The bare (owner) path: build the artifact, lazily mint + return a share URL.
+  // The bare (owner) path: build + return the artifact. Return an EXISTING share URL if
+  // one was already minted (via POST /handoff/share), but NEVER mint here — reading the
+  // artifact must not create a durable public link as a side effect (MR !9 review).
   const artifact = await buildHandoffArtifact(artifactDeps, sessionId);
   if (!artifact) return { status: 404, body: { error: 'unknown session' } };
-  const token = await ensureShareToken(deps.db, sessionId);
-  const shareUrl = token ? `/handoff/${sessionId}/${token}` : null;
+  const existing = await readShareToken(deps.db, sessionId);
+  const shareUrl = existing ? `/handoff/${sessionId}/${existing}` : null;
   return { status: 200, body: { artifact, shareUrl } satisfies HandoffBareResponse };
 }
 
