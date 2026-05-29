@@ -370,6 +370,22 @@ describe('parsePseudocode', () => {
     });
   });
 
+  it('parses "a nand b" (ADR-012 additive grammar)', () => {
+    expect(parsePseudocode('a nand b')).toEqual({
+      kind: 'nand',
+      left: { kind: 'var', name: 'A' },
+      right: { kind: 'var', name: 'B' },
+    });
+  });
+
+  it('parses "a nor b" (ADR-012 additive grammar)', () => {
+    expect(parsePseudocode('a nor b')).toEqual({
+      kind: 'nor',
+      left: { kind: 'var', name: 'A' },
+      right: { kind: 'var', name: 'B' },
+    });
+  });
+
   it('parses "not a"', () => {
     expect(parsePseudocode('not a')).toEqual({
       kind: 'not',
@@ -611,6 +627,22 @@ describe('parsePseudocode', () => {
     const expr = astToExpression(ast);
     const reParsed = parse(expr);
     expect(reParsed).toEqual(ast);
+  });
+
+  // --- astToExpression: NAND / NOR round-trip (ADR-012 additive grammar) ---
+
+  it('astToExpression round-trips NAND (AND-precedence; parenthesises OR-level children)', () => {
+    const ast = parse('A NAND (B OR C)');
+    const expr = astToExpression(ast);
+    expect(expr).toBe('A NAND (B OR C)');
+    expect(parse(expr)).toEqual(ast);
+  });
+
+  it('astToExpression round-trips NOR (OR-precedence; flat shape like OR)', () => {
+    const ast = parse('A NOR B');
+    const expr = astToExpression(ast);
+    expect(expr).toBe('A NOR B');
+    expect(parse(expr)).toEqual(ast);
   });
 
   // --- Case-insensitive keywords ---
