@@ -34,9 +34,16 @@ interface PersistedPayload {
     answer?: 'yes' | 'no' | 'skip';
     circuitSuppressed?: boolean;
   };
+  /** SERVER-recomputed submit correctness (MR !8 review) — the trusted source for the
+   *  correctness-dependent metrics. The client `event.correct` flag is NOT trusted. */
+  submitVerdict?: { correct?: boolean };
   transferVerdict?: { correct?: boolean };
   explainBackVerdict?: { passed?: boolean };
   gateEvaluation?: { passed?: boolean };
+  /** The agent action persisted on this turn. The PRODUCTION mastery signal is a
+   *  `mount MasteryCelebration` action (mirrors buildReport) — NOT raw
+   *  gateEvaluation.passed (MR !8 review). */
+  action?: { type?: string; component?: { kind?: string } };
 }
 
 /** The follow-up pass bar: a subject "passed" the 24h 3rd-rep follow-up when the
@@ -57,7 +64,11 @@ export async function fetchMetricInputs(db: Db, opts: { metric3Enabled?: boolean
     const ev = p.event ?? {};
     const row: MetricEventRow = { kind: r.kind, ts: r.ts instanceof Date ? r.ts.getTime() : Number(r.ts) };
     if (typeof ev.responseTimeMs === 'number') row.responseTimeMs = ev.responseTimeMs;
-    if (typeof ev.correct === 'boolean') row.submitCorrect = ev.correct;
+    // Prefer the SERVER-recomputed verdict (MR !8 review); fall back to the client flag
+    // only for legacy rows persisted before submitVerdict existed. A scripted client
+    // can't poison dependency_check/visual_utility with correct:true on a wrong answer.
+    if (typeof p.submitVerdict?.correct === 'boolean') row.submitCorrect = p.submitVerdict.correct;
+    else if (typeof ev.correct === 'boolean') row.submitCorrect = ev.correct;
     if (typeof p.transferVerdict?.correct === 'boolean') row.transferCorrect = p.transferVerdict.correct;
     if (ev.answer === 'yes' || ev.answer === 'no' || ev.answer === 'skip') {
       row.intelligibilityAnswer = ev.answer;
@@ -89,7 +100,14 @@ export async function fetchMetricInputs(db: Db, opts: { metric3Enabled?: boolean
         .where(and(eq(events.sessionId, s.polymathSessionId), isNull(events.app)));
       for (const e of sessionEvents) {
         const p = (e.payload ?? {}) as PersistedPayload;
-        if (p.gateEvaluation?.passed === true) row.declaredMastered = true;
+        // PRODUCTION mastery signal = a persisted `mount MasteryCelebration` action,
+        // mirroring buildReport (MR !8 review). A bare gateEvaluation.passed on some turn
+        // does NOT mean the session was declared mastered — the gate can be momentarily
+        // satisfied on a turn that never culminated in a celebration, which would inflate
+        // the false-positive denominator of the headline ADR-011 metric (metric 6).
+        if (p.action?.type === 'mount' && p.action.component?.kind === 'MasteryCelebration') {
+          row.declaredMastered = true;
+        }
         if (typeof p.explainBackVerdict?.passed === 'boolean') row.explainBackPassed = p.explainBackVerdict.passed;
         if (typeof p.transferVerdict?.correct === 'boolean') row.transferPassed = p.transferVerdict.correct;
       }

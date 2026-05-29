@@ -21,7 +21,11 @@
   /* Accent + status. Deuteranopia-safe: pass=blue, fail=orange (not green/red). */
   --color-accent: #1d4ed8;
   --color-pass: #1d6fb8;
-  --color-fail: #c2570a;
+  /* #b3500a clears WCAG AA (4.5:1) on BOTH --color-bg (#fff → 5.16:1) and
+   * --color-surface (#f4f5f7 → 4.73:1). The prior #c2570a was 4.50 on white but only
+   * 4.13 on the surface — fail/verdict text rendered inside cards was below AA
+   * (MR !8 review). Guarded by tokenContrast.test.ts. */
+  --color-fail: #b3500a;
   --color-warn: #8a6d00;
 
   /* Focus ring (visible, high-contrast). */

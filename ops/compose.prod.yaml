@@ -70,6 +70,14 @@ services:
     build:
       context: /srv/polymath/current
       dockerfile: apps/web/Dockerfile
+      # Vite INLINES import.meta.env at BUILD time, so PostHog config must reach
+      # `docker build` as build args — compose env_file is runtime-only and never
+      # reaches the build (MR !8 review). Without this the deployed bundle ships
+      # PostHog permanently disabled even when /etc/polymath/.env sets the keys.
+      # Blank default keeps PostHog fail-closed (no-op) when unset.
+      args:
+        VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
+        VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
     image: polymath-web:${GIT_SHA:-latest}
     container_name: polymath-web
     restart: unless-stopped

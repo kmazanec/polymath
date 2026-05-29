@@ -155,6 +155,39 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     expect(row!.deleteAfter!.getTime()).toBeGreaterThan(Date.now());
   });
 
+  it('does NOT schedule deletion for a session this socket never started (MR !8 security)', async () => {
+    // A socket binds to a session ONLY via a `session_start` frame on THIS connection.
+    // An attacker who knows a victim's session UUID must not be able to open a socket,
+    // send a non-session_start frame naming it, disconnect, and stamp the victim's data
+    // for hard-deletion (a destructive DoS with no credentials). The binding is also why
+    // a stray frame on a reconnect can't mis-fire the deletion timer.
+    const res = await fetch(`${baseUrl}/api/session`, { method: 'POST' });
+    const { sessionId } = (await res.json()) as { sessionId: string };
+
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', () => {
+        // A `submit` frame naming the victim session — NOT a session_start. This must
+        // not bind the socket, so the close must not schedule the victim's deletion.
+        ws.send(
+          JSON.stringify({ kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B' }),
+        );
+        setTimeout(() => {
+          ws.close();
+          resolve();
+        }, 150);
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 5000);
+    });
+
+    await new Promise((r) => setTimeout(r, 400));
+    const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId));
+    // The session was never started on this socket → not bound → not scheduled.
+    expect(row?.endedAt ?? null).toBeNull();
+    expect(row?.deleteAfter ?? null).toBeNull();
+  });
+
   it('replies with a clean error for an unknown session and keeps serving', async () => {
     // A valid-but-unknown UUID must NOT crash the server (regression guard for
     // the unhandled-rejection-on-FK-violation DoS). The server should send an

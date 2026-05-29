@@ -1350,7 +1350,10 @@ export async function handleClientFrame(
     if (event.kind === 'intelligibility_response') {
       await deps.db
         .insert(events)
-        .values({ sessionId: event.sessionId, kind: event.kind, payload: { event } })
+        // app: null explicitly (MR !8 review) — match ui_mount and EVERY app-IS-NULL
+        // integrity read, so a future writer that sets events.app can't accidentally
+        // exclude intelligibility rows from the metric fold while still inserting them.
+        .values({ sessionId: event.sessionId, kind: event.kind, payload: { event }, app: null })
         .catch(() => {
           // A telemetry write failure must never break the connection — the beacon is
           // best-effort, off the critical path; degrade to a dropped sample.
@@ -1668,12 +1671,25 @@ export async function handleClientFrame(
     const persistedEvent =
       splitArm === undefined ? event : { ...event, circuitSuppressed: splitArm };
 
+    // SECURITY (MR !8 review): the counter-metrics (dependency_check, visual_utility)
+    // must fold SERVER-recomputed correctness, never the client `submit.correct` flag —
+    // a scripted client could send wrong answers with `correct:true` (+ tiny
+    // responseTimeMs) to manufacture a passing operator dashboard. We recompute the
+    // verdict here from the canonical submission + lesson item (the same `recomputeCorrect`
+    // the BKT path already trusts) and persist it as `submitVerdict`, mirroring
+    // `transferVerdict`; `fetchMetricInputs` reads this, not `event.correct`.
+    const submitVerdict =
+      event.kind === 'submit'
+        ? { correct: recomputeCorrect(lesson.content, event.itemId, event.submission) }
+        : undefined;
+
     await deps.db.insert(events).values({
       sessionId: event.sessionId,
       kind: event.kind,
       payload: {
         event: persistedEvent,
         action: finalAction,
+        ...(submitVerdict ? { submitVerdict } : {}),
         learnerSnapshot: learnerDerived.snapshot,
         // The transfer verdict (when this turn is a transfer_submitted) is recorded
         // so the replay shows pass/fail and F-09 can read the transfer-pass condition.
@@ -2004,15 +2020,30 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     // is bound to (from its frames' sessionId) so on close we can schedule its data for
     // deletion after the configurable grace. Fail-closed: a session that ends is always
     // scheduled; scheduling is `app IS NULL`-scoped so only Polymath sessions are touched.
+    // SECURITY (MR !8 review): bind this socket to a session ONLY via a `session_start`
+    // frame on THIS connection — never from an arbitrary frame's `sessionId`. The old
+    // "last sessionId seen on any frame wins" let anyone who knows a victim's session
+    // UUID open a socket, send one frame naming it, disconnect, and stamp the victim's
+    // data for hard-deletion after the grace window (a destructive DoS with no creds) —
+    // and it mis-fired the deletion timer on a stray frame. A connection establishes its
+    // session by opening with `session_start` (the web client's first frame); only that
+    // binds. Once bound, it never rebinds to a different id on the same socket (a forged
+    // cross-session `session_start` mid-connection can't steal the binding). This mirrors
+    // the repo invariant: a route/action keyed by a UUID needs binding, not trust.
     let boundSessionId: string | null = null;
     const noteSessionId = (raw: string): void => {
+      if (boundSessionId !== null) return; // bind once, on the first session_start
       try {
-        const parsed = JSON.parse(raw) as { sessionId?: unknown };
-        if (typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
+        const parsed = JSON.parse(raw) as { kind?: unknown; sessionId?: unknown };
+        if (
+          parsed.kind === 'session_start' &&
+          typeof parsed.sessionId === 'string' &&
+          parsed.sessionId.length > 0
+        ) {
           boundSessionId = parsed.sessionId;
         }
       } catch {
-        /* not JSON / no sessionId — ignore; the frame handler reports its own error */
+        /* not JSON / not a session_start — ignore; the frame handler reports its own error */
       }
     };
     ws.on('close', () => {
