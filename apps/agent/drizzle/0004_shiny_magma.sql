@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "delete_after" timestamp with time zone;

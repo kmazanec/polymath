@@ -13,6 +13,7 @@ import {
 } from '@polymath/contract';
 import type { Db } from './db/client.js';
 import { events, experimentSubjects, learnerState, sessions, transferBank } from './db/schema.js';
+import { scheduleSessionDeletion } from './privacy/sessionDeletion.js';
 import type {
   AgentClient,
   AgentInput,
@@ -1919,7 +1920,33 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     // in production. A malformed pair is skipped (degrade, never crash); empty → no map
     // → the real `learner_state` read is used instead.
     const testL1Bkt = devSeams ? parseTestL1Bkt(reqUrl.searchParams.get('testL1Bkt')) : undefined;
+    // Privacy posture (ADR-012, AC#9): the END of a session is detected SERVER-SIDE
+    // from the WS close, not a client beacon (`beforeunload`/`sendBeacon` is unreliable
+    // and the web client doesn't emit `session_end`). We track the session this socket
+    // is bound to (from its frames' sessionId) so on close we can schedule its data for
+    // deletion after the configurable grace. Fail-closed: a session that ends is always
+    // scheduled; scheduling is `app IS NULL`-scoped so only Polymath sessions are touched.
+    let boundSessionId: string | null = null;
+    const noteSessionId = (raw: string): void => {
+      try {
+        const parsed = JSON.parse(raw) as { sessionId?: unknown };
+        if (typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
+          boundSessionId = parsed.sessionId;
+        }
+      } catch {
+        /* not JSON / no sessionId — ignore; the frame handler reports its own error */
+      }
+    };
+    ws.on('close', () => {
+      if (!boundSessionId) return;
+      // Non-fatal: a deletion-scheduling failure must never crash the process on a
+      // socket close. The boot/interval sweep is the backstop.
+      void scheduleSessionDeletion(deps.db, boundSessionId).catch((err) => {
+        console.error('failed to schedule session-data deletion on WS close', err);
+      });
+    });
     ws.on('message', (data) => {
+      noteSessionId(data.toString());
       // The frame handler must never reject unhandled — an unawaited rejection
       // (e.g. a DB error on a bad sessionId) would crash the process.
       handleClientFrame(deps, ws, data.toString(), {

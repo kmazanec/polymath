@@ -125,6 +125,36 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     expect(rows.some((r) => r.kind === 'submit')).toBe(true);
   });
 
+  it('schedules session-data deletion when the WebSocket closes (privacy posture)', async () => {
+    // A session that ends (server-side WS-close detection, not a client beacon) is
+    // scheduled for deletion after the grace period. The web client never emits a
+    // `session_end`, so the close is the only reliable end signal.
+    const res = await fetch(`${baseUrl}/api/session`, { method: 'POST' });
+    const { sessionId } = (await res.json()) as { sessionId: string };
+
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ kind: 'session_start', sessionId, lessonId: 1 }));
+        // Give the frame a beat to register the bound sessionId, then close.
+        setTimeout(() => {
+          ws.close();
+          resolve();
+        }, 150);
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('timed out')), 5000);
+    });
+
+    // The close handler schedules deletion asynchronously; give it a beat to land.
+    await new Promise((r) => setTimeout(r, 400));
+    const [row] = await db.select().from(sessions).where(eq(sessions.id, sessionId));
+    expect(row?.endedAt).not.toBeNull();
+    expect(row?.deleteAfter).not.toBeNull();
+    // The grace is in the future (default 24h) — not deleted immediately.
+    expect(row!.deleteAfter!.getTime()).toBeGreaterThan(Date.now());
+  });
+
   it('replies with a clean error for an unknown session and keeps serving', async () => {
     // A valid-but-unknown UUID must NOT crash the server (regression guard for
     // the unhandled-rejection-on-FK-violation DoS). The server should send an

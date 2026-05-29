@@ -2,6 +2,7 @@ import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { StubAgentClient } from './agent/stubClient.js';
 import { createServer } from './server.js';
+import { startSessionDeletionSweep } from './privacy/sessionDeletion.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const POSTGRES_URL =
@@ -34,6 +35,13 @@ async function main(): Promise<void> {
   // (makeExplainBackJudge) self-gates on OPENAI_API_KEY.
   const server = createServer({ db, agent: new StubAgentClient(), allowedOrigins });
 
+  // Privacy posture (ADR-012, AC#9): periodically hard-delete the events +
+  // learner_state of sessions whose deletion grace has expired (sessions are scheduled
+  // server-side on WS close). The sweep is non-fatal — a failure logs and retries next
+  // interval — and runs an immediate pass on boot to clean up anything that expired
+  // while the agent was down.
+  const stopSweep = startSessionDeletionSweep(db);
+
   server.httpServer.listen(PORT, () => {
     console.log(`polymath agent listening on :${PORT}`);
   });
@@ -42,6 +50,7 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopSweep();
     // Drain WS + close HTTP first (server.close terminates open sockets so this
     // resolves instead of hanging), then close the pool, then exit.
     server

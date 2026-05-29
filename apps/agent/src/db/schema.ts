@@ -21,6 +21,13 @@ export const sessions = pgTable('sessions', {
   id: uuid('id').primaryKey().defaultRandom(),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   endedAt: timestamp('ended_at', { withTimezone: true }),
+  /** Privacy posture (ADR-012): when a session ends (server-side WS-close detection),
+   *  its data is scheduled for deletion at `endedAt + grace`. The boot/interval sweep
+   *  hard-deletes the session's events + learner_state once `now >= deleteAfter`.
+   *  Fail-closed: a session that ends is ALWAYS scheduled (default-delete), and a
+   *  truncated/absent stamp is still swept once past grace. Nullable + additive (no
+   *  backfill): rows with NULL are simply not yet scheduled. */
+  deleteAfter: timestamp('delete_after', { withTimezone: true }),
   lessonProgress: jsonb('lesson_progress'),
   /** I3/I4 barrier (D3): which app owns this session. NULL = polymath (the default,
    *  back-compatible), 'baseline' = the F-16 chat-baseline experiment arm. Polymath's
