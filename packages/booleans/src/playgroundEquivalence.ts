@@ -54,9 +54,12 @@ export function playgroundEquivalence(
     }
     try {
       byKey[key] = equivalent(submission, target);
+      /* v8 ignore start -- defensive: both sides already passed withinCap()
+         (parseable + within the variable cap), so equivalent() cannot throw here. */
     } catch {
       byKey[key] = false;
     }
+    /* v8 ignore stop */
   }
   const allEquivalent = keys.length > 0 && keys.every((k) => byKey[k] === true);
   return { byKey, allEquivalent };

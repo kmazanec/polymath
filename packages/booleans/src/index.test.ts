@@ -296,6 +296,19 @@ describe('NOR primitive + De Morgan equivalence', () => {
     expect(equivalent(astToExpression(parse('A NOR B')), 'A NOR B')).toBe(true);
   });
 
+  it('round-trips "A NAND B" through astToExpression (AND-precedence arm)', () => {
+    expect(astToExpression(parse('A NAND B'))).toBe('A NAND B');
+    expect(equivalent(astToExpression(parse('A NAND B')), 'A NAND B')).toBe(true);
+  });
+
+  it('parenthesises an OR-level child of NAND so it re-parses unambiguously', () => {
+    // NAND sits at AND-precedence; an OR child must be parenthesised on the way
+    // back out (astToExpression nand arm) or it would re-parse with the wrong shape.
+    const expr = astToExpression(parse('(A OR B) NAND C'));
+    expect(expr).toContain('(A OR B)');
+    expect(equivalent(expr, '(A OR B) NAND C')).toBe(true);
+  });
+
   it('confirms De Morgan: NOT (A OR B) ≡ (NOT A) AND (NOT B)', () => {
     expect(equivalent('NOT (A OR B)', '(NOT A) AND (NOT B)')).toBe(true);
   });
@@ -361,6 +374,22 @@ describe('parsePseudocode', () => {
     expect(parsePseudocode('not a')).toEqual({
       kind: 'not',
       operand: { kind: 'var', name: 'A' },
+    });
+  });
+
+  it('parses "a nand b" (NAND accepted at AND-precedence in pseudocode)', () => {
+    expect(parsePseudocode('a nand b')).toEqual({
+      kind: 'nand',
+      left: { kind: 'var', name: 'A' },
+      right: { kind: 'var', name: 'B' },
+    });
+  });
+
+  it('parses "a nor b" (NOR accepted at OR-precedence in pseudocode)', () => {
+    expect(parsePseudocode('a nor b')).toEqual({
+      kind: 'nor',
+      left: { kind: 'var', name: 'A' },
+      right: { kind: 'var', name: 'B' },
     });
   });
 
