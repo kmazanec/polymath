@@ -104,10 +104,10 @@ A post-mastery free-build capstone. After mastering L4 the learner sees a "Try t
 - [ ] **Contract (coordinated):** add `PlaygroundCanvas` to the union + `COMPONENT_KINDS`; add the 4 `ClientEvent` kinds; round-trip cases in `index.test.ts`. `pnpm --filter @polymath/contract test` + `pnpm typecheck` (registry.tsx now fails exhaustiveness — proves the contract landed).
 - [x] Web renderer: `case 'PlaygroundCanvas':` + new handlers (fixes exhaustiveness).
 - [x] Test-first `PlaygroundCanvas.test.tsx`, then `PlaygroundCanvas.tsx` (compose three rep components, `visibleReps=['truth_table','circuit','pseudocode']`, target input, Submit client-side verdict, per-rep badges, scaffold-request, Finish).
-- [ ] Agent menu lockstep: `verify_playground_equivalence` in `TacticalMove`+`F26_MENU`+`compileMove`; extend `openaiClient.ts`; update `prompt.ts`. `pnpm --filter @polymath/agent typecheck` (a missed lockstep half = non-exhaustive-switch error).
-- [ ] Server: `handleEnterPlaygroundTurn` (earned-it, `app IS NULL`, fail-closed), `handlePlaygroundSubmitTurn` (recompute + persist, no BKT/mastery), `handleExitPlaygroundTurn`; route in `handleClientFrame`.
+- [x] Agent menu lockstep: `verify_playground_equivalence` in `TacticalMove`+`F26_MENU`+`compileMove`; extend `openaiClient.ts`; update `prompt.ts`. `pnpm --filter @polymath/agent typecheck` (a missed lockstep half = non-exhaustive-switch error).
+- [x] Server: `handleEnterPlaygroundTurn` (earned-it, `app IS NULL`, fail-closed), `handlePlaygroundSubmitTurn` (recompute + persist, no BKT/mastery), `handleExitPlaygroundTurn`; route in `handleClientFrame`.
 - [ ] App wiring: "Try the Playground" on the L4 `MasteryCelebration` (AC#1); wire enter/submit/scaffold/exit to the socket; exit → celebration (AC#6).
-- [ ] Integration test: full L1→L4-mastered→playground→exit arc in one session (Testing #2).
+- [x] Integration test: full L1→L4-mastered→playground→exit arc in one session (Testing #2).
 - [ ] `pnpm typecheck && pnpm test && pnpm build`; confirm the `lesson.ts` diff is **empty**; QA in-browser.
 
 ### Contracts touched (all ADDITIVE)

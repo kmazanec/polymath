@@ -2,7 +2,7 @@ import http from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { scoreEquivalence } from '@polymath/booleans';
+import { scoreEquivalence, playgroundEquivalence, truthTable } from '@polymath/booleans';
 import {
   ClientEvent,
   noAction,
@@ -1286,6 +1286,174 @@ async function handleAdvanceLessonTurn(
   send(ws, { kind: 'action', sessionId: event.sessionId, action });
 }
 
+// ---------------------------------------------------------------------------
+// ADR-013 stretch — the free-build playground.
+//
+// The playground is an UNGRADED sibling mode (its own micro-statechart on the
+// client). None of its turns fold into BKT/streak/transfer/mastery — they persist
+// a record and reply with an ack/mount. The integrity rules still apply:
+//   - Entry is EARNED: the server re-derives the current lesson's mastery gate from
+//     the (bounded, `app IS NULL`-scoped) event log; an unmet gate fails CLOSED.
+//   - The verdict authority is the CLIENT-SIDE `playgroundEquivalence` (correctness
+//     off the network); the server recompute here is defense-in-depth for the
+//     persisted record only — NEVER a BKT/mastery write.
+// The final lesson (no `loadLessonIfExists(currentLessonId + 1)`) is the only place
+// the playground is offered; the entry gate re-checks mastery regardless.
+// ---------------------------------------------------------------------------
+
+/** READ-ONLY mastery derive over the persisted log (`app IS NULL`-scoped, with the
+ *  uncapped off-topic total). Unlike `updateAndReadLearnerState` it writes NOTHING —
+ *  the playground is ungraded, so its turns must never (re-)persist `learner_state`.
+ *  Returns the current lesson's mastery state + its server-sourced `conceptsMastered`. */
+async function deriveMasteryReadOnly(
+  db: Db,
+  sessionId: string,
+  lesson: Lesson,
+): Promise<LearnerState> {
+  const [priorRowsDesc, offTopicTotal] = await Promise.all([
+    db
+      .select({ kind: events.kind, payload: events.payload })
+      .from(events)
+      // `app IS NULL`: keep foreign-app rows (D3 discriminator) out of the fold.
+      .where(and(eq(events.sessionId, sessionId), isNull(events.app)))
+      .orderBy(desc(events.ts))
+      .limit(MAX_SESSION_EVENTS),
+    countOffTopicAnswers(db, sessionId),
+  ]);
+  const logged: LoggedEvent[] = priorRowsDesc.reverse().map((r) => toLoggedEvent(r.kind, r.payload));
+  const derived = deriveState(logged, lesson.content, lesson.masteryConfig);
+  derived.offTopicCount = Math.max(derived.offTopicCount, offTopicTotal);
+  return toLearnerState(derived, lesson.masteryConfig);
+}
+
+/** The mastery gate the playground entry earns against — re-derived server-side
+ *  from the persisted log (the earned-it guard), never trusted from the client. */
+async function playgroundEntryEarned(
+  db: Db,
+  sessionId: string,
+  lesson: Lesson,
+): Promise<MasteryGateResult> {
+  const masteryState = await deriveMasteryReadOnly(db, sessionId, lesson);
+  return evaluateMasteryGate(masteryState, lesson.masteryConfig);
+}
+
+/** Server-side recompute of the playground verdict for the persisted record
+ *  (ADR-013 defense-in-depth). For circuit/pseudocode the learner authors an
+ *  expression → `playgroundEquivalence` (caps BOTH sides). For truth_table the
+ *  learner fills the target's table → compare the cells to `truthTable(target).out`
+ *  directly (the cells ARE the answer; there is no authored expression). A missing
+ *  rep is simply absent from the verdict. Never throws, never enumerates over cap. */
+function recomputePlaygroundVerdict(
+  event: Extract<ClientEvent, { kind: 'playground_submit' }>,
+): { byKey: Record<string, boolean>; allEquivalent: boolean } {
+  const exprByKey: Record<string, string> = {};
+  const { submissions, targetExpression } = event;
+  if (submissions.circuit?.rep === 'circuit') exprByKey.circuit = submissions.circuit.expression;
+  if (submissions.pseudocode?.rep === 'pseudocode') exprByKey.pseudocode = submissions.pseudocode.expression;
+  const exprResult = playgroundEquivalence(targetExpression, exprByKey);
+  const byKey: Record<string, boolean> = { ...exprResult.byKey };
+
+  const tt = submissions.truth_table;
+  if (tt?.rep === 'truth_table') {
+    let ttOk = false;
+    try {
+      const expected = truthTable(targetExpression).out;
+      ttOk =
+        tt.cells.length === expected.length &&
+        expected.every((b, i) => (b ? 1 : 0) === tt.cells[i]);
+    } catch {
+      ttOk = false;
+    }
+    byKey.truth_table = ttOk;
+  }
+  const keys = Object.keys(byKey);
+  const allEquivalent = keys.length > 0 && keys.every((k) => byKey[k] === true);
+  return { byKey, allEquivalent };
+}
+
+/** `enter_playground`: gate on the current lesson's mastery (earned-it, fail-closed,
+ *  `app IS NULL`-scoped). On a pass, ack so the client mounts the canvas; on a fail,
+ *  refuse with an error (no canvas). Persists a record either way. */
+async function handleEnterPlaygroundTurn(
+  deps: ServerDeps,
+  ws: WebSocket,
+  event: Extract<ClientEvent, { kind: 'enter_playground' }>,
+  lesson: Lesson,
+): Promise<void> {
+  const gate = await playgroundEntryEarned(deps.db, event.sessionId, lesson);
+  await deps.db.insert(events).values({
+    sessionId: event.sessionId,
+    kind: event.kind,
+    payload: {
+      event,
+      gateEvaluation: { passed: gate.passed, blockers: gate.blockers },
+      statechartDecision: gate.passed ? 'accept' : 'reject',
+      statechartReason: gate.passed ? 'playground_entry_earned' : `mastery_gate_failed: ${gate.blockers.join(',')}`,
+    },
+  });
+  if (!gate.passed) {
+    send(ws, {
+      kind: 'error',
+      sessionId: event.sessionId,
+      message: `playground locked: mastery not yet earned (${gate.blockers.join(',')})`,
+    });
+    return;
+  }
+  send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+}
+
+/** `playground_submit`: recompute the verdict for the persisted record only — NO
+ *  BKT/streak/mastery write. Ack so the client knows the record landed (the client
+ *  already showed its own verdict — correctness off the network). */
+async function handlePlaygroundSubmitTurn(
+  deps: ServerDeps,
+  ws: WebSocket,
+  event: Extract<ClientEvent, { kind: 'playground_submit' }>,
+): Promise<void> {
+  const verdict = recomputePlaygroundVerdict(event);
+  await deps.db.insert(events).values({
+    sessionId: event.sessionId,
+    kind: event.kind,
+    payload: { event, verdict },
+  });
+  send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+}
+
+/** `playground_request_scaffold`: the agent answers but NEVER directs. Persist the
+ *  ask and ack; the scaffold itself is the agent's `verify_playground_equivalence`
+ *  move (an on-topic answer mount), which the client requests separately. We keep
+ *  this turn off the graded path entirely. */
+async function handlePlaygroundRequestScaffoldTurn(
+  deps: ServerDeps,
+  ws: WebSocket,
+  event: Extract<ClientEvent, { kind: 'playground_request_scaffold' }>,
+): Promise<void> {
+  await deps.db.insert(events).values({
+    sessionId: event.sessionId,
+    kind: event.kind,
+    payload: { event },
+  });
+  send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+}
+
+/** `exit_playground`: mount a session-end celebration (server-sourced
+ *  `conceptsMastered`, never a client claim) and persist the record. */
+async function handleExitPlaygroundTurn(
+  deps: ServerDeps,
+  ws: WebSocket,
+  event: Extract<ClientEvent, { kind: 'exit_playground' }>,
+  lesson: Lesson,
+): Promise<void> {
+  const masteryState = await deriveMasteryReadOnly(deps.db, event.sessionId, lesson);
+  const action = masteryCelebrationAction(masteryState, lesson);
+  await deps.db.insert(events).values({
+    sessionId: event.sessionId,
+    kind: event.kind,
+    payload: { event, action },
+  });
+  send(ws, { kind: 'action', sessionId: event.sessionId, action });
+}
+
 /** Handle one inbound WebSocket frame: validate → run agent → validate output →
  *  persist → reply. Exported for direct unit/integration testing. */
 export async function handleClientFrame(
@@ -1428,19 +1596,28 @@ export async function handleClientFrame(
     return;
   }
 
-  // ADR-012 stretch — the free-build playground. These four event kinds are NOT
+  // ADR-013 stretch — the free-build playground. These four event kinds are NOT
   // graded practice: they carry no authored answer key, must never fold into the
-  // BKT/streak or transfer path, and never reach the menu/`proposeMove`. The
-  // contract shape + this routing land here; the owning feature fills in the
-  // scaffold/equivalence behavior. Acknowledge and return so a playground frame
-  // can't be misrouted into the practice turn below.
-  if (
-    event.kind === 'enter_playground' ||
-    event.kind === 'playground_submit' ||
-    event.kind === 'playground_request_scaffold' ||
-    event.kind === 'exit_playground'
-  ) {
-    send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+  // BKT/streak or transfer path, and never reach the menu/`proposeMove`. Each is a
+  // dedicated server reflex handled BEFORE the generic practice turn, so a
+  // playground frame can never be misrouted into BKT/streak/transfer/mastery.
+  if (event.kind === 'enter_playground') {
+    // Earned-it: re-derive the current lesson's mastery gate (fail-closed).
+    await handleEnterPlaygroundTurn(deps, ws, event, lesson);
+    return;
+  }
+  if (event.kind === 'playground_submit') {
+    // Recompute the verdict for the persisted record only — no BKT/mastery write.
+    await handlePlaygroundSubmitTurn(deps, ws, event);
+    return;
+  }
+  if (event.kind === 'playground_request_scaffold') {
+    await handlePlaygroundRequestScaffoldTurn(deps, ws, event);
+    return;
+  }
+  if (event.kind === 'exit_playground') {
+    // Mount the session-end celebration (server-sourced conceptsMastered).
+    await handleExitPlaygroundTurn(deps, ws, event, lesson);
     return;
   }
   // The transfer verdict (server-computed) must be known before deriving learner

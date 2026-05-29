@@ -1571,6 +1571,132 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(statuses[6]).toBe(429);
     });
   });
+
+  /**
+   * ADR-013 — the free-build playground (the L5 capstone). It is an UNGRADED sibling
+   * mode: entry is EARNED (the server re-derives the current lesson's mastery gate,
+   * fail-closed), a submit recompute persists a record but writes NO BKT/streak/
+   * mastery, and exit mounts a session-end celebration. This exercises the full
+   * L1→mastered→playground→exit arc through the real `handleClientFrame` fold.
+   */
+  describe('the free-build playground (ADR-013 capstone)', () => {
+    /** Send one frame and resolve with the first server message (ack | action | error). */
+    async function sendOne(frame: Record<string, unknown>): Promise<Record<string, unknown>> {
+      const ws = new WebSocket(wsUrl);
+      const msg = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        ws.on('open', () => ws.send(JSON.stringify(frame)));
+        ws.on('message', (data) => resolve(JSON.parse(data.toString())));
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('playground frame timed out')), 8000);
+      });
+      ws.close();
+      return msg;
+    }
+
+    it('REFUSES enter_playground when mastery is not yet earned (fail-closed)', async () => {
+      const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      // A fresh session has not mastered anything; entry must be refused.
+      const msg = await sendOne({ kind: 'enter_playground', sessionId });
+      expect(msg.kind).toBe('error');
+      expect(String(msg.message)).toMatch(/playground locked|mastery not yet earned/i);
+
+      // The refusal is persisted as a reject decision (no BKT/mastery write).
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { statechartDecision?: string } }[];
+      };
+      const entry = replay.events.find((e) => e.kind === 'enter_playground');
+      expect(entry?.payload.statechartDecision).toBe('reject');
+    });
+
+    it('full arc: L1 mastered → enter (earned) → submit (recompute, no BKT write) → exit (celebration)', async () => {
+      const { sessionId } = await driveToL1Mastery();
+
+      // ENTER: now earned — the server acks (the client mounts the canvas).
+      const enter = await sendOne({ kind: 'enter_playground', sessionId });
+      expect(enter.kind).toBe('ack');
+      expect(enter.event).toBe('enter_playground');
+
+      // Snapshot the learner_state BEFORE the submit so we can prove it is untouched.
+      const before = await db.select().from(learnerState).where(eq(learnerState.sessionId, sessionId));
+
+      // SUBMIT: an equivalent pseudocode + a correct truth table for target "A OR B".
+      const submit = await sendOne({
+        kind: 'playground_submit',
+        sessionId,
+        targetExpression: 'A OR B',
+        submissions: {
+          pseudocode: { rep: 'pseudocode', expression: 'B OR A', source: 'B or A' },
+          truth_table: { rep: 'truth_table', cells: [0, 1, 1, 1] },
+        },
+      });
+      expect(submit.kind).toBe('ack');
+      expect(submit.event).toBe('playground_submit');
+
+      // The server recompute landed in the record with the verdict (defense-in-depth),
+      // and it is the SAME verdict the client would have computed (allEquivalent true).
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { verdict?: { byKey: Record<string, boolean>; allEquivalent: boolean } } }[];
+      };
+      const sub = replay.events.find((e) => e.kind === 'playground_submit');
+      expect(sub?.payload.verdict?.byKey.pseudocode).toBe(true);
+      expect(sub?.payload.verdict?.byKey.truth_table).toBe(true);
+      expect(sub?.payload.verdict?.allEquivalent).toBe(true);
+
+      // NO BKT/streak/mastery write: learner_state is byte-identical to before.
+      const after = await db.select().from(learnerState).where(eq(learnerState.sessionId, sessionId));
+      expect(after).toEqual(before);
+
+      // EXIT: mounts a session-end MasteryCelebration (server-sourced conceptsMastered).
+      const exit = await sendOne({ kind: 'exit_playground', sessionId });
+      expect(exit.kind).toBe('action');
+      const action = Action.parse(exit.action);
+      expect(action.type).toBe('mount');
+      if (action.type === 'mount') {
+        expect(action.component.kind).toBe('MasteryCelebration');
+        if (action.component.kind === 'MasteryCelebration') {
+          expect(action.component.conceptsMastered).toContain('AND');
+        }
+      }
+    });
+
+    it('a non-equivalent rep submission records a mismatch verdict (still no BKT write)', async () => {
+      const { sessionId } = await driveToL1Mastery();
+      await sendOne({ kind: 'enter_playground', sessionId });
+      const submit = await sendOne({
+        kind: 'playground_submit',
+        sessionId,
+        targetExpression: 'A AND B',
+        submissions: {
+          pseudocode: { rep: 'pseudocode', expression: 'A OR B', source: 'A or B' }, // wrong
+        },
+      });
+      expect(submit.kind).toBe('ack');
+      await new Promise((r) => setTimeout(r, 200));
+      const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+        events: { kind: string; payload: { verdict?: { byKey: Record<string, boolean>; allEquivalent: boolean } } }[];
+      };
+      const sub = replay.events.find((e) => e.kind === 'playground_submit');
+      expect(sub?.payload.verdict?.byKey.pseudocode).toBe(false);
+      expect(sub?.payload.verdict?.allEquivalent).toBe(false);
+    });
+
+    it('a scaffold request is recorded and acked off the graded path', async () => {
+      const { sessionId } = await driveToL1Mastery();
+      await sendOne({ kind: 'enter_playground', sessionId });
+      const scaffold = await sendOne({
+        kind: 'playground_request_scaffold',
+        sessionId,
+        targetExpression: 'A NAND B',
+        learnerQuestion: 'How do I express NAND with the gates I have?',
+      });
+      expect(scaffold.kind).toBe('ack');
+      expect(scaffold.event).toBe('playground_request_scaffold');
+    });
+  });
 });
 
 /**
