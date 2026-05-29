@@ -93,7 +93,7 @@ None within MVP+. F-21 is the terminal feature of I5.
 - [x] Limitations memo: a failing OR insufficient/unconfigured tile surfaces a one-line honest note in the dashboard (AC#3), copy-able for the deck. Plain text + the tile component; no new infra.
 - [x] `apps/web/src/metrics.css`: **self-contained, dependency-free**, with an `@media print` block scoped to the dashboard, imported by `MetricsDashboard.tsx` only. Don't assume F-18/F-19 tokens exist on main; **consume F-19's `var(--token)` with local fallbacks**; reuse F-18's tile/print classes only if present at integration.
 - [x] Metric 3 split-test (intrusive — LAST, **designed-for + DORMANT, D6**): add an append-only optional split-arm marker (`circuitSuppressed`) to the existing per-turn `events` payload (~L1154-1166) so metric3 reads which arm a matched item ran in — **no new WS kind, no reshape of `ComponentSpec` required fields**. Suppression flag OFF by default behind explicit opt-in env, scoped to a small matched item set, **orthogonal to `spec.visibleReps`** (probe-integrity boundary). Flag off ⇒ metric3 `unconfigured`. Test: suppression decision deterministic under a seed, applies only to matched items. **(Reconcile the payload field name with F-20's optional fields at integration — append-only, no silent overwrite.)**
-- [ ] Verify (below) + the manual honest-output check.
+- [x] Verify (below) + the manual honest-output check.
 
 **Decisions (recommended defaults — see manifest):** D-source agent-side derivation (PostHog/LangSmith are corroborating sources in the tile `source` only) · D-metric1 ship `unconfigured` pointing at F-20, optional adapter · D6 metric-3 designed-for + dormant · D7 `MIN_N=5` · D10 in-page operator-secret input → header.
 
@@ -101,4 +101,57 @@ None within MVP+. F-21 is the terminal feature of I5.
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+**Contracts consumed unchanged (no drift).** `MetricResult`/`MetricsPayload` (the
+four-state contract), the `intelligibility_response` + `ui_mount` append-only wire
+kinds, the `/api/metrics` operator-gated route + `buildMetricsPayload` stub, the
+`/metrics` web route, and the global token stylesheet were all already frozen on the
+build branch's barrier commit. This feature filled the producers/components behind
+them; it did not touch a frozen signature.
+
+**Architecture.** Six PURE, DB-free metric computations (`metric1..6.ts`) over the
+`MetricInputs` projection (`inputs.ts`), aggregated by `computeAllMetrics.ts`. All DB
+I/O is isolated in `fetchMetricInputs.ts` (the single seam) so the metrics are unit-
+testable on tiny/degenerate N without Postgres. `index.ts#buildMetricsPayload` =
+`fetchMetricInputs` → `computeAllMetrics`.
+
+**The anti-fail-open spine.** Every metric returns `state ∈ {pass,fail,
+insufficient_data,unconfigured}` with `value`/`pass` nullable. Null/absent data is
+NEVER a default green or red. Confirmed live against real Postgres: a near-fresh DB
+yields intelligibility=pass (real beacons), dependency_check=insufficient (transfer=0),
+ui_churn + visual_utility=unconfigured, κ + false-positive=insufficient (N=0). The
+gray-heavy state is the correct, defensible output.
+
+**Per-metric notes.**
+- *Metric 4 (dependency check)* — the safest real metric, built first: ratio of
+  transfer median to practice median time-to-CORRECT; only correct + timed rows count;
+  pass = ratio ≤ 1.25; insufficient if either side < 3 samples.
+- *Metric 5 (κ)* — guards the degenerate single-class 2×2 (denominator `1-p_e`=0) →
+  insufficient, never NaN/false-1.0; needs ≥ MIN_N (=5) complete verdict pairs.
+- *Metric 6 (false-positive)* — denominator = declared-mastered subjects WITH a
+  follow-up result; note reads literally `designed-for; measured on N=<actual>` (AC#5).
+- *Metric 2 (intelligibility)* — yes/(yes+no), skips excluded; the legitimate path is
+  proven end-to-end (a WS beacon persists under `events.app IS NULL` and folds in).
+- *Metric 1 (UI churn)* — VERIFIED no agent-side mount/phase source today, so it ships
+  `unconfigured` pointing at the observability churn endpoint with an OPTIONAL adapter
+  seam (D-metric1). No competing client mount event was added.
+- *Metric 3 (visual utility)* — DORMANT (D6): a deterministic, matched-item-only
+  circuit-suppression arm marker (`splitTest.ts`) appended to the submit-turn payload
+  behind `POLYMATH_ENABLE_CIRCUIT_SPLIT_TEST` (default off ⇒ unconfigured). Orthogonal
+  to `spec.visibleReps`; never reshapes a probe.
+
+**Discriminator discipline.** Every `events` read in `fetchMetricInputs` scopes to
+`events.app IS NULL` (the D3 baseline/foreign-app guard), uniformly, mirroring
+`countOffTopicAnswers`.
+
+**Web.** `MetricsDashboard.tsx` renders four visually-distinct tile states (text badge
++ deuteranopia-safe blue/orange, never hue alone), a source tooltip per tile (AC#2), a
+copy-able limitations memo listing every non-passing tile (AC#3), and a print-scoped
+`metrics.css` consuming the global tokens with local fallbacks. The operator secret is
+entered in-page and sent as the `X-Operator-Secret` HEADER — never a query param, never
+bundled (D10); verified the URL stays `/metrics` and a 401 surfaces a `role="alert"`.
+`IntelligibilityCheck.tsx` is a 1-in-3 seeded-deterministic post-mount prompt wired
+into App's mount path, suppressed during transfer probes.
+
+**Deferred / not applicable.** Threshold tuning and demo-deck screenshots are the
+spec's MANUAL setup. PostHog/LangSmith wiring is explicitly out of scope (D-source:
+agent-side derivation only; those remain corroborating tile `source` labels).
