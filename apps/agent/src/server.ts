@@ -6,6 +6,7 @@ import { scoreEquivalence } from '@polymath/booleans';
 import {
   ClientEvent,
   noAction,
+  SessionId,
   type Action,
   type ComponentSpec,
   type ExplainBackVerdict,
@@ -41,7 +42,7 @@ import { loadLesson, loadLessonIfExists, type Lesson } from './lessons/loader.js
 import { mintRealtimeToken } from './voice/token.js';
 import { createRateLimiter } from './voice/rateLimiter.js';
 import { buildReport } from './report/buildReport.js';
-import { buildMetricsPayload } from './metrics/index.js';
+import { buildMetricsPayload, computeUiChurn } from './metrics/index.js';
 import { handleExplainBack, type ExplainBackRouteDeps } from './explainback/route.js';
 import {
   createSubject,
@@ -1318,6 +1319,24 @@ export async function handleClientFrame(
   // downstream; the contract barrier only guarantees the frame is accepted and handled
   // benignly here, so a feature can later attach its writer without re-shaping dispatch.
   if (event.kind === 'ui_mount' || event.kind === 'intelligibility_response') {
+    // The `ui_mount` beacon is PERSISTED (app:null, payload:{componentKind,phase}) so
+    // the UI-churn endpoint can fold it later — it is append-only and NON-integrity: it
+    // does NOT route through the mastery/eventConsumer fold (no BKT/streak/off-topic
+    // effect) and must not block the WS happy path. Persist fire-and-forget; a write
+    // failure must not break the round-trip, so we ack regardless. (`intelligibility_response`
+    // persistence + metric is owned downstream — acked benignly here, not yet written.)
+    if (event.kind === 'ui_mount') {
+      try {
+        await deps.db.insert(events).values({
+          sessionId: event.sessionId,
+          kind: 'ui_mount',
+          payload: { componentKind: event.componentKind, phase: event.phase },
+          app: null,
+        });
+      } catch {
+        // Beacon write is best-effort telemetry; never fail the round-trip on it.
+      }
+    }
     send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
     return;
   }
@@ -1844,6 +1863,34 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       buildMetricsPayload(deps.db)
         .then((payload) => sendJson(res, 200, payload))
         .catch(() => sendJson(res, 500, { error: 'failed to build metrics' }));
+      return;
+    }
+
+    // GET /api/session/:id/observability/ui-churn — the UI-churn counter-metric
+    // (mounts/min during a session). Aggregate research/teaching data keyed by a session
+    // UUID, so gated identically to /replay (operator auth; 401 on a bad secret, 503 when
+    // unset in production). The fold scopes `app IS NULL` (D3) like every integrity read.
+    const churnMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/observability\/ui-churn$/);
+    if (req.method === 'GET' && churnMatch) {
+      const denied = checkOperatorAuth(req, deps.operatorSecret);
+      if (denied) {
+        sendJson(res, denied.status, denied.body);
+        return;
+      }
+      const sessionId = churnMatch[1]!;
+      // A malformed (non-UUID) id is a 400 client error, not a 500 — match the
+      // contract's SessionId shape before touching the DB.
+      if (!SessionId.safeParse(sessionId).success) {
+        sendJson(res, 400, { error: 'invalid session id' });
+        return;
+      }
+      deps.db
+        .select({ kind: events.kind, ts: events.ts, app: events.app, payload: events.payload })
+        .from(events)
+        .where(and(eq(events.sessionId, sessionId), isNull(events.app)))
+        .orderBy(events.ts)
+        .then((rows) => sendJson(res, 200, computeUiChurn(sessionId, rows)))
+        .catch(() => sendJson(res, 500, { error: 'failed to compute ui churn' }));
       return;
     }
 
