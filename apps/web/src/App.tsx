@@ -10,6 +10,8 @@ import { transferRepRefusal } from './copy/refusals.js';
 import { introForLesson, LESSON_2_INTRO } from './lessonIntroContent.js';
 import { AskTutorButton } from './voice/AskTutorButton.js';
 import { AboutSessionData } from './components/AboutSessionData.js';
+import { ConsentModal } from './observability/ConsentModal.js';
+import { initPostHog, capture, groupBySession } from './observability/posthog.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
 
@@ -207,6 +209,28 @@ export function App(): ReactElement {
    *  it to enforce the transfer-probe hidden-rep refusal). */
   const phaseRef = useRef<string>('introducing');
 
+  /** Analytics consent gate (AC#2/#7). `null` = undecided (the modal is showing);
+   *  `true`/`false` = the learner's explicit choice. PostHog stays uninitialized — a
+   *  complete no-op — until this is `true` AND the build carries both PostHog env vars,
+   *  so analytics + session replay are OFF by default and ON only for an opted-in
+   *  subject. */
+  const [analyticsConsent, setAnalyticsConsent] = useState<boolean | null>(null);
+
+  const onAcceptAnalytics = useCallback((): void => {
+    setAnalyticsConsent(true);
+    // Init is fail-closed: a partial/absent VITE_POSTHOG_* config makes this a no-op
+    // even with consent (no key/host inlined into the bundle → analytics simply off).
+    void initPostHog({
+      key: import.meta.env.VITE_POSTHOG_KEY ?? '',
+      host: import.meta.env.VITE_POSTHOG_HOST ?? '',
+      consent: true,
+    });
+  }, []);
+
+  const onDeclineAnalytics = useCallback((): void => {
+    setAnalyticsConsent(false); // PostHog never initialized — stays a no-op for the session
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     // F-13 AC#8: forward `?lesson=2` on the WS upgrade so the server's dev seam can
@@ -299,6 +323,50 @@ export function App(): ReactElement {
     itemMountedAt.current = Date.now();
   }, [mounted]);
 
+  // Associate analytics events with the session group (ADR-006: group key = sessionId)
+  // once both are known. A no-op when PostHog is inactive (declined/unconfigured).
+  useEffect(() => {
+    if (analyticsConsent === true && sessionId) groupBySession(sessionId);
+  }, [analyticsConsent, sessionId]);
+
+  // UI-MOUNT TELEMETRY (AC#3, AC#6). Fire once per mounted workspace component:
+  //  - the `ui_mount` WS beacon (the AGENT-SIDE churn source the observability endpoint
+  //    folds — works with ZERO external keys, the headline counter-metric), and
+  //  - the PostHog `mount` event (the redundant product-analytics view; a clean no-op
+  //    when analytics are off).
+  // Keyed on the stable `mountKey` so it fires on a genuinely new item, not a re-render.
+  // Side slots (hint/recall/answer) have their own events; this tracks the workspace.
+  const lastBeaconedMount = useRef<string>('');
+  useEffect(() => {
+    if (!sessionId) return;
+    const key = mountKey(mounted);
+    if (key === lastBeaconedMount.current) return;
+    lastBeaconedMount.current = key;
+    socketRef.current?.send({
+      kind: 'ui_mount',
+      sessionId,
+      componentKind: mounted.kind,
+      phase: phaseRef.current,
+    });
+    capture('mount', { componentKind: mounted.kind, phase: phaseRef.current });
+    // The mastery celebration is the `mastery_declared` analytics signal (AC: mastery
+    // transition). It mounts as the workspace component on the gate-clearing turn.
+    if (mounted.kind === 'MasteryCelebration') {
+      capture('mastery_declared', { lessonId });
+    }
+  }, [mounted, sessionId, lessonId]);
+
+  // TRANSFER-PROBE entry/exit analytics. The probe is the `transferring` phase; emit
+  // exactly on the boundary crossing (a no-op when analytics are off).
+  const prevPhase = useRef<string>('introducing');
+  useEffect(() => {
+    const was = prevPhase.current;
+    prevPhase.current = phase;
+    if (was === phase) return;
+    if (phase === 'transferring') capture('transfer_probe_entered', {});
+    else if (was === 'transferring') capture('transfer_probe_exited', {});
+  }, [phase]);
+
   const onSubmit = useCallback(
     (payload: RepSubmitPayload): void => {
       if (!sessionId) return;
@@ -368,6 +436,7 @@ export function App(): ReactElement {
       sessionId,
       itemId: currentItemId.current,
     });
+    capture('hint_request', { itemId: currentItemId.current }); // no-op when analytics off
   }, [sessionId]);
 
   // F-11: when the explain-back window closes, dispatch the completion signal to
@@ -415,6 +484,7 @@ export function App(): ReactElement {
     (nextLessonId: number): void => {
       if (!sessionId) return;
       socketRef.current?.send({ kind: 'advance_lesson', sessionId, toLessonId: nextLessonId });
+      capture('lesson_transition', { toLessonId: nextLessonId }); // no-op when analytics off
       // Reset the mounted workspace + side slots to a clean intro for the new lesson
       // (the server's L2 first-item mount lands next), then re-instantiate the spine.
       setMounted(LESSON_2_INTRO);
@@ -456,6 +526,13 @@ export function App(): ReactElement {
 
   return (
     <main>
+      {/* Analytics opt-in (AC#2/#7): shown once at session start while consent is
+          undecided. PostHog is never initialized until the learner clicks Accept, so
+          analytics + session replay are OFF by default; declining leaves them off for
+          the session. The modal blocks nothing else — the lesson renders behind it. */}
+      {analyticsConsent === null && (
+        <ConsentModal onAccept={onAcceptAnalytics} onDecline={onDeclineAnalytics} />
+      )}
       {/* Key the lesson session by the current `lessonId` so an L1→L2 advance
           unmounts the L1 spine (a `final`/dead-end state) and re-mounts a FRESH spine
           for L2 in `introducing` — the macro transition (AC#2). The session owns the
