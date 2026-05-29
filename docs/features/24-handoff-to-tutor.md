@@ -1,6 +1,6 @@
 # Feature: Handoff-to-human-tutor artifact
 
-**ID:** F-24 · **Iteration:** I6 — Stretch · **Status:** Not started
+**ID:** F-24 · **Iteration:** I6 — Stretch · **Status:** Built (one deferred post-F-18-merge reconciliation; see build sequence)
 
 ## What this delivers (before → after)
 
@@ -69,7 +69,27 @@ I6, **third stretch priority** per [ADR-012](../adrs/ADR-012-stretch-features-fo
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+**DAG note — F-18 not present in `build/i6-stretch`.** As planned, the summary
+pipeline (`packages/graph/src/summary/`, `SessionSummarySchema`, `getSessionSummary`,
+`apps/web/src/views/`) is not on this branch. The frozen `HandoffArtifactSchema.summary`
+field is a `z.unknown()` placeholder for exactly this reason. F-24 was built against
+that placeholder: `buildHandoffArtifact` derives `masteredKcs`/`stuckKcs` directly from
+the `learner_state` table (the same per-(session,kc) BKT source the summary pipeline
+reads) and emits a forward-compatible `summary` object carrying `{ kcsMastered, kcsStuck,
+masteryStatus }`. **When F-18 merges**, swap the `summary` placeholder in
+`packages/contract/src/handoff.ts` for `import { SessionSummarySchema } from
+'./sessionSummary.js'` (import, never redefine) and replace `buildHandoffArtifact`'s
+inline summary projection with a `getSessionSummary` call — both are confined to the one
+adapter file, as the plan requires.
+
+**Questions node (`packages/graph/src/handoff/questions.ts`).** Takes a minimal
+`{ stuckKcs, masteredKcs }` input rather than the unbuilt `SessionSummary` (decouples it
+from the DAG-blocked schema; the caller projects the two lists). Deterministic templates
+are always-on (the shipped product; the offline MR pipeline tests them fully); an LLM
+rephrase is a key-gated, fail-soft DI seam (mirrors `explainback/judge.ts`). The node
+NEVER throws and ALWAYS returns a contract-valid 3–5 set: a rephrase that fails to
+validate (wrong count / blank) is discarded and the templates stand. A fully-mastered
+session gets warm enrichment questions, never "I failed" (AC#5).
 
 ---
 
@@ -101,18 +121,18 @@ A learner-facing, shareable tutor-handoff artifact: a new `packages/graph/src/ha
 - `apps/web/src/App.tsx` — mount `<HandoffButton sessionId={…}/>` in the persistent chrome.
 
 ### Build sequence (test-first)
-- [ ] **Reconcile against merged F-18** (blocking gate): re-read F-18's `SessionSummarySchema` + summary builder; adjust `buildArtifact.ts` + `HandoffArtifactSchema.summary` if shape differs. **Do not start until F-18 is merged.**
-- [ ] Add `packages/contract/src/handoff.ts` + re-export; `pnpm --filter @polymath/contract test`.
-- [ ] `questions.test.ts` first (N stuck KCs → 3–5 questions deterministic offline; empty stuck → 3–5 enrichment questions, never "I failed"; LLM error → template fallback, never throws), then `questions.ts`.
-- [ ] `buildArtifact.test.ts` (mocked summary+questions: field order intro→mastered→stuck→questions→footer; warm framing present; `null` on empty), then `buildArtifact.ts`.
-- [ ] `share_token` column + `drizzle-kit generate`; `shareToken.ts` + mint→validate round-trip test.
-- [ ] `route.integration.test.ts` (finished session → bare path returns artifact + mints share URL; tokened path valid→200, wrong token→403, unknown→404, `app='baseline'` scoped out), then `route.ts` + wire into `server.ts`.
-- [ ] `TutorHandoff.test.tsx` (loading/loaded/error; AC#2 order; AC#5 warm copy literal; "Download PDF"→`window.print()`), then `TutorHandoff.tsx` + `tutorHandoff.css` `@media print`.
-- [ ] Add the two routes to `main.tsx`.
-- [ ] `HandoffButton.test.tsx` (visible across phases, click→`/handoff/:sessionId`, no wire event), then `HandoffButton.tsx`, mount in `App.tsx`.
-- [ ] Manual smoke: session → handoff → render → print-to-PDF → tokened share URL in a fresh browser context.
-- [ ] Demo-script final-beat update.
-- [ ] `pnpm typecheck && pnpm test`. (No `docker build` needed for the print path — no Chromium, no new package; `packages/graph` already COPYed.)
+- [ ] **Reconcile against merged F-18** (blocking gate): re-read F-18's `SessionSummarySchema` + summary builder; adjust `buildArtifact.ts` + `HandoffArtifactSchema.summary` if shape differs. **Do not start until F-18 is merged.** — **DEFERRED (F-18 not on `build/i6-stretch`).** Built against the frozen `z.unknown()` placeholder; the single reconciliation point is `buildArtifact.ts` (see Implementation notes). Left unticked deliberately — it is a post-F-18-merge action, not skippable silently.
+- [x] Add `packages/contract/src/handoff.ts` + re-export; `pnpm --filter @polymath/contract test`. (Frozen + committed on the base contract `73e655c`; consumed unchanged.)
+- [x] `questions.test.ts` first (N stuck KCs → 3–5 questions deterministic offline; empty stuck → 3–5 enrichment questions, never "I failed"; LLM error → template fallback, never throws), then `questions.ts`.
+- [x] `buildArtifact.test.ts` (mocked summary+questions: field order intro→mastered→stuck→questions→footer; warm framing present; `null` on empty), then `buildArtifact.ts`.
+- [x] `share_token` column + `drizzle-kit generate`; `shareToken.ts` + mint→validate round-trip test. (Column + migration `0004_glorious_bloodstorm.sql` are frozen on the base contract; only `shareToken.ts` was built here.)
+- [x] `route.integration.test.ts` (finished session → bare path returns artifact + mints share URL; tokened path valid→200, wrong token→403, unknown→404, `app='baseline'` scoped out), then `route.ts` + wire into `server.ts`. (9 cases green vs real Postgres + real HTTP server. Also: never-shared session's tokened path → 403; non-UUID → 400; empty session → 404; lazy mint is stable across calls.)
+- [x] `TutorHandoff.test.tsx` (loading/loaded/error; AC#2 order; AC#5 warm copy literal; "Download PDF"→`window.print()`), then `TutorHandoff.tsx` + `tutorHandoff.css` `@media print`.
+- [x] Add the two routes to `main.tsx`.
+- [x] `HandoffButton.test.tsx` (visible across phases, click→`/handoff/:sessionId`, no wire event), then `HandoffButton.tsx`, mount in `App.tsx`.
+- [x] Manual smoke: session → handoff → render → print-to-PDF → tokened share URL in a fresh browser context. (Drove the REAL agent on :8099 + Vite on :5199: bare path 200 + minted shareUrl, valid token 200, wrong token 403, unknown 404, non-UUID 400, baseline-arm 404; the view rendered in a real browser at both the bare and tokened URLs in AC#2 order.)
+- [x] Demo-script final-beat update. (No demo doc existed; created `docs/DEMO-SCRIPT.md` with the handoff as the final beat — AC#6.)
+- [x] `pnpm typecheck && pnpm test`. (No `docker build` needed for the print path — no Chromium, no new package; `packages/graph` already COPYed.)
 
 ### Contracts touched
 - **ADDITIVE only — no reshaping, no `ComponentSpec`/`ClientEvent`/`ServerMessage`/`Action` kind.** New `packages/contract/src/handoff.ts`: `TutorQuestionSchema = z.object({ kc, question })`; `HandoffArtifactSchema = z.object({ sessionId, generatedAt, warmIntro, summary: SessionSummarySchema, masteredKcs, stuckKcs, tutorQuestions: z.array(TutorQuestionSchema).min(3).max(5), nerdyFooter })`.
