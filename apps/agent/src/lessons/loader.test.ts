@@ -63,6 +63,48 @@ describe('loadLesson', () => {
     expect(lesson.kcVocabulary).toContain('exclusive or');
   });
 
+  // Lesson 3 (NAND universality). Validator-passing content + config + KC vocab.
+  it('loads and validates lesson 3 against the contract + the validator', () => {
+    // loadLesson cross-checks every item's hand-authored truthTable against
+    // @polymath/booleans (including the NAND grammar) and throws on any mismatch —
+    // reaching the assertions proves all L3 items agree with the validator.
+    expect(() => loadLesson(3)).not.toThrow();
+    const lesson = loadLesson(3);
+    expect(lesson.content.lessonId).toBe(3);
+    expect(lesson.content.title).toMatch(/NAND/i);
+    // 12 practice items across the difficulty tiers (the NAND-universality gym).
+    expect(lesson.content.items.length).toBeGreaterThanOrEqual(12);
+    // Tiers 1–4 are all represented.
+    expect(new Set(lesson.content.items.map((i) => i.difficultyTier))).toEqual(
+      new Set([1, 2, 3, 4]),
+    );
+    // Every item's KC is one of the lesson's declared knowledge components.
+    for (const i of lesson.content.items) {
+      expect(lesson.content.knowledgeComponents).toContain(i.kc);
+    }
+    // At least one item carries the canonical XOR table [0,1,1,0] (the aha target).
+    expect(
+      lesson.content.items.some(
+        (i) => JSON.stringify(i.truthTable) === JSON.stringify([0, 1, 1, 0]),
+      ),
+    ).toBe(true);
+    expect(lesson.masteryConfig.bktMasteryThreshold).toBe(0.95);
+  });
+
+  it('L3 uses the same 4-condition mastery gate as L2 (copied verbatim)', () => {
+    const l2 = loadLesson(2);
+    const l3 = loadLesson(3);
+    expect(l3.masteryConfig).toEqual(l2.masteryConfig);
+  });
+
+  it('reads the L3 KC vocabulary list including the NAND-universality terms', () => {
+    const lesson = loadLesson(3);
+    expect(Array.isArray(lesson.kcVocabulary)).toBe(true);
+    expect(lesson.kcVocabulary).toContain('nand');
+    expect(lesson.kcVocabulary).toContain('universal gate');
+    expect(lesson.kcVocabulary).toContain('functional completeness');
+  });
+
   it('reads the L1 KC vocabulary list (the explain-back precondition #4 source)', () => {
     const lesson = loadLesson(1);
     expect(Array.isArray(lesson.kcVocabulary)).toBe(true);

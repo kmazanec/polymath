@@ -1,0 +1,104 @@
+{
+  "lessonId": 3,
+  "title": "Lesson 3 — NAND universality",
+  "_authoring": "PLACEHOLDER content. Pedagogically coherent with the L3 transfer bank (seed_data/transfer_items.json, lessonId 3 — all NAND constructions) and the L3 KCs (nand-construction / nand-universality), with every truthTable computed via @polymath/booleans so loadLesson(3) cannot throw. The targetExpression names the function to BUILD; the learner constructs it with NAND-only circuits (the agent stub mounts circuit items with allowedGates:['NAND']). Tier 1 is the universality worked-example set (NOT/AND/OR from NAND); tiers 2–4 escalate to NAND-built XOR/XNOR, majority, and a 3-input mux. The criterion is equivalent() on the truth table — the learner's NAND realisation need not match the targetExpression syntactically. Final wording/sequencing across the four tiers is Keith's pedagogical authoring (~1 day, see the spec's Manual setup).",
+  "knowledgeComponents": ["nand-construction", "nand-universality"],
+  "items": [
+    {
+      "itemId": "l3-not-from-nand",
+      "kc": "nand-construction",
+      "difficultyTier": 1,
+      "targetExpression": "NOT A",
+      "variables": ["A"],
+      "truthTable": [1, 0]
+    },
+    {
+      "itemId": "l3-and-from-nand",
+      "kc": "nand-construction",
+      "difficultyTier": 1,
+      "targetExpression": "A AND B",
+      "variables": ["A", "B"],
+      "truthTable": [0, 0, 0, 1]
+    },
+    {
+      "itemId": "l3-or-from-nand",
+      "kc": "nand-construction",
+      "difficultyTier": 1,
+      "targetExpression": "A OR B",
+      "variables": ["A", "B"],
+      "truthTable": [0, 1, 1, 1]
+    },
+    {
+      "itemId": "l3-nand-basic",
+      "kc": "nand-universality",
+      "difficultyTier": 2,
+      "targetExpression": "A NAND B",
+      "variables": ["A", "B"],
+      "truthTable": [1, 1, 1, 0]
+    },
+    {
+      "itemId": "l3-not-and",
+      "kc": "nand-universality",
+      "difficultyTier": 2,
+      "targetExpression": "NOT (A AND B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 1, 1, 0]
+    },
+    {
+      "itemId": "l3-and-or",
+      "kc": "nand-construction",
+      "difficultyTier": 2,
+      "targetExpression": "(A AND B) OR C",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 1, 0, 1, 0, 1, 1, 1]
+    },
+    {
+      "itemId": "l3-xor",
+      "kc": "nand-universality",
+      "difficultyTier": 3,
+      "targetExpression": "(A AND NOT B) OR (NOT A AND B)",
+      "variables": ["A", "B"],
+      "truthTable": [0, 1, 1, 0]
+    },
+    {
+      "itemId": "l3-xnor",
+      "kc": "nand-universality",
+      "difficultyTier": 3,
+      "targetExpression": "(A AND B) OR (NOT A AND NOT B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 1]
+    },
+    {
+      "itemId": "l3-imply",
+      "kc": "nand-construction",
+      "difficultyTier": 3,
+      "targetExpression": "NOT A OR B",
+      "variables": ["A", "B"],
+      "truthTable": [1, 1, 0, 1]
+    },
+    {
+      "itemId": "l3-majority",
+      "kc": "nand-universality",
+      "difficultyTier": 4,
+      "targetExpression": "(A AND B) OR (B AND C) OR (A AND C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 0, 1, 0, 1, 1, 1]
+    },
+    {
+      "itemId": "l3-and3",
+      "kc": "nand-construction",
+      "difficultyTier": 4,
+      "targetExpression": "A AND B AND C",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 0, 0, 0, 0, 0, 1]
+    },
+    {
+      "itemId": "l3-mux",
+      "kc": "nand-universality",
+      "difficultyTier": 4,
+      "targetExpression": "(A AND C) OR (B AND NOT C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [0, 0, 1, 0, 0, 1, 1, 1]
+    }
+  ]
+}
