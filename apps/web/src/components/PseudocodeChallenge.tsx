@@ -171,17 +171,17 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
 
       {/* Parse error / verdict feedback */}
       {parseError !== null && (
-        <p role="alert" style={{ color: '#dc2626', margin: 0 }}>
+        <p role="alert" className="status-fail" style={{ margin: 0 }}>
           {parseError}
         </p>
       )}
       {verdict === 'correct' && (
-        <p role="status" style={{ color: '#16a34a', margin: 0 }}>
+        <p role="status" className="status-pass" style={{ margin: 0 }}>
           Correct! Your expression is equivalent to {spec.targetExpression}.
         </p>
       )}
       {verdict === 'incorrect' && (
-        <p role="status" style={{ color: '#b45309', margin: 0 }}>
+        <p role="status" className="status-fail" style={{ margin: 0 }}>
           Incorrect — expression is not equivalent to the target.
         </p>
       )}

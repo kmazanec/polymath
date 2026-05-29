@@ -9,6 +9,7 @@ import { renderComponent, type RepSubmitPayload } from './components/registry.js
 import { transferRepRefusal } from './copy/refusals.js';
 import { introForLesson, LESSON_2_INTRO } from './lessonIntroContent.js';
 import { AskTutorButton } from './voice/AskTutorButton.js';
+import { AboutSessionData } from './components/AboutSessionData.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
 
@@ -516,6 +517,13 @@ export function App(): ReactElement {
       <p aria-live="polite" data-conn={conn} data-phase={phase}>
         Agent: {conn}
       </p>
+
+      {/* The route-independent privacy/accessibility affordance (ADR-012). Mounted
+          in App's <main> so it survives every route + the L1->L2 re-instantiation;
+          lift to a shared layout when the routes converge. */}
+      <footer className="app-footer">
+        <AboutSessionData />
+      </footer>
     </main>
   );
 }
