@@ -78,6 +78,33 @@ I3, **on the critical path**. Concurrent with F-14 (cross-lesson recall). Merge 
 
 ⚠ **F-13 is concurrent with the entire I4 iteration** (chat-baseline app). Confirm zero file overlap — verified: I4 touches `apps/baseline/`, F-13 touches `lessons/2/` + statechart. Clean.
 
+## Build plan (approved)
+
+> Planned by kmaz-plan-iteration (architect + researcher + contrarian, reconciled). Iteration
+> slug **`i3i4-lessons2-baseline`**. **Model tier: Opus** — F-13 is not the "content drop-in" the
+> spec implies; it must touch the shared `server.ts` lesson-binding path and refactor the locked
+> statechart. **Build order: FIRST in I3** (F-13 → F-14 → F-15), after the shared-contract barrier.
+
+**Spec corrections the build inherits (verified against code):**
+
+- **AC#4 reworded.** `@polymath/booleans` does NOT parse `XOR` (KEYWORDS = NOT/AND/OR only; `parse("A XOR B")` throws). XOR is the *pedagogical label*, never a `targetExpression`. The real criterion: a learner submitting `(A AND NOT B) OR (NOT A AND B)` against an XOR item (truthTable `[0,1,1,0]`) is marked correct via `equivalent()`. **Never write `"A XOR B"` anywhere a parser touches it.** (The 8 L2 transfer items in `seed_data/transfer_items.json` are already authored as pure AND/OR/NOT — coherent.)
+- **T-13c is a no-op as written.** There is no `hint_templates.json` mechanism (L1 hints are code: `apps/agent/src/hints/templates.ts`, already generic over any expression). **Do not author `lessons/2/hint_templates.json`.**
+- **AC#3 (WorkedExample) — descoped at the renderer.** `registry.tsx` renders `WorkedExample` as a `<Tbd>` stub. F-13 satisfies AC#3 at the *agent layer* (the `worked_example` move ships a valid `WorkedExample` spec, asserted in an agent test). Building the real web renderer is OUT of F-13 scope (it would edit the shared `registry.tsx` and break the clean I4 web boundary). Flagged to Keith (manifest Q).
+- **THE bug F-13 must fix (load-bearing):** `apps/agent/src/server.ts:161-163` `lessonIdForEvent` hardcodes `lessonId=1` for every non-`session_start` event → an L2 session silently folds against L1 content/config/kc-vocab on every turn after the first. **This is shared with F-15** (which owns the durable `sessions.lessonProgress` write). See the barrier: the `currentLessonId(db,sessionId)` binding signature is frozen in the barrier; F-13 makes it *read* L2 for a `?lesson=2` session, F-15 makes it *persist* the advance.
+
+**Checklist:**
+
+- [ ] **Content scaffold (agent) + author (Keith).** Create `lessons/2/content.json` (~12 items, 4 integer difficulty tiers, KCs coherent with the L2 transfer-bank concepts), `lessons/2/mastery_config.json` (clone L1 shape; slightly higher difficulty band), `lessons/2/kc_vocabulary.json` (`{ "kcVocabulary": [...] }`, L2 terms incl. "XOR"/"exclusive or"/"composition"). **Agent scaffolds validator-passing placeholder items** (every `truthTable` computed via `@polymath/booleans` so `loadLesson(2)` cannot throw); **merge blocks on Keith's pedagogical authoring** (~1.5 days — see Manual setup).
+- [ ] **`loadLesson(2)` passes.** Extend `apps/agent/src/lessons/loader.test.ts` with `expect(() => loadLesson(2)).not.toThrow()` + content assertions (lessonId===2, KCs non-empty, kcVocabulary read).
+- [ ] **Statechart factory (Opus).** Refactor `packages/statechart/src/lesson.ts` so the machine `id` is `` `lesson_${input.lessonId}` `` (currently hardcoded `'lesson_1'`); keep the locked phase shape, the default `lessonMachine` export, and `LESSON_PHASES`/`isHiddenRepMountRefused` consumers working. Guards key on `context.lessonId` (number), never the id string. Add a `lesson.test.ts` block driving `input:{lessonId:2}` and asserting identical phase behavior.
+- [ ] **Server lesson binding (Opus, shared seam — barrier signature).** Make L2 sessions fold against L2: `lessonIdForEvent` reads the per-session lesson via the barrier's `currentLessonId(db,sessionId)` (F-13 wires the *read*; default 1). Localized to the single call site `server.ts:881`. Integration test: an L2 `submit` turn loads L2 content/config (not L1).
+- [ ] **Dev seam `?lesson=2` (AC#8).** Gate it behind `NODE_ENV!=='production' && POLYMATH_ENABLE_TEST_SEAMS==='true'` (match the existing `?testForce=mastered` gate at `server.ts:1196-1206`) — NEVER `NODE_ENV` alone. Thread `lessonId` through `App.tsx` `useMachine` input + `session_start`. Add `LESSON_2_INTRO` to `lessonIntroContent.ts`.
+- [ ] **Fallback bank.** Add `apps/agent/src/fallback_bank/lesson_2.json` (non-fatal if missing, but needed for L2 robustness; truth tables verified).
+- [ ] **Eval scenarios.** Add L2 scenarios to `apps/agent/src/agent/eval/scenarios.json` (load via `loadLesson(2)`): XOR-misconception, composition-depth hint, majority item. Heuristic-provider path must pass offline; the ≥95% live-judge gate runs only in the protected `main` job (no `OPENAI_API_KEY` on MRs).
+- [ ] **Verify:** `pnpm typecheck` · `pnpm --filter @polymath/statechart test` · `pnpm --filter @polymath/agent exec vitest run src/lessons/loader.test.ts` · `pnpm --filter @polymath/agent test` · `pnpm test` · `docker build -f apps/agent/Dockerfile -t polymath-agent:f13 .` then `docker run --rm polymath-agent:f13 ls /app/lessons` (confirm `2/` ships — `COPY lessons lessons` already covers it).
+
+**Convergence:** zero `packages/contract` change (verified — `LessonIntro.lessonId` already 1|2|3|4, `session_start.lessonId` is `z.number()`). Concurrent with F-14 except the shared `server.ts` lesson-binding seam (frozen in the barrier so F-13/F-14/F-15 don't triple-collide) and the additive `registry.tsx` case if AC#3's renderer is later in-scope (it is not here).
+
 ## Implementation notes (filled in by the building agent)
 
 > Empty.

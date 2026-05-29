@@ -67,6 +67,37 @@ None.
 
 ⚠ **Statechart shape** — F-15 finalises the lesson-1-to-lesson-2 piece of the macro statechart. F-22/F-23 will extend to lesson_2-to-3, lesson_3-to-4 by reuse of the same transition pattern.
 
+## Build plan (approved)
+
+> Planned by kmaz-plan-iteration (architect + researcher + contrarian, reconciled). Iteration slug
+> **`i3i4-lessons2-baseline`**. **Model tier: Opus** — the I3 merge sink; touches the locked
+> statechart, the server mastery + session path, and owns the lesson-binding contract. **Build
+> order: LAST in I3, strictly after F-13 and F-14** (cannot mint a working `nextLessonId` without
+> `lessons/2/`; AC#3's "L1 BKT preserved for F-14" is untestable without F-14).
+
+**Two spec claims the build RETRACTS (verified against code):**
+
+1. **"already supported via the existing `transition` variant" — FALSE.** `Action.transition.to` is a `PhaseName` (intra-lesson phase enum), not a lesson id; `PhaseName` has no `lesson_2` value (adding one needs a new ADR). The L1→L2 advance is a **new append-only `advance_lesson` ClientEvent kind**, handled as a server reflex.
+2. **"the macro statechart transitions … guard refuses transition" framed as XState enforcement — the SERVER runs no XState actor.** The machine runs only client-side (`App.tsx useMachine`); the server's guard-equivalent is `rejectUnauthorizedAction`. So AC#2/AC#4's "macro guard" is **client theater** unless F-15 adds **real server enforcement**: an L2-advance branch in `rejectUnauthorizedAction` that re-derives L1 mastery from the event log (reusing the `gateEvaluation` already computed at `server.ts:950`) and refuses otherwise.
+
+**Mechanism decision: session-level RE-INSTANTIATION, not a macro/parent XState machine.** (Architect's call, confirmed by researcher/contrarian: `mastered` is a `final` state — dead; a parent machine would force lesson-level states that break the locked `PhaseName`/`LESSON_PHASES` contract and every `snapshot.value` consumer.) The client extracts a `LessonSession` child keyed on `lessonId`; advancing re-mounts it with `input:{lessonId:2}`. The durable lesson-arc record is server-side `sessions.lessonProgress`.
+
+**The single highest-risk correctness item — SAME SESSION, ALWAYS.** The advance MUST keep the existing `sessionId` (so L1 `learner_state` rows survive for F-14's recall). **Minting a new session passes F-15's own ACs but silently zeroes F-14.** And re-sending `session_start` on a session with prior L1 activity trips the agent's `alreadyStarted` reflex (`stubClient.ts:32-35`) → `no_action` → blank L2 workspace. So F-15 must (a) NOT mint a new session, (b) mount L2's first item via a **deterministic server reflex** (not the LLM — keeps AC#2's ~500ms honest; the LLM at a phase boundary is ~5-10s), and (c) either fix/sidestep the `alreadyStarted` reflex.
+
+**Checklist:**
+
+- [ ] **Lesson-binding contract — F-15 OWNS it (barrier).** Define `currentLessonId(db, sessionId): Promise<number>` backed by `sessions.lessonProgress` (no migration — the jsonb column exists, read/written nowhere today). Rewrite `lessonIdForEvent` (`server.ts:161-163`) to this async lookup. **F-13 consumes the read; F-14 reads cross-lesson state through it; F-15 writes the advance.** Freeze this signature in the shared-contract barrier so the three features don't triple-collide on those 3 lines.
+- [ ] **Wire (barrier piece).** Add append-only `advance_lesson` ClientEvent to `packages/contract/src/wire.ts` (`{ kind, sessionId, toLessonId: z.number() }`). Co-frozen in the barrier with F-14's `CrossLessonRecall` (both touch `packages/contract` — don't race).
+- [ ] **Set `nextLessonId` (server).** In `masteryCelebrationAction` (`server.ts:509`), set `nextLessonId: lesson.content.lessonId + 1` — **guarded by a non-fatal `loadLesson(2)` existence check** (a hardcoded `2` before `lessons/2/` exists = dead button → boot/turn crash). This hard-confirms F-15 is after F-13.
+- [ ] **Server advance reflex + guard (Opus).** Handle `advance_lesson` as a dedicated early branch (model on the `explain_back_recording_ended` branch). Re-derive L1 mastery server-side (the real AC#4 guard); refuse with `no_action` if unmet. On accept: write `sessions.lessonProgress = { currentLessonId: 2 }`, **keep the same sessionId**, and **deterministically mount L2's `content.items[0]`** (server reflex — AC#2 500ms). Persist the transition event.
+- [ ] **`alreadyStarted` fix.** Make a lesson-changing start mount the new lesson's first item despite prior session activity (`stubClient.ts:32-35`) — or sidestep entirely via the server reflex above.
+- [ ] **Client wiring.** Thread `onContinue` via `RenderOptions` → `registry.tsx` → `MasteryCelebration.tsx` (button currently has no `onClick`, disabled until `nextLessonId`). Handler in `App.tsx` sends `advance_lesson`; extract `LessonSession` child keyed on `lessonId`; `socketRef` stays in `App` (stable `onMessage` routing to the active session — avoid the stale-closure bug).
+- [ ] **Data-path proof (AC#3, the F-14 enabler).** Integration test: drive L1→mastery (via `?testForce=mastered`+`?testExplainBackVerdict=pass` seams), advance, assert (i) `sessions.lessonProgress.currentLessonId===2`, (ii) L1 KC `learner_state` rows still present under the same sessionId, (iii) a subsequent L2 `submit` folds against L2.
+- [ ] **Tests.** Statechart: `lessonId:2` actor block (re-instantiation parity). Server unit: advance refused without server-derived L1 mastery; accepted with it. Integration: full L1→L2 (above). E2E: a thinner Playwright affordance check (infra is real — `apps/web/e2e/`, `playwright.config.ts` — but WS-uninterceptable + not in CI; **the integration test is the primary AC#6 evidence**, the browser E2E drives the seams against the live stack).
+- [ ] **Verify:** `pnpm typecheck` · `pnpm --filter @polymath/statechart test` · `pnpm --filter @polymath/agent exec vitest run src/server.integration.test.ts` · `pnpm --filter @polymath/web test` · `pnpm test` · `docker build -f apps/agent/Dockerfile -t polymath-agent:f15 .` · `./infra/smoke.sh`.
+
+**Convergence:** F-15 is the I3 merge sink — it absorbs F-13's lesson-binding read + F-14's reflex into the canonical `server.ts` shape. Strictly downstream; not concurrent. `sessions.lessonProgress` shape `{ currentLessonId, ... }` is read by F-18/F-20 later — define it as a typed interface.
+
 ## Implementation notes (filled in by the building agent)
 
 > Empty.

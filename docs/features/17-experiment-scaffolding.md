@@ -77,6 +77,37 @@ None expected — `experiments/` directory is isolated.
 
 ⚠ **F-21 reads the data F-17 produces.** Lock the CSV column shape and the database table shapes before F-21 starts.
 
+## Build plan (approved)
+
+> Planned by kmaz-plan-iteration (architect + researcher + contrarian, reconciled). Iteration slug
+> **`i3i4-lessons2-baseline`**. **Model tier: Opus** — adds 4 tables + a boot-path migration
+> (blast radius = whole agent) + the subject↔session linkage contract that AC#5 depends on.
+> **Build order: SECOND in I4, strictly after F-16.** Concurrent with I3 (different files).
+
+**⛔ BLOCKING PRECONDITION — the item bank is too small for the design (verified: exactly 8 L1 transfer items).**
+The protocol needs, per subject, mutually-exclusive sets: 4 pre + 4 post + 2 followup = **10 distinct L1 items minimum** (and if the two conditions each get their own 4-item post-test per ADR-011, **14**). Only **8** exist (`L1-01-and`…`L1-08-or-and`). **AC#6 ("pre-test items never offered in post-test/followup") is unsatisfiable as written** — the runner throws "insufficient unseen items" on the first real subject. Also: "different surface form" (T-17c) has **no backing field** — the only proxy is `targetRep`. **Keith must choose before F-17 builds (manifest Q):**
+- (i) **Author ≥6 more validated L1 transfer items** (clean fix; an ADR-010 5-layer content task, not free), OR
+- (ii) **Relax AC#6**: the two conditions share ONE held-out 4-item post-test (sound experimentally), and the followup reuses pre/post items in a *different `targetRep`* — gives `4 pre + 4 shared-post = 8` exactly + followup-by-rep-override. Tight, zero slack, but feasible with 8.
+The build adopts **(ii)** unless Keith picks (i). The lifecycle test must run against the *real* bank size (or assert the insufficiency), not an oversized fixture that hides the bug.
+
+**Three more decisions the build inherits (verified):**
+- **CSVs do NOT persist to disk under the deploy model.** The image is a curated COPY + release-symlink atomic swap; a write into `experiments/baseline/results/` is orphaned on next deploy, and CI must not write into the checkout. **Source of truth = Postgres tables; export = a streaming `GET …/export.csv` endpoint** (build the CSV in-memory from the tables). The `experiments/baseline/results/*.csv` path is downgraded to "where the operator saves the download." Column shape is FROZEN (AC#5, F-21 reads it): `subject_id,condition_order,pre_test_score,polymath_session_id,polymath_post_score,baseline_session_id,baseline_post_score,followup_score,qualitative_notes` (scores 0.0–1.0; missing = empty string).
+- **No subject↔session linkage exists.** `/api/session` inserts `.values({})`; `sessions` has no `subjectId`. AC#5's `polymath_session_id`/`baseline_session_id` would be hand-pasted UUIDs (fragile). **Add `subjectId` (+ reuse F-16's `app`) to `sessions`** (additive) and thread an optional `subjectId` through session creation so both apps create their session *through* the subject and the CSV joins automatically. Coordinate with F-16.
+- **`subject_id` parity for counterbalancing (T-17f).** UUIDs have no odd/even. Compute condition order from the **ordinal** (`count+1`): odd→Polymath-first, even→baseline-first; store it explicitly in `condition_order`. The **followup URL token is a SEPARATE random column**, never the subject id (a sequential id would be enumerable).
+
+**Checklist:**
+
+- [ ] **Schema + migration (Opus, boot-path blast radius).** Add tables to `apps/agent/src/db/schema.ts`: `experiment_subjects` (`condition_order`, `qualitative_notes`, `polymath_session_id`/`baseline_session_id` FK→sessions, random `followup_token` unique, `followup_expires_at`, `created_at`), `pre_test_results`, `post_test_results` (`condition`), `followup_results` (`target_rep_override`), and `subject_item_usage` with **composite PK `(subject_id, item_id)`** (the schema-level half of AC#6's exclusion — backstops the application-level filter). Generate via `drizzle-kit generate` (NEVER hand-edit `drizzle/meta/`); additive only. Migration test: fresh Postgres → `runMigrations` → all tables present.
+- [ ] **Item selection + exclusion.** `sampleUnusedItems(bank, usedSet, n)` mirroring `readTransferCandidates`'s filter shape, but `usedSet` sourced from the subject's `subject_item_usage`/result rows (across sessions), L1 only; throws `InsufficientItemsError` (which, with 8 items + design (ii), it won't). Unit-test the exclusion + the boundary.
+- [ ] **Scoring — reuse the shared var-capped equivalence module** (the same one F-16 uses), scored against `transfer_bank.targetExpression`. No parallel scoring path.
+- [ ] **REST endpoints (mirror `handleRealtimeSession` body-read/validate/respond):** `POST /api/experiment/subjects` (ordinal counterbalance + random followup token), `POST …/pretest/{start,submit}`, `POST …/posttest/{start,submit}` (set `followup_expires_at = now+48h` after the 2nd post-test), `GET|POST /api/experiment/followup/:token` (Postgres-backed token + expiry — must survive redeploys; serves 2 different-`targetRep` items), `GET /api/experiment/subjects/:id/export.csv` (stream from Postgres), `POST …/subjects/:id/session` (link a session id). Register as `if (method && pathname)` blocks before the 404; validate UUIDs with the existing `UUID_RE`.
+- [ ] **Subject↔session linkage.** Add `subjectId` to `sessions` (additive); accept optional `subjectId` at session creation; both apps create through the subject.
+- [ ] **Operator artifacts (`experiments/baseline/`).** `protocol-checklist.md` (agent-authored, full runbook), `consent-form.md` (**agent scaffolds structure; Keith writes/reviews legal content — ~½ day, manifest Q**), a self-contained `operator-runner.html` (vanilla JS, fetches `/api/experiment/*`), `results/.gitkeep`. Add `experiments/baseline/results/*.csv` to `.gitignore` (research data, privacy).
+- [ ] **Tests (OFFLINE, rides `agent_test`).** Full lifecycle integration (create→pretest→[inject session ids as fixtures, NO LLM session leg]→posttest→followup→CSV column shape); item-exclusion (a pre-test item never appears in post-test; DB-constraint backstop); followup expiry (backdate `followup_expires_at` → 410). Must not need `OPENAI_API_KEY`.
+- [ ] **Verify:** `pnpm typecheck` · migration test · `pnpm --filter @polymath/agent exec vitest run` (experiment suite) · `pnpm --filter @polymath/agent test` · `pnpm test` · `docker build -f apps/agent/Dockerfile -t polymath-agent:f17 .` then boot against a fresh Postgres (catches a journal/migration mismatch — the boot-crash blast radius).
+
+**Convergence:** isolated to `apps/agent/src/experiment/` + additive `schema.ts`/`server.ts` route blocks + `experiments/` docs — no I3 file overlap. Depends on F-16 (the `app` discriminator + per-session log shape + the `subjectId` linkage). **Frozen before F-21:** the 4 table shapes + the 9-column CSV.
+
 ## Implementation notes (filled in by the building agent)
 
 > Empty.

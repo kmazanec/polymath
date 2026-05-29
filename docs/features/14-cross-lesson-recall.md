@@ -73,6 +73,34 @@ None.
 
 ⚠ **F-14 concurrent with F-13**: zero file overlap (F-14 touches schema + regression detector + new component; F-13 touches lessons/2/ + statechart). Clean.
 
+## Build plan (approved)
+
+> Planned by kmaz-plan-iteration (architect + researcher + contrarian, reconciled). Iteration slug
+> **`i3i4-lessons2-baseline`**. **Model tier: Opus** (touches `packages/contract` — the most
+> load-bearing package — plus the server reflex path). **Build order: SECOND in I3** (after F-13,
+> after the barrier; concurrent with F-13 except the shared `server.ts` seam). **Cuttable** — if I3
+> capacity shrinks, drop F-14 and F-15 still merges.
+
+**Architecture decision the build inherits (both researcher + contrarian converged here):**
+
+- **Recall is a deterministic SERVER REFLEX, not an LLM-emitted menu move.** Model it on the existing transfer-pass→explain-back reflex (`server.ts` ~992-1017): the server reads L1 KC BKT, checks `< 0.85`, checks the throttle + phase, and mounts `CrossLessonRecall` directly — bypassing the LLM. **Do NOT add `recall_lesson1_kc` to `F06_MENU`/`TacticalMove`/the OpenAI `MoveSchema`** (avoids the two-place menu lockstep cost and keeps the trigger off the forgeable LLM path). The spec's "recall_lesson1_kc Action" / "agent menu extension" framing is superseded.
+- **No new wire `Action` variant.** Recall is a `{ type:'mount', component:{ kind:'CrossLessonRecall', ... } }` over the existing `mount`. The ONLY contract change is the new `ComponentSpec` kind.
+- **`CrossLessonRecall` is text-only** (KC name + prose reminder + dismiss button) — NO rep rendering, NO `visibleReps` field. This eliminates the probe-integrity leak (a recall card can't expose a held-out rep). Additionally **suppress the reflex during the `transferring` phase** (`inTransferProbe` is already computed server-side).
+
+**Data-availability reality the build inherits (contrarian, verified):** `learner_state` is keyed `(sessionId, kc)`. L1 KC BKT only exists in an L2 session if the SAME session ran L1 — i.e. **after F-15's in-session L1→L2 transition**. So F-14's real trigger is enabled by F-15, not before. For standalone build/eval, the L1 BKT comes from a **`POLYMATH_ENABLE_TEST_SEAMS`-gated injection seam** (synthetic L1 BKT). The plan states plainly: there is **no production recall trigger until F-15 lands**; F-14 standalone is demo/eval-only against the seam. (This inverts the spec's stated DAG — F-14 effectively depends on F-15's session-continuity — handled by building F-14 before F-15 but accepting it only *fires* once F-15 preserves L1 state in-session.)
+
+**Checklist:**
+
+- [ ] **Contract (barrier piece, Opus).** Add the `CrossLessonRecall` variant to `packages/contract/src/component.ts` (frozen shape: `kind` literal, `kc: string`, `currentItemId: string`, `priorBktAtRegression: number`, `reminderBody: string` — text-only, no `visibleReps`), append to `COMPONENT_KINDS`, add a sample to the `componentSamples` record in `index.test.ts` (the set-equality test enforces this). **Lands in the shared-contract barrier** (co-frozen with F-15's `advance_lesson` event so F-14/F-15 don't race on `packages/contract`).
+- [ ] **Web renderer.** New `apps/web/src/components/CrossLessonRecall.tsx` (model on `HintCard.tsx`: `role="note"`, `data-kc`, "got it, continue" button). Add the `case 'CrossLessonRecall':` to the exhaustive switch in `registry.tsx` (the `never` default forces it). Add `onDismiss` to `RenderOptions` if a dismiss event is wired.
+- [ ] **Regression detector (Sonnet, pure module).** New `apps/agent/src/agent/regression.ts`: `detectRegression({ l1BktByKc, sessionId, currentItemId })` returning the first L1 KC `< 0.85` not yet recalled; pure + unit-tested (threshold boundary: 0.85 does NOT trigger, 0.849 does; empty `l1BktByKc` → null).
+- [ ] **Server reflex + L1-BKT read (Opus, shared `server.ts`).** Wire the reflex before the agent turn (alongside the explain-back reflex). Read L1 KC BKT via `learner_state WHERE sessionId=? AND kc IN (L1 KCs)`. Suppress during `transferring`. Construct + mount `CrossLessonRecall` server-side (it bypasses the earned-it gate because the server is the truth-maker — the BKT check IS the earned-it check). Add the `POLYMATH_ENABLE_TEST_SEAMS`-gated synthetic-L1-BKT injection seam for standalone eval.
+- [ ] **Throttle = UNCAPPED event-log query (CLAUDE.md monotonic rule).** "≤1 recall per session per KC" derived from a separate uncapped `count(*)` over `events` where `payload->'action'->'component'->>'kind'='CrossLessonRecall'` and `...->>'kc'=$kc` (model on `countOffTopicAnswers`, `server.ts:136-146`) — NOT the bounded `MAX_SESSION_EVENTS` fold, NOT in-memory (would die on reconnect / drift on cap).
+- [ ] **Tests.** Component test (`CrossLessonRecall.test.tsx`); `regression.test.ts` unit; integration test (seed `learner_state` for L1 KC at BKT 0.72 under a session → L2 `submit` → recall fires once → second submit suppressed; second KC at 0.70 → fires for it). LangSmith/heuristic eval ≥90% against the synthetic seam (offline).
+- [ ] **Verify:** `pnpm typecheck` · `pnpm --filter @polymath/contract test` · `pnpm --filter @polymath/web exec tsc --noEmit` (exhaustive switch) · `pnpm --filter @polymath/agent exec vitest run src/agent/regression.test.ts` · `pnpm --filter @polymath/agent test` · `pnpm test` · `docker build -f apps/agent/Dockerfile -t polymath-agent:f14 .`.
+
+**Convergence:** the contract edit is the only `packages/contract` touch in I3 and is co-frozen in the barrier with F-15's `advance_lesson`. Shared with F-13/F-15 on the `server.ts` reflex/lesson-binding region — sequence F-13 → F-14 → F-15; expect a small `server.ts` reconcile at the F-15 merge sink.
+
 ## Implementation notes (filled in by the building agent)
 
 > Empty.
