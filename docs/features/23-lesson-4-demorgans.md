@@ -65,7 +65,62 @@ I6, **second stretch priority** per [ADR-012](../adrs/ADR-012-stretch-features-f
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+Built on `build/i6-stretch` @ 73e655c (the frozen I6 contracts). The contract barrier
+had **already landed** the NOR grammar (`packages/booleans/src/index.ts`), the
+misconception validator+loader scaffold (`apps/agent/src/hints/misconceptions.ts`,
+with the **frozen signature** `detectHalfwayMisconception(bank, itemId, learnerOutput:(0|1)[])`
+/ `halfwayHintFor(...)`), an empty `lessons/4/misconceptions.json`, the parameterised
+`createLessonMachine({lessonId})` factory, and the L4 transfer-bank rows (incl. the
+halfway item `L4-07-halfway`). So this build is the **feature behavior on top of** that
+scaffold, consuming those signatures unchanged — no contract drift.
+
+- **NOR + De Morgan (booleans).** Added the unit coverage the build plan asked for
+  (`index.test.ts`): parse → `nor` node, `evaluate !(l||r)`, MSB-first `truthTable`,
+  `astToExpression` round-trip, BOTH De Morgan forms, NOR=¬(A∨B)=NAND-dual, and the
+  halfway-error-vs-correct-dual distinction. Plus a `scoreEquivalence` NOR test
+  (the agent's var-capped scorer flows NOR through).
+- **Detector signature — superseded build-plan API.** The build plan sketched an
+  *expression-based* `detectHalfwayMisconception(targetExpression, submission)` that
+  recomputes the un-dualised pushdown. The **frozen** API instead compares the
+  learner's truth-table OUTPUT column to a per-item authored `halfwayTruthTable`. I
+  consumed the frozen signature (it is the contract) and moved the "compute the
+  halfway column" work to **authoring time** (`lessons/4/misconceptions.json`),
+  verifying each authored column against `@polymath/booleans` in a scratch run and a
+  test. D23-1 (semantic, not string) is preserved — the match is on truth-table
+  columns, never regex.
+- **No var-cap DoS surface in the detector path.** Because the column is read straight
+  off the bounded `repSubmission.cells` (a 0/1 vector, contract-capped at 1024 cells),
+  the wiring never enumerates an expression — so the "distinct-variable cap" the build
+  plan flagged is satisfied by *not enumerating at all*. A non-truth-table submission
+  (circuit/pseudocode, no MSB column) simply skips to the generic rephrase.
+- **Zero false positives (load-bearing).** Authoring verified every trap item's
+  `halfwayTruthTable` differs from its correct answer key, and `detectHalfwayHint`
+  only flags a column the bank explicitly matches. Tested at three layers: the pure
+  detector (`misconceptions.test.ts`), the stubClient wiring
+  (`demorganMisconception.test.ts`: correct / wrong-but-not-halfway / non-truth-table
+  all skip the named hint), and the eval labels.
+- **Hint level = L1 (D23-4).** The named misconception rides as a normal L1
+  `propose_hint`/`HintCard` body — no new `TacticalMove`, no menu/openaiClient
+  lockstep edit (the contrarian win the plan called out).
+- **circuitModel NOR (D23-3) — skipped deliberately.** L4 content is authored on
+  truth-table targets (incl. a `A NOR B` truth-table item); no L4 item mounts a NOR
+  *circuit*, so `apps/web/src/canvas/circuitModel.ts` needs no change. (The frozen
+  contracts already widened `GateKind` to include NAND/NOR anyway.)
+- **AC#5 already satisfied by the frozen seed.** `seed_data/transfer_items.json`
+  carries `L4-07-halfway` (`NOT (A AND B OR C)`), a held-out halfway-form probe.
+- **AC#6 (LangSmith ≥90%).** Offline labels in `scenarios.json` (heuristic agrees on
+  every one) gate MRs; the live ≥90% LLM-judge half runs only on a protected/manual
+  job (MR pipelines are offline-only). New L4 labels: session-start, halfway→`propose_hint`,
+  correct→advance, wrong-not-halfway→rephrase, composite trap, on-topic question.
+- **QA (real running agent, dev seams on, lesson bound via `?lesson=4`):**
+  `POST /api/session` → `201`; `session_start` mounted `TruthTablePractice` for
+  `NOT (A AND B)` (L4 opens on De Morgan — AC#1/#2); a halfway submit (column
+  `[1,0,0,0]`) returned a `HintCard` (level 1) naming the misconception ("you flipped
+  the negation but didn't flip the operator … change the AND to OR") — AC#3; a
+  correct submit (`[1,1,1,0]`) mounted the next practice item, **no HintCard** (zero
+  false positive on the wire).
+
+(Build-sequence checkboxes ticked in the "Build sequence (test-first)" list below.)
 
 ---
 
@@ -98,19 +153,19 @@ Adds Lesson 4 (De Morgan's law) as pure data (`lessons/4/`), adds NOR as a stric
 - `packages/statechart` test — `createLessonMachine({lessonId:4})` factory test.
 
 ### Build sequence (test-first)
-- [ ] **(NOR test-first)** `equivalent("NOT (A AND B)","(NOT A) OR (NOT B)")===true`; `equivalent("A NOR B","NOT (A OR B)")===true`; `truthTable("A NOR B").out` MSB-first; `astToExpression(parse("A NOR B"))` round-trips. Run red.
-- [ ] Implement NOR in `packages/booleans/src/index.ts` (Token, KEYWORDS, Ast, parser arm at OR-precedence, evaluate, variables, astToExpression). Green. Re-run the full booleans suite (F-22 NAND + NOR together).
-- [ ] `scoreEquivalence` NOR test; fix only if needed.
-- [ ] `createLessonMachine({lessonId:4})` statechart test (phase shape reused, id `lesson_4`).
-- [ ] **(detector test-first)** `misconceptions.test.ts`: each authored halfway form → `true`; the correct De Morgan form, the original `NOT(A op B)`, and unrelated-wrong answers → `false`; over-cap input → `false` (no enumeration). Run red.
-- [ ] Implement `apps/agent/src/hints/misconceptions.ts`: compute the un-dualized pushdown of the target's outer `NOT(op)`, compare the learner's submission truth table to the halfway table via `equivalent()`/`truthTable()` **with the distinct-variable cap**; **guard: never flag an answer `equivalent()` to the target.** Green.
-- [ ] Author `lessons/4/{content,mastery_config,kc_vocabulary,misconceptions}.json`; compute all truthTables (incl. the per-item halfway tables) via scratch booleans calls.
-- [ ] `loadLesson(4)` validation test (recompute must not throw; halfway tables recomputed in the test too).
-- [ ] Add `L4_DEMORGAN_HINT` to `templates.ts`.
-- [ ] Wire `stubClient.ts` wrong-submit branch: misconception → `propose_hint` (named body) before `rephrase`. Test: a halfway submit yields a HintCard naming the misconception.
-- [ ] (If any L4 circuit item allows NOR) add NOR to `circuitModel.ts` + buildCircuit/pulse test. Else skip.
-- [ ] LangSmith eval: offline label assertion gates MRs; live ≥90% LLM-judge half protected/manual-only.
-- [ ] `pnpm typecheck && pnpm test`.
+- [x] **(NOR test-first)** `equivalent("NOT (A AND B)","(NOT A) OR (NOT B)")===true`; `equivalent("A NOR B","NOT (A OR B)")===true`; `truthTable("A NOR B").out` MSB-first; `astToExpression(parse("A NOR B"))` round-trips. Run red.
+- [x] Implement NOR in `packages/booleans/src/index.ts` (Token, KEYWORDS, Ast, parser arm at OR-precedence, evaluate, variables, astToExpression). Green. Re-run the full booleans suite (F-22 NAND + NOR together).
+- [x] `scoreEquivalence` NOR test; fix only if needed.
+- [x] `createLessonMachine({lessonId:4})` statechart test (phase shape reused, id `lesson_4`).
+- [x] **(detector test-first)** `misconceptions.test.ts`: each authored halfway form → `true`; the correct De Morgan form, the original `NOT(A op B)`, and unrelated-wrong answers → `false`; over-cap input → `false` (no enumeration). Run red.
+- [x] Implement `apps/agent/src/hints/misconceptions.ts`: compute the un-dualized pushdown of the target's outer `NOT(op)`, compare the learner's submission truth table to the halfway table via `equivalent()`/`truthTable()` **with the distinct-variable cap**; **guard: never flag an answer `equivalent()` to the target.** Green.
+- [x] Author `lessons/4/{content,mastery_config,kc_vocabulary,misconceptions}.json`; compute all truthTables (incl. the per-item halfway tables) via scratch booleans calls.
+- [x] `loadLesson(4)` validation test (recompute must not throw; halfway tables recomputed in the test too).
+- [x] Add `L4_DEMORGAN_HINT` to `templates.ts`.
+- [x] Wire `stubClient.ts` wrong-submit branch: misconception → `propose_hint` (named body) before `rephrase`. Test: a halfway submit yields a HintCard naming the misconception.
+- [x] (If any L4 circuit item allows NOR) add NOR to `circuitModel.ts` + buildCircuit/pulse test. Else skip.
+- [x] LangSmith eval: offline label assertion gates MRs; live ≥90% LLM-judge half protected/manual-only.
+- [x] `pnpm typecheck && pnpm test`.
 
 ### Contracts touched
 - **`@polymath/booleans`** — ADDITIVE: `Ast` `{kind:'nor';…}`, `Token` `{type:'nor'}`, `KEYWORDS.NOR`. Locked signatures unchanged. **Shared with F-22 (NAND) — F-23 rebases on F-22.**

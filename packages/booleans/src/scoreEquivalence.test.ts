@@ -12,6 +12,15 @@ describe('scoreEquivalence (shared var-capped equivalence scorer)', () => {
     expect(scoreEquivalence('A AND B', 'B AND A')).toBe(true);
   });
 
+  it('flows the NOR primitive + De Morgan duals through the scorer', () => {
+    // NOR is the De Morgan dual of NAND: A NOR B === NOT (A OR B) === (NOT A) AND (NOT B).
+    expect(scoreEquivalence('A NOR B', 'NOT (A OR B)')).toBe(true);
+    expect(scoreEquivalence('A NOR B', '(NOT A) AND (NOT B)')).toBe(true);
+    expect(scoreEquivalence('A NAND B', '(NOT A) OR (NOT B)')).toBe(true);
+    // The halfway misconception column does NOT score equivalent to the target.
+    expect(scoreEquivalence('NOT (A AND B)', '(NOT A) AND (NOT B)')).toBe(false);
+  });
+
   it('returns false for non-equivalent expressions', () => {
     expect(scoreEquivalence('A AND B', 'A OR B')).toBe(false);
     expect(scoreEquivalence('A', 'NOT A')).toBe(false);
