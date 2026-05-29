@@ -119,6 +119,73 @@
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
       "expectMove": "answer_question",
       "expectTopic": "on_topic"
+    },
+    {
+      "id": "l4-session-start-kicks-off-demorgan",
+      "lessonId": 4,
+      "event": { "kind": "session_start", "lessonId": 4 },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+    },
+    {
+      "id": "l4-halfway-demorgan-misconception-named-hint",
+      "lessonId": 4,
+      "event": {
+        "kind": "submit",
+        "itemId": "l4-nand2-trap",
+        "submission": "(NOT A) AND (NOT B)",
+        "correct": false,
+        "repSubmission": { "rep": "truth_table", "cells": [1, 0, 0, 0] }
+      },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "propose_hint"
+    },
+    {
+      "id": "l4-correct-demorgan-submit-advances",
+      "lessonId": 4,
+      "event": {
+        "kind": "submit",
+        "itemId": "l4-nand2-trap",
+        "submission": "(NOT A) OR (NOT B)",
+        "correct": true,
+        "repSubmission": { "rep": "truth_table", "cells": [1, 1, 1, 0] }
+      },
+      "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+    },
+    {
+      "id": "l4-wrong-not-halfway-does-not-name-misconception",
+      "lessonId": 4,
+      "event": {
+        "kind": "submit",
+        "itemId": "l4-nand2-trap",
+        "submission": "A AND B",
+        "correct": false,
+        "repSubmission": { "rep": "truth_table", "cells": [0, 1, 0, 1] }
+      },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["rephrase", "simpler_item", "worked_example"]
+    },
+    {
+      "id": "l4-composite-halfway-trap-named-hint",
+      "lessonId": 4,
+      "event": {
+        "kind": "submit",
+        "itemId": "l4-comp-and-or-trap",
+        "submission": "NOT (A AND B) OR NOT C",
+        "correct": false,
+        "repSubmission": { "rep": "truth_table", "cells": [1, 1, 1, 1, 1, 1, 1, 0] }
+      },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "propose_hint"
+    },
+    {
+      "id": "l4-demorgan-question-is-on-topic",
+      "lessonId": 4,
+      "event": { "kind": "learner_question", "question": "why does NOT flip AND to OR in De Morgan's law?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "on_topic"
     }
   ]
 }
