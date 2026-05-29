@@ -67,7 +67,53 @@ I6, **first stretch feature; highest priority** per [ADR-012](../adrs/ADR-012-st
 
 ## Implementation notes (filled in by the building agent)
 
-> Empty.
+Built on `feat/f-22` off `build/i6-stretch` @ `73e655c`. Key findings/decisions:
+
+- **The frozen I6 contracts already shipped all the additive *infrastructure*.**
+  NAND/NOR grammar in `@polymath/booleans` (Token/KEYWORDS/Ast/parser/evaluate/
+  variables/astToExpression + pseudocode), the web `GateKind`/`buildCircuit`/
+  `pulseSchedule` NAND arms, the `CircuitBuilder` palette filter, `circuitNodes`
+  two-port GateNode, and `playgroundEquivalence` were all on the base branch. So
+  F-22 reduced to the *feature behaviour*: lesson-3 data, the agent's NAND-only
+  workspace, the L3 intro + advance wiring, and the **tests** the contract code
+  shipped without.
+- **`@polymath/booleans` enforces 100% coverage** and the frozen NAND/NOR +
+  `playgroundEquivalence` code landed untested, so the package was red on the base
+  branch. Added `nandNor.test.ts` (NAND==NOT-AND, precedence/associativity, XOR-
+  from-NAND, NOT-from-NAND, NOR siblings) and `playgroundEquivalence.test.ts`
+  (cap/parse/fail-soft incl. the defensive `equivalent`-throws catch via a spy)
+  to restore 100%. These cover sibling-feature code (NOR=L4, playground=free-build)
+  by *testing* it, never *changing* it — no contract drift.
+- **D22-1 (KC names) resolved to `nand-construction` / `nand-universality`.** The
+  seeded L3 transfer rows in `seed_data/transfer_items.json` carry NO `kc` field
+  (only `targetExpression`/`truthTable`/`targetRep`/`hiddenReps`), so there was no
+  bank constraint to match; chose the two KCs the spec recommended and split the 12
+  practice items across them. Every item's `kc ⊆ knowledgeComponents` (asserted).
+- **D22-2 (first-class NAND gate node) honoured by the frozen circuitModel**: a
+  NAND node yields `{kind:'nand'}` and renders with two ports, so the pulse demo
+  *looks* like a NAND circuit. Verified the four-NAND XOR builds, evaluates to
+  `[0,1,1,0]`, and pulses gate-by-gate in the live web bundle (AC#5).
+- **Agent NAND-only workspace:** added `circuitAllowedGates(input, rep)` in
+  `stubClient.ts` — returns `['NAND']` for a circuit `ProposedItem` on `lessonId===3`,
+  `undefined` (registry default AND/OR/NOT) elsewhere. Applied at all three circuit
+  ProposedItem sites (current/simpler/next). It's circuit-rep-only, so truth-table /
+  pseudocode mounts are untouched (asserted).
+- **L3 rides the generic L1→L2 machinery** (statechart factory, loader,
+  `loadLessonIfExists`, the `masteryCelebrationAction` `nextLessonId = lessonId+1`
+  reflex). The only web gaps were: `introForLesson(3)` fell back to the L1 intro
+  (added `LESSON_3_INTRO`), and the WS-upgrade dev-seam query was hard-coded to
+  `?lesson=2` (generalised to `?lesson=${lessonId}` for lesson > 1). Without the
+  latter an L3 run silently bound to L1 — caught only by driving the running app.
+- **QA evidence (running stack, Vite :5173 → agent :8080, test seams on):** a real
+  `?lesson=3` session mounts the L3 first item "NOT A"; a real WS upgrade carrying
+  `?lesson=3` + a circuit-rep submit makes the agent mount a `CircuitBuilder` with
+  `allowedGates:["NAND"]` (crossed the server validation gate); the live
+  `CircuitBuilder` renders exactly one "Add NAND gate" palette button; the live
+  circuit-model bundle builds the four-NAND XOR → `[0,1,1,0]` and pulses
+  m→t1→t2→g→out with correct NAND values + SR labels.
+- **No new server-side `equivalent()`/`truthTable()` call site** → the distinct-
+  variable DoS cap is unchanged. No Dockerfile change (`lessons/3/` rides the
+  existing `lessons/` COPY; no new package).
 
 ---
 
@@ -96,20 +142,20 @@ L3 ships as: NAND added as a primitive infix token to `@polymath/booleans` (addi
 - `apps/agent/src/hints/templates.ts` — verify `detectGate`/`generateL1/L2` cover NAND-targeting hints; add an L3 template only if a gap shows.
 
 ### Build sequence (test-first)
-- [ ] **booleans NAND test-first:** `equivalent("A NAND B","NOT (A AND B)")===true`; `truthTable("A NAND B").out` MSB-first; `astToExpression(parse("A NAND B"))` round-trips; precedence vs AND/OR correct. Run red.
-- [ ] Implement NAND in `packages/booleans/src/index.ts` (Token, KEYWORDS, Ast, parser arm, evaluate, variables, astToExpression). Green.
-- [ ] Add a `scoreEquivalence` test with a NAND expression; fix only if it fails.
-- [ ] **circuitModel test-first:** a NAND node yields a NAND AST; a NAND-only XOR circuit (`NAND(NAND(A,NAND(A,B)), NAND(B,NAND(A,B)))`) builds and matches the XOR truth table over all 4 rows; `pulseSchedule` emits a deterministic step per gate with correct NAND values + labels.
-- [ ] Extend `GateKind`, `buildCircuit`, `pulseSchedule` (valueOf + describe). Green.
-- [ ] Widen `CircuitBuilder.tsx` palette filter to include `'NAND'`; extend `CircuitBuilder.test.tsx` (NAND palette button appears when `allowedGates:['NAND']`; placing+wiring yields a NAND node).
-- [ ] Verify `circuitNodes.tsx` GateNode renders NAND (2 ports); add minimal styling if needed.
-- [ ] Author `lessons/3/content.json` (12 items): tier-1 worked targets NOT/AND/OR-from-NAND; tiers 2–4 escalate (NAND-built XOR, majority, 3-input). Compute every truthTable via a scratch `@polymath/booleans.truthTable` call so the loader recompute cannot throw.
-- [ ] Copy `lessons/3/mastery_config.json` from L2; create `lessons/3/kc_vocabulary.json`.
-- [ ] Loader/schema test: `loadLesson(3)` succeeds, recomputed tables match, item KCs ⊆ `knowledgeComponents`.
-- [ ] Statechart/advance test: `createLessonMachine({lessonId:3})` reaches all `LESSON_PHASES`; a mastered L2 offers L3 (`loadLessonIfExists(3)`); `handleAdvanceLessonTurn(toLessonId:3)` from current 2 loads.
-- [ ] `stubClient.ts`: L3 circuit items carry `allowedGates:['NAND']`; unit-test the mounted spec.
-- [ ] Author L3 eval scenarios (offline half gates MR; live LLM half protected/manual).
-- [ ] `pnpm typecheck && pnpm test`; drive the app to confirm AC#5 (build XOR from NAND → Test it → pulse animates → truth-table row matches).
+- [x] **booleans NAND test-first:** `equivalent("A NAND B","NOT (A AND B)")===true`; `truthTable("A NAND B").out` MSB-first; `astToExpression(parse("A NAND B"))` round-trips; precedence vs AND/OR correct. Run red.
+- [x] Implement NAND in `packages/booleans/src/index.ts` (Token, KEYWORDS, Ast, parser arm, evaluate, variables, astToExpression). Green.
+- [x] Add a `scoreEquivalence` test with a NAND expression; fix only if it fails.
+- [x] **circuitModel test-first:** a NAND node yields a NAND AST; a NAND-only XOR circuit (`NAND(NAND(A,NAND(A,B)), NAND(B,NAND(A,B)))`) builds and matches the XOR truth table over all 4 rows; `pulseSchedule` emits a deterministic step per gate with correct NAND values + labels.
+- [x] Extend `GateKind`, `buildCircuit`, `pulseSchedule` (valueOf + describe). Green.
+- [x] Widen `CircuitBuilder.tsx` palette filter to include `'NAND'`; extend `CircuitBuilder.test.tsx` (NAND palette button appears when `allowedGates:['NAND']`; placing+wiring yields a NAND node).
+- [x] Verify `circuitNodes.tsx` GateNode renders NAND (2 ports); add minimal styling if needed.
+- [x] Author `lessons/3/content.json` (12 items): tier-1 worked targets NOT/AND/OR-from-NAND; tiers 2–4 escalate (NAND-built XOR, majority, 3-input). Compute every truthTable via a scratch `@polymath/booleans.truthTable` call so the loader recompute cannot throw.
+- [x] Copy `lessons/3/mastery_config.json` from L2; create `lessons/3/kc_vocabulary.json`.
+- [x] Loader/schema test: `loadLesson(3)` succeeds, recomputed tables match, item KCs ⊆ `knowledgeComponents`.
+- [x] Statechart/advance test: `createLessonMachine({lessonId:3})` reaches all `LESSON_PHASES`; a mastered L2 offers L3 (`loadLessonIfExists(3)`); `handleAdvanceLessonTurn(toLessonId:3)` from current 2 loads.
+- [x] `stubClient.ts`: L3 circuit items carry `allowedGates:['NAND']`; unit-test the mounted spec.
+- [x] Author L3 eval scenarios (offline half gates MR; live LLM half protected/manual).
+- [x] `pnpm typecheck && pnpm test`; drive the app to confirm AC#5 (build XOR from NAND → Test it → pulse animates → truth-table row matches).
 
 ### Contracts touched
 - **`@polymath/booleans`** — ADDITIVE: new `Ast` variant `{kind:'nand';…}`, `Token` `{type:'nand'}`, `KEYWORDS.NAND`. Locked `parse/evaluate/variables/truthTable/equivalent` signatures unchanged. **Shared with F-23 (NOR) — same parser regions; F-22 merges first.**

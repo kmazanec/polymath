@@ -244,7 +244,7 @@ export function App(): ReactElement {
 
   useEffect(() => {
     let cancelled = false;
-    // F-13 AC#8: forward `?lesson=N` on the WS upgrade so the server's dev seam can
+    // Dev seam: forward `?lesson=N` on the WS upgrade so the server's dev seam can
     // honor a lesson > 1 binding (it stays inert unless POLYMATH_ENABLE_TEST_SEAMS is
     // set and NODE_ENV!=='production'). Omitted for the default L1 run. L3 (NAND)
     // reuses the same seam, so the query is generalised over any lesson > 1.
