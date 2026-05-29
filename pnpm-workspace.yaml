@@ -2,6 +2,14 @@ packages:
   - 'packages/*'
   - 'apps/*'
 allowBuilds:
+  # core-js (transitive via posthog-js) only prints a postinstall funding banner; its
+  # build script is not needed for the prebuilt distribution we consume. Disallow it so
+  # installs stay deterministic + script-free.
+  core-js: false
   esbuild: true
+  # protobufjs (pulled in transitively by the OTLP trace exporter) ships prebuilt JS;
+  # its postinstall is a proto codegen step we don't need (the HTTP/JSON exporter path
+  # never touches it). Disallow the build so installs are deterministic + script-free.
+  protobufjs: false
 minimumReleaseAgeExclude:
   - livekit-server-sdk@2.15.4

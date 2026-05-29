@@ -25,6 +25,7 @@
     "codemirror": "^6.0.2",
     "livekit-client": "2.19.0",
     "motion": "^12.40.0",
+    "posthog-js": "1.205.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.1",
