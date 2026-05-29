@@ -64,6 +64,7 @@ import type { ExplainBackJudge, ProsodyFeatures } from '@polymath/graph';
 import { makeExplainBackJudge } from '@polymath/graph';
 import { ExplainBackCaptureRegistry } from './voice/explainBackRegistry.js';
 import { tryHandleBaselineRoute } from './baseline/route.js';
+import { tryHandleHandoffRoute } from './handoff/route.js';
 import type { BaselineChatProvider } from './baseline/chatProvider.js';
 import { makeOpenAiBaselineChatProvider } from './baseline/openaiChatProvider.js';
 
@@ -1954,6 +1955,26 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
         .orderBy(events.ts)
         .then((rows) => sendJson(res, 200, computeUiChurn(sessionId, rows)))
         .catch(() => sendJson(res, 500, { error: 'failed to compute ui churn' }));
+      return;
+    }
+
+    // ADR-012 stretch: the tutor-handoff routes. `/api/session/:id/handoff` (owner;
+    // builds the artifact + lazily mints a share URL) and
+    // `/api/session/:id/handoff/:token` (a shared link authenticated by the random
+    // per-session token, NOT the session UUID). NO operator auth — the per-request
+    // random token is the access control (the followup-route exemption pattern); the
+    // artifact is the learner's own, intentionally shareable. Read-only; the session
+    // read is scoped to Polymath rows (`sessions.app IS NULL`) inside the builder.
+    if (
+      req.method === 'GET' &&
+      /^\/api\/session\/[^/]+\/handoff(\/[^/]+)?$/.test(url.pathname)
+    ) {
+      tryHandleHandoffRoute({ db: deps.db }, req.method, url.pathname)
+        .then((r) => {
+          if (r === null) sendJson(res, 404, { error: 'not found' });
+          else sendJson(res, r.status, r.body);
+        })
+        .catch(() => sendJson(res, 500, { error: 'failed to build handoff' }));
       return;
     }
 
