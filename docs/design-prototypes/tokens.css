@@ -1,0 +1,110 @@
+/* Polymath design system — generic, Nerdy-native. Light/airy hero theme.
+   Pulled from production brand CSS (see docs/BRAND.md). No Nerdy/Varsity names. */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Karla:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Brand core */
+  --ink:            #202344;
+  --ink-deep:       #20205f;
+  --primary:        #4a4bb6;
+  --primary-blue:   #1756e2;
+  --primary-hover:  #4041c2;
+  --slate-indigo:   #323661;
+
+  /* Accents */
+  --cyan:   #17e2ea;
+  --pink:   #fb43da;
+  --purple: #d684ff;
+  --violet: #a110ff;
+  --yellow: #ffc32b;
+  --orange: #ff800d;
+
+  /* Soft tints */
+  --tint-blue:   #b8e6ff;
+  --tint-mint:   #d5f7e4;
+  --tint-purple: #ede9ff;
+  --tint-yellow: #ffeac0;
+  --lavender-bg: #f4f5ff;
+
+  /* Neutrals (light hero) */
+  --bg:            #f7f8fe;
+  --bg-subtle:     #f0f1fb;
+  --surface:       #ffffff;
+  --surface-muted: #f3f3f8;
+  --input-bg:      #f5f6fc;
+  --text:          #202344;
+  --text-muted:    #6b6f8a;
+  --text-faint:    #9ea2bd;
+  --border:        rgba(32, 35, 68, 0.10);
+  --border-strong: rgba(32, 35, 68, 0.16);
+  --ring:          rgba(74, 75, 182, 0.45);
+
+  /* The signal color — green = HIGH / true / correct. ONE saturated meaning-carrier. */
+  --signal:        #14c98a;   /* mint-green, slightly deepened for AA on white */
+  --signal-strong: #0a9e6c;
+  --signal-glow:   rgba(20, 201, 138, 0.35);
+  --signal-tint:   #e2faf1;
+  /* LOW / false / off — muted, never red. */
+  --low:           #c2c6d8;
+  --low-tint:      #eef0f6;
+  /* Error / not-yet-equivalent — warm orange-red, paired with glyph (never hue-only). */
+  --error:         #d4183d;
+  --error-tint:    #ffe9ee;
+  --warn:          #b3500a;
+
+  /* Signature gradient — RESERVE for mastery celebration */
+  --gradient-spectrum: linear-gradient(100deg, #ffc32b 8%, #fb43da 38%, #d684ff 62%, #17e2ea 88%);
+  --gradient-primary:  linear-gradient(135deg, #4a4bb6, #5376ff);
+
+  /* Type */
+  --font-display: 'Poppins', system-ui, sans-serif;
+  --font-body:    'Karla', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --tracking-display: -0.03em;
+
+  /* Radius */
+  --r-xs:   6px;
+  --r-sm:   10px;
+  --r-md:   14px;
+  --r-card: 20px;
+  --r-lg:   24px;
+  --r-pill: 9999px;
+
+  /* Shadow — soft, indigo-tinted, translucent. Never hard gray lines. */
+  --sh-sm:   0 2px 8px rgba(50, 54, 97, 0.06);
+  --sh-card: 0 6px 24px rgba(50, 54, 97, 0.10), 0 1px 3px rgba(50, 54, 97, 0.06);
+  --sh-lift: 0 14px 40px rgba(31, 38, 135, 0.16);
+  --sh-ring: inset 0 0 0 1px rgba(32, 35, 68, 0.06);
+
+  /* Motion */
+  --ease:        cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.16, 0.84, 0.44, 1);
+  --dur-hover:   0.18s;
+  --dur-reveal:  0.32s;
+
+  --space: 0.25rem;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--text);
+  line-height: 1.5;
+  background: var(--bg);
+  /* atmosphere: faint lavender glow top-left, cyan bottom-right — depth, not flat */
+  background-image:
+    radial-gradient(1200px 700px at -10% -15%, #ece9ff 0%, transparent 55%),
+    radial-gradient(1000px 700px at 110% 115%, #e3fbff 0%, transparent 55%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: var(--tracking-display);
+  color: var(--ink);
+  margin: 0;
+}

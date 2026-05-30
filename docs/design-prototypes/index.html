@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polymath — design prototypes</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
+  .masthead { margin-bottom: 2.5rem; }
+  .masthead .kicker {
+    font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--primary); font-weight: 600; margin-bottom: 0.6rem;
+  }
+  .masthead h1 { font-size: clamp(2rem, 5vw, 3.1rem); line-height: 1.04; }
+  .masthead p { color: var(--text-muted); max-width: 46ch; font-size: 1.05rem; margin-top: 0.75rem; }
+  .nav { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1.5rem; }
+  .nav a {
+    font-family: var(--font-mono); font-size: 0.8rem; text-decoration: none; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--border); padding: 0.45rem 0.9rem;
+    border-radius: var(--r-pill); box-shadow: var(--sh-sm); transition: var(--dur-hover) var(--ease);
+  }
+  .nav a:hover { transform: translateY(-2px); box-shadow: var(--sh-card); border-color: var(--ring); color: var(--primary); }
+
+  section.block { margin: 4.5rem 0; scroll-margin-top: 2rem; }
+  .section-head { display: flex; align-items: baseline; gap: 0.85rem; margin-bottom: 0.4rem; }
+  .section-head .num {
+    font-family: var(--font-mono); font-size: 0.85rem; color: var(--primary); font-weight: 600;
+    background: var(--tint-purple); border-radius: var(--r-pill); padding: 0.15rem 0.6rem;
+  }
+  .section-head h2 { font-size: 1.7rem; }
+  .section-sub { color: var(--text-muted); max-width: 60ch; margin: 0 0 1.75rem; }
+
+  .variants { display: grid; gap: 1.5rem; }
+  @media (min-width: 60rem) { .variants.cols-2 { grid-template-columns: 1fr 1fr; } .variants.cols-3 { grid-template-columns: repeat(3, 1fr); } }
+  .variant { position: relative; }
+  .variant > .label {
+    display: inline-flex; align-items: center; gap: 0.4rem; font-family: var(--font-mono);
+    font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 0.65rem;
+  }
+  .variant > .label b { color: var(--ink); font-weight: 600; }
+  .variant > .label .pick { color: var(--signal-strong); }
+
+  /* ---- card primitive ---- */
+  .card {
+    background: var(--surface); border-radius: var(--r-card); box-shadow: var(--sh-card), var(--sh-ring);
+    padding: 1.4rem; border: 1px solid transparent;
+  }
+
+  /* ===================== TRUTH TABLE ===================== */
+  .tt { font-family: var(--font-mono); }
+  .tt-title { font-family: var(--font-body); font-weight: 600; color: var(--ink); margin-bottom: 0.2rem; font-size: 0.98rem; }
+  .tt-expr { display:inline-block; font-family: var(--font-mono); background: var(--lavender-bg); color: var(--primary);
+    padding: 0.1rem 0.5rem; border-radius: var(--r-xs); font-weight: 600; }
+  .tt-grid { border-collapse: separate; border-spacing: 0; width: 100%; margin-top: 1rem; }
+  .tt-grid th {
+    font-family: var(--font-body); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-muted); font-weight: 600; padding: 0 0 0.6rem; text-align: center;
+  }
+  .tt-grid th.out-col { color: var(--signal-strong); }
+  .tt-grid td { text-align: center; padding: 0; }
+
+  /* input bit chip */
+  .bit {
+    display: inline-flex; align-items: center; justify-content: center; width: 2.1rem; height: 2.1rem;
+    border-radius: 50%; font-weight: 600; font-size: 0.95rem; margin: 0.18rem;
+  }
+  .bit.on  { background: var(--signal-tint); color: var(--signal-strong); box-shadow: inset 0 0 0 1.5px var(--signal); }
+  .bit.off { background: var(--low-tint); color: var(--text-faint); box-shadow: inset 0 0 0 1.5px var(--border); }
+
+  /* interactive output toggle */
+  .out-cell {
+    appearance: none; border: none; cursor: pointer; width: 2.4rem; height: 2.4rem; margin: 0.18rem;
+    border-radius: var(--r-md); font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem;
+    background: var(--surface-muted); color: var(--text-faint); box-shadow: inset 0 0 0 1.5px var(--border);
+    transition: transform var(--dur-hover) var(--ease-spring), background var(--dur-hover) var(--ease), box-shadow var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+  }
+  .out-cell:hover { transform: translateY(-1px); }
+  .out-cell.on { background: var(--signal-tint); color: var(--signal-strong); box-shadow: inset 0 0 0 2px var(--signal), 0 0 0 4px var(--signal-glow); }
+  .out-cell.correct { box-shadow: inset 0 0 0 2px var(--signal), 0 0 14px var(--signal-glow); }
+  .out-cell.correct::after { content:'✓'; font-size:0.6rem; position:absolute; }
+  .out-row.focus-row td .bit { outline: 2px solid var(--tint-blue); outline-offset: 1px; border-radius: 50%; }
+  .out-row.focus-row { background: linear-gradient(90deg, rgba(184,230,255,0.22), transparent); }
+
+  /* variant B — full-row pill style */
+  .tt-rows { display:flex; flex-direction:column; gap:0.5rem; margin-top:1rem; }
+  .tt-rowpill { display:flex; align-items:center; gap:0.4rem; padding:0.4rem 0.5rem; border-radius: var(--r-pill);
+    background: var(--bg-subtle); }
+  .tt-rowpill .inputs { display:flex; gap:0.3rem; }
+  .tt-rowpill .arrow { color: var(--text-faint); margin: 0 0.3rem; font-family: var(--font-body); }
+  .tt-rowpill .out-cell { border-radius: var(--r-pill); width:2.6rem; }
+
+  /* variant C — Karnaugh-ish heat grid (compact) */
+  .kgrid { display:inline-grid; gap: 4px; margin-top: 1rem; padding: 8px;
+    background: var(--bg-subtle); border-radius: var(--r-md); }
+  .kgrid .kcell { width:2.6rem; height:2.6rem; border-radius: var(--r-sm); display:flex; align-items:center;
+    justify-content:center; font-family: var(--font-mono); font-weight:700; cursor:pointer;
+    background: var(--low-tint); color: var(--text-faint); transition: var(--dur-hover) var(--ease-spring); }
+  .kgrid .kcell.on { background: var(--signal); color:#fff; box-shadow: 0 4px 12px var(--signal-glow); }
+  .kgrid .klabel { font-family: var(--font-mono); font-size:0.65rem; color: var(--text-muted); display:flex; align-items:center; justify-content:center; }
+
+  /* ===================== CIRCUIT / GATES ===================== */
+  .gate-row { display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-end; margin-top:0.5rem; }
+  .gate-cell { display:flex; flex-direction:column; align-items:center; gap:0.5rem; }
+  .gate-cell .gname { font-family: var(--font-mono); font-size:0.72rem; color: var(--text-muted); letter-spacing:0.08em; }
+  svg .gate-body { fill: var(--surface); stroke: var(--ink); stroke-width: 2.5; }
+  svg .gate-body.live { fill: var(--signal-tint); stroke: var(--signal-strong); }
+  svg .wire { stroke: var(--low); stroke-width: 3; fill: none; stroke-linecap: round; }
+  svg .wire.live { stroke: var(--signal); filter: drop-shadow(0 0 4px var(--signal-glow)); }
+  svg .bubble { fill: var(--surface); stroke: var(--ink); stroke-width: 2.5; }
+  svg .bubble.live { fill: var(--signal-tint); stroke: var(--signal-strong); }
+  svg .pin { fill: var(--ink); }
+  svg .pin.live { fill: var(--signal-strong); }
+
+  .canvas-mock { position: relative; border-radius: var(--r-md); overflow: hidden;
+    background:
+      radial-gradient(circle at 1px 1px, rgba(32,35,68,0.10) 1px, transparent 0) 0 0 / 22px 22px,
+      var(--bg-subtle);
+    min-height: 280px; padding: 1rem; }
+  .palette { display:flex; gap:0.5rem; flex-wrap:wrap; position:absolute; top:0.75rem; left:0.75rem; z-index:2; }
+  .palette button {
+    display:flex; align-items:center; gap:0.45rem; background: var(--surface); border:1px solid var(--border);
+    border-radius: var(--r-pill); padding:0.35rem 0.7rem 0.35rem 0.45rem; font-family: var(--font-mono);
+    font-size:0.74rem; font-weight:600; color: var(--ink); cursor:pointer; box-shadow: var(--sh-sm);
+    transition: var(--dur-hover) var(--ease-spring);
+  }
+  .palette button:hover { transform: translateY(-2px); box-shadow: var(--sh-card); border-color: var(--ring); }
+  .palette button svg { width: 26px; height: 18px; }
+
+  .circ-controls { display:flex; gap:0.6rem; margin-top:1rem; }
+  .pulse-legend { display:flex; gap:1.1rem; margin-top:0.85rem; font-family: var(--font-mono); font-size:0.72rem; color: var(--text-muted); }
+  .pulse-legend span { display:flex; align-items:center; gap:0.4rem; }
+  .pulse-legend i { width:1.5rem; height:0.45rem; border-radius:var(--r-pill); display:inline-block; }
+  .pulse-legend i.hi { background: var(--signal); box-shadow:0 0 6px var(--signal-glow); }
+  .pulse-legend i.lo { background: var(--low); }
+
+  /* ===================== PSEUDOCODE ===================== */
+  .editor { border-radius: var(--r-md); overflow: hidden; box-shadow: var(--sh-ring); border:1px solid var(--border); background: var(--surface); }
+  .editor-bar { display:flex; align-items:center; gap:0.5rem; padding:0.55rem 0.85rem; background: var(--bg-subtle); border-bottom:1px solid var(--border); }
+  .editor-bar .dot { width:0.7rem; height:0.7rem; border-radius:50%; }
+  .editor-bar .fname { font-family: var(--font-mono); font-size:0.76rem; color: var(--text-muted); margin-left:0.3rem; }
+  .editor-bar .target { margin-left:auto; font-family: var(--font-mono); font-size:0.76rem; color: var(--primary); background: var(--lavender-bg); padding:0.1rem 0.5rem; border-radius: var(--r-xs); font-weight:600; }
+  .code { font-family: var(--font-mono); font-size: 0.92rem; line-height: 1.7; padding: 0.9rem 0; margin:0; }
+  .code .ln { display:grid; grid-template-columns: 2.6rem 1fr; align-items:center; padding: 0 0.9rem; position:relative; }
+  .code .gutter { color: var(--text-faint); font-size:0.78rem; user-select:none; text-align:right; padding-right:0.9rem; }
+  .code .ln.ok { background: linear-gradient(90deg, var(--signal-tint), transparent 60%); }
+  .code .ln.ok .gutter { color: var(--signal-strong); }
+  .code .ln.ok::before { content:'✓'; position:absolute; right:0.9rem; color: var(--signal-strong); font-weight:700; }
+  .tok-kw { color: var(--violet); font-weight:600; }
+  .tok-op { color: var(--primary-blue); font-weight:600; }
+  .tok-var { color: var(--ink); }
+  .tok-com { color: var(--text-faint); font-style: italic; }
+  .tok-paren { color: var(--text-muted); }
+
+  /* ===================== BUTTONS / SHELL ===================== */
+  .btn { font-family: var(--font-display); font-weight:600; font-size:0.92rem; border:none; cursor:pointer;
+    border-radius: var(--r-pill); padding:0.62rem 1.3rem; transition: var(--dur-hover) var(--ease-spring); }
+  .btn-primary { background: var(--primary); color:#fff; box-shadow: 0 6px 18px rgba(74,75,182,0.30); }
+  .btn-primary:hover { transform: translateY(-2px); background: var(--primary-hover); box-shadow: 0 10px 26px rgba(74,75,182,0.38); }
+  .btn-ghost { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--border); }
+  .btn-ghost:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1.5px var(--ring), var(--sh-card); color: var(--primary); }
+  .btn-signal { background: var(--signal); color:#063; box-shadow: 0 6px 18px var(--signal-glow); color:#04543a; }
+  .btn-signal:hover { transform: translateY(-2px); background: var(--signal-strong); color:#fff; }
+
+  /* shell mock */
+  .shell { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--sh-card), var(--sh-ring); overflow:hidden; }
+  .shell-top { display:flex; align-items:center; gap:1rem; padding:1.1rem 1.4rem; border-bottom:1px solid var(--border);
+    background: linear-gradient(180deg, var(--lavender-bg), var(--surface)); }
+  .logo { display:flex; align-items:center; gap:0.55rem; font-family: var(--font-display); font-weight:700; color: var(--ink); }
+  .logo .mark { width:1.6rem; height:1.6rem; border-radius:8px; background: var(--gradient-primary); display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.9rem; box-shadow: var(--sh-sm); }
+  .progress { margin-left:auto; display:flex; align-items:center; gap:0.6rem; }
+  .progress .dots { display:flex; gap:0.3rem; }
+  .progress .dots i { width:0.55rem; height:0.55rem; border-radius:50%; background: var(--border-strong); }
+  .progress .dots i.done { background: var(--signal); }
+  .progress .dots i.now { background: var(--primary); box-shadow:0 0 0 4px rgba(74,75,182,0.18); }
+  .progress .pct { font-family: var(--font-mono); font-size:0.78rem; color: var(--text-muted); }
+  .phase-chip { font-family: var(--font-mono); font-size:0.7rem; letter-spacing:0.08em; text-transform:uppercase;
+    background: var(--tint-mint); color: var(--signal-strong); padding:0.2rem 0.6rem; border-radius:var(--r-pill); font-weight:600; }
+  .shell-body { padding:1.6rem 1.4rem; display:grid; gap:1.2rem; }
+  .lesson-title h3 { font-size:1.35rem; }
+  .lesson-title p { color: var(--text-muted); margin:0.4rem 0 0; max-width: 60ch; }
+  .hint-aside { display:flex; gap:0.75rem; padding:0.9rem 1rem; border-radius: var(--r-md);
+    background: var(--tint-yellow); border-left: 4px solid var(--yellow); }
+  .hint-aside .h-ico { font-size:1.2rem; }
+  .hint-aside .h-label { font-family: var(--font-mono); font-size:0.66rem; letter-spacing:0.1em; text-transform:uppercase; color: var(--warn); font-weight:700; }
+  .ask-bar { display:flex; gap:0.6rem; align-items:center; padding:0.5rem 0.5rem 0.5rem 1rem;
+    border-radius: var(--r-pill); background: var(--input-bg); box-shadow: var(--sh-ring); }
+  .ask-bar .mic { width:2.4rem; height:2.4rem; border-radius:50%; background: var(--surface); border:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow: var(--sh-sm); }
+  .ask-bar input { flex:1; border:none; background:transparent; font-family: var(--font-body); font-size:0.95rem; color: var(--text); outline:none; }
+  .ask-bar input::placeholder { color: var(--text-faint); }
+
+  /* mastery celebration */
+  .celebrate { position: relative; border-radius: var(--r-lg); padding: 2.4rem 1.5rem; text-align:center; overflow:hidden;
+    background: var(--ink); color:#fff; }
+  .celebrate::before { content:''; position:absolute; inset:0; background: var(--gradient-spectrum); opacity:0.92; }
+  .celebrate::after { content:''; position:absolute; inset:0; background: radial-gradient(circle at 50% 120%, rgba(0,0,0,0.35), transparent 60%); }
+  .celebrate > * { position: relative; z-index:1; }
+  .celebrate .ribbon { font-family: var(--font-mono); font-size:0.72rem; letter-spacing:0.22em; text-transform:uppercase; color: rgba(255,255,255,0.9); }
+  .celebrate h3 { color:#fff; font-size:2rem; margin:0.5rem 0; text-shadow:0 2px 14px rgba(0,0,0,0.25); }
+  .celebrate p { color: rgba(255,255,255,0.92); max-width: 40ch; margin:0 auto; }
+  .celebrate .reps { display:flex; gap:0.6rem; justify-content:center; margin-top:1.2rem; }
+  .celebrate .reps span { background: rgba(255,255,255,0.18); backdrop-filter: blur(4px); border-radius:var(--r-pill);
+    padding:0.35rem 0.9rem; font-family: var(--font-mono); font-size:0.76rem; display:flex; gap:0.4rem; align-items:center; }
+
+  .note { font-family: var(--font-mono); font-size:0.74rem; color: var(--text-muted); background: var(--bg-subtle);
+    border-radius: var(--r-sm); padding:0.7rem 0.9rem; margin-top:1rem; border-left:3px solid var(--primary); }
+  .note b { color: var(--primary); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker">Polymath · design study</div>
+    <h1>Three logics,<br>one signal.</h1>
+    <p>A redesign of the truth table, the gate circuit, and the code editor — rendered as the
+       shapes they actually are, with a single green that means <em>true</em> everywhere.</p>
+    <nav class="nav">
+      <a href="#tt">Truth tables</a>
+      <a href="#gates">Gate symbols</a>
+      <a href="#circuit">Circuit canvas</a>
+      <a href="#code">Code editor</a>
+      <a href="#shell">Lesson shell</a>
+      <a href="#mastery">Mastery moment</a>
+    </nav>
+  </header>
+
+  <!-- ============ TRUTH TABLE ============ -->
+  <section class="block" id="tt">
+    <div class="section-head"><span class="num">01</span><h2>Truth table</h2></div>
+    <p class="section-sub">Not a spreadsheet. Inputs are circular bit-chips (filled = 1); the output column
+      is the only clickable surface and the only place green appears. Three takes on the same idea.</p>
+
+    <div class="variants cols-3">
+      <!-- A: chips + cells -->
+      <div class="variant">
+        <div class="label"><b>A — Bit chips</b><span>· focus a row → evidence lights blue</span></div>
+        <div class="card tt">
+          <div class="tt-title">Fill the output for <span class="tt-expr">A AND B</span></div>
+          <table class="tt-grid">
+            <thead><tr><th>A</th><th>B</th><th class="out-col">A·B</th></tr></thead>
+            <tbody>
+              <tr class="out-row"><td><span class="bit off">0</span></td><td><span class="bit off">0</span></td><td><button class="out-cell">0</button></td></tr>
+              <tr class="out-row"><td><span class="bit off">0</span></td><td><span class="bit on">1</span></td><td><button class="out-cell">0</button></td></tr>
+              <tr class="out-row focus-row"><td><span class="bit on">1</span></td><td><span class="bit off">0</span></td><td><button class="out-cell">0</button></td></tr>
+              <tr class="out-row"><td><span class="bit on">1</span></td><td><span class="bit on">1</span></td><td><button class="out-cell on correct">1</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- B: row pills -->
+      <div class="variant">
+        <div class="label"><b>B — Row pills</b><span>· each row is one tactile lozenge</span></div>
+        <div class="card tt">
+          <div class="tt-title">Fill the output for <span class="tt-expr">A AND B</span></div>
+          <div class="tt-rows">
+            <div class="tt-rowpill"><div class="inputs"><span class="bit off">0</span><span class="bit off">0</span></div><span class="arrow">→</span><button class="out-cell">0</button></div>
+            <div class="tt-rowpill"><div class="inputs"><span class="bit off">0</span><span class="bit on">1</span></div><span class="arrow">→</span><button class="out-cell">0</button></div>
+            <div class="tt-rowpill"><div class="inputs"><span class="bit on">1</span><span class="bit off">0</span></div><span class="arrow">→</span><button class="out-cell">0</button></div>
+            <div class="tt-rowpill"><div class="inputs"><span class="bit on">1</span><span class="bit on">1</span></div><span class="arrow">→</span><button class="out-cell on correct">1</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- C: heat grid -->
+      <div class="variant">
+        <div class="label"><b>C — Signal grid</b><span>· compact, K-map-like; output as heat</span></div>
+        <div class="card tt">
+          <div class="tt-title">Light the cells where <span class="tt-expr">A AND B</span> is true</div>
+          <div class="kgrid" style="grid-template-columns: repeat(3, auto);">
+            <div class="klabel"></div><div class="klabel">B=0</div><div class="klabel">B=1</div>
+            <div class="klabel">A=0</div><div class="kcell">0</div><div class="kcell">0</div>
+            <div class="klabel">A=1</div><div class="kcell">0</div><div class="kcell on">1</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>Recommendation:</b> A (bit chips) — most legible at 4–16 rows, scales to the real lessons,
+      and the focus-row evidence highlight is the strongest teaching move. B is the most "alive/tactile"; C is a lovely
+      capstone view but only reads for 2-variable cases.</div>
+  </section>
+
+  <!-- ============ GATE SYMBOLS ============ -->
+  <section class="block" id="gates">
+    <div class="section-head"><span class="num">02</span><h2>Gate symbols</h2></div>
+    <p class="section-sub">Canonical ANSI distinctive shapes, drawn as SVG — AND is a D, OR is a pointed shield,
+      NOT is a triangle. The inversion <em>bubble</em> is one reusable token: NAND = AND + bubble, NOR = OR + bubble.
+      Here each gate is shown <b>idle</b> (left) and <b>live</b> (right, output HIGH).</p>
+
+    <div class="card">
+      <div class="gate-row" id="gate-gallery"></div>
+    </div>
+    <div class="note"><b>The teaching lever:</b> the little circle always means "NOT". Once a learner reads it on the
+      inverter, NAND and NOR are visibly "the gate you know, stamped with invert" — directly serving lessons 3 &amp; 4.</div>
+  </section>
+
+  <!-- ============ CIRCUIT CANVAS ============ -->
+  <section class="block" id="circuit">
+    <div class="section-head"><span class="num">03</span><h2>Circuit canvas</h2></div>
+    <p class="section-sub">A calm dotted canvas; the palette drops in real gate shapes; wires carry the signal color.
+      Press <b>Pulse</b> and HIGH flows gate-by-gate along the active path — the only motion on screen.</p>
+
+    <div class="variants cols-2">
+      <div class="variant">
+        <div class="label"><b>Resting</b><span>· LOW = muted gray wires</span></div>
+        <div class="card" style="padding:0.75rem;">
+          <div class="canvas-mock">
+            <div class="palette">
+              <button><svg viewBox="0 0 40 28" data-gate="AND"></svg>AND</button>
+              <button><svg viewBox="0 0 40 28" data-gate="OR"></svg>OR</button>
+              <button><svg viewBox="0 0 40 28" data-gate="NOT"></svg>NOT</button>
+            </div>
+            <svg viewBox="0 0 520 260" id="circuit-rest" style="width:100%; height:auto; margin-top:2.5rem;"></svg>
+          </div>
+          <div class="circ-controls"><button class="btn btn-ghost">Pulse</button><button class="btn btn-primary">Submit</button></div>
+        </div>
+      </div>
+
+      <div class="variant">
+        <div class="label"><b>Pulsing</b><span class="pick">· HIGH flows green along the active path</span></div>
+        <div class="card" style="padding:0.75rem;">
+          <div class="canvas-mock">
+            <div class="palette">
+              <button><svg viewBox="0 0 40 28" data-gate="AND"></svg>AND</button>
+              <button><svg viewBox="0 0 40 28" data-gate="OR"></svg>OR</button>
+              <button><svg viewBox="0 0 40 28" data-gate="NOT"></svg>NOT</button>
+            </div>
+            <svg viewBox="0 0 520 260" id="circuit-live" style="width:100%; height:auto; margin-top:2.5rem;"></svg>
+          </div>
+          <div class="pulse-legend">
+            <span><i class="hi"></i> HIGH (1)</span>
+            <span><i class="lo"></i> LOW (0)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CODE EDITOR ============ -->
+  <section class="block" id="code">
+    <div class="section-head"><span class="num">04</span><h2>Code editor</h2></div>
+    <p class="section-sub">A friendly notebook, not a terminal: JetBrains Mono, only the load-bearing tokens colored,
+      correctness shown as a gentle green line-glow with a check — never a console dump.</p>
+
+    <div class="variants cols-2">
+      <div class="variant">
+        <div class="label"><b>A — Light notebook</b><span class="pick">· matches the light hero</span></div>
+        <div class="editor">
+          <div class="editor-bar">
+            <span class="dot" style="background:var(--pink)"></span><span class="dot" style="background:var(--yellow)"></span><span class="dot" style="background:var(--signal)"></span>
+            <span class="fname">solution.logic</span>
+            <span class="target">equivalent to: A AND B</span>
+          </div>
+          <pre class="code"><span class="ln"><span class="gutter">1</span><span><span class="tok-com">// write an expression that matches</span></span></span><span class="ln ok"><span class="gutter">2</span><span><span class="tok-kw">return</span> <span class="tok-var">A</span> <span class="tok-op">and</span> <span class="tok-var">B</span></span></span></pre>
+        </div>
+        <div style="margin-top:0.8rem; display:flex; gap:0.6rem;"><button class="btn btn-signal">Submit</button></div>
+      </div>
+
+      <div class="variant">
+        <div class="label"><b>B — Dark focus</b><span>· optional, for the editor only</span></div>
+        <div class="editor" style="background:#13162b; border-color: rgba(255,255,255,0.08);">
+          <div class="editor-bar" style="background:#1b1f3a; border-color: rgba(255,255,255,0.06);">
+            <span class="dot" style="background:var(--pink)"></span><span class="dot" style="background:var(--yellow)"></span><span class="dot" style="background:var(--signal)"></span>
+            <span class="fname" style="color:#8b90b5;">solution.logic</span>
+            <span class="target" style="background: rgba(74,75,182,0.25); color:#b9bdff;">equivalent to: A AND B</span>
+          </div>
+          <pre class="code" style="color:#cfd3f0;"><span class="ln"><span class="gutter" style="color:#5a5f85;">1</span><span><span class="tok-com" style="color:#6b7099;">// write an expression that matches</span></span></span><span class="ln ok" style="background:linear-gradient(90deg, rgba(20,201,138,0.18), transparent 60%);"><span class="gutter" style="color:var(--signal);">2</span><span><span class="tok-kw" style="color:#d6a8ff;">return</span> <span style="color:#eef">A</span> <span class="tok-op" style="color:#7ab4ff;">and</span> <span style="color:#eef">B</span></span></span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SHELL ============ -->
+  <section class="block" id="shell">
+    <div class="section-head"><span class="num">05</span><h2>Lesson shell</h2></div>
+    <p class="section-sub">The chrome around the workspace: a progress-aware header, the lesson framing, a non-destructive
+      hint that sits beside the work, and a combined ask/voice bar.</p>
+
+    <div class="shell">
+      <div class="shell-top">
+        <div class="logo"><span class="mark">◑</span> Polymath</div>
+        <div class="progress">
+          <span class="phase-chip">Practicing</span>
+          <span class="dots"><i class="done"></i><i class="done"></i><i class="now"></i><i></i><i></i></span>
+          <span class="pct">2 / 5</span>
+        </div>
+      </div>
+      <div class="shell-body">
+        <div class="lesson-title">
+          <h3>Lesson 1 · Basic operators</h3>
+          <p>AND, OR, and NOT are the whole alphabet of logic. Meet each one in three forms at once — a table,
+             a circuit you can pulse, and a line of code.</p>
+        </div>
+
+        <div class="card tt" style="max-width:24rem;">
+          <div class="tt-title">Fill the output for <span class="tt-expr">A AND B</span></div>
+          <table class="tt-grid">
+            <thead><tr><th>A</th><th>B</th><th class="out-col">A·B</th></tr></thead>
+            <tbody>
+              <tr><td><span class="bit off">0</span></td><td><span class="bit off">0</span></td><td><button class="out-cell">0</button></td></tr>
+              <tr><td><span class="bit on">1</span></td><td><span class="bit on">1</span></td><td><button class="out-cell on correct">1</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="hint-aside">
+          <span class="h-ico">💡</span>
+          <div><div class="h-label">Hint · level 1</div><div>Think about when <em>both</em> inputs need to be on. AND is the strict one.</div></div>
+        </div>
+
+        <div class="ask-bar">
+          <div class="mic">🎙️</div>
+          <input placeholder="Ask the tutor — e.g. what does an AND gate do?">
+          <button class="btn btn-primary">Ask</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MASTERY ============ -->
+  <section class="block" id="mastery">
+    <div class="section-head"><span class="num">06</span><h2>Mastery moment</h2></div>
+    <p class="section-sub">The one place the brand's signature spectrum gradient is allowed — the strictest pedagogical
+      event gets the most recognizable visual peak. Earned, never decorative.</p>
+
+    <div class="celebrate">
+      <div class="ribbon">Mastery confirmed</div>
+      <h3>You've got AND, OR &amp; NOT.</h3>
+      <p>Fluent across all three forms, on your own, no hints. That's the real thing — not pattern-matching.</p>
+      <div class="reps"><span>▦ Truth table</span><span>◑ Circuit</span><span>‹/› Code</span></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+// ---- ANSI gate-shape generator (shared between gallery, palette, canvas) ----
+// Returns the inner SVG markup for a gate of the given kind, scaled into a 0..W x 0..H box.
+function gatePaths(kind, live) {
+  const c = live ? ' live' : '';
+  // Drawn in a 100x70 coordinate space, body occupies x:18..78, y:8..62
+  switch (kind) {
+    case 'AND':
+      return `<path class="gate-body${c}" d="M18 8 H48 A27 27 0 0 1 48 62 H18 Z"/>`;
+    case 'OR':
+      return `<path class="gate-body${c}" d="M16 8 Q40 35 16 62 Q52 62 80 35 Q52 8 16 8 Z"/>`;
+    case 'NOT':
+      return `<path class="gate-body${c}" d="M20 8 L20 62 L70 35 Z"/>
+              <circle class="bubble${c}" cx="76" cy="35" r="6"/>`;
+    case 'NAND':
+      return `<path class="gate-body${c}" d="M18 8 H44 A27 27 0 0 1 44 62 H18 Z"/>
+              <circle class="bubble${c}" cx="78" cy="35" r="6"/>`;
+    case 'NOR':
+      return `<path class="gate-body${c}" d="M16 8 Q40 35 16 62 Q50 62 76 35 Q50 8 16 8 Z"/>
+              <circle class="bubble${c}" cx="84" cy="35" r="6"/>`;
+  }
+  return '';
+}
+function gateSVG(kind, live, w=100, h=70) {
+  // input/output stub wires
+  const wireC = live ? ' live' : '';
+  const stubs = `
+    <line class="wire${wireC}" x1="2" y1="22" x2="18" y2="22"/>
+    ${kind==='NOT' ? '' : `<line class="wire${wireC}" x1="2" y1="48" x2="18" y2="48"/>`}
+    <line class="wire${wireC}" x1="${kind==='NOR'?90:kind==='NAND'||kind==='NOT'?84:80}" y1="35" x2="98" y2="35"/>`;
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="max-width:120px;overflow:visible">${stubs}${gatePaths(kind, live)}</svg>`;
+}
+
+// gallery: each gate idle + live
+const gallery = document.getElementById('gate-gallery');
+['AND','OR','NOT','NAND','NOR'].forEach(k => {
+  const cell = document.createElement('div');
+  cell.className = 'gate-cell';
+  cell.innerHTML = `
+    <div style="display:flex; gap:0.6rem; align-items:center;">
+      <div style="width:84px">${gateSVG(k,false)}</div>
+      <div style="width:84px">${gateSVG(k,true)}</div>
+    </div>
+    <div class="gname">${k}</div>`;
+  gallery.appendChild(cell);
+});
+
+// palette mini-icons
+document.querySelectorAll('.palette svg[data-gate]').forEach(svg => {
+  svg.outerHTML = `<span style="width:26px;height:18px;display:inline-block">${gateSVG(svg.dataset.gate,false,100,70)}</span>`;
+});
+
+// canvas: A AND B circuit, resting + live
+function buildCircuit(id, live) {
+  const c = live ? ' live' : '';
+  const svg = document.getElementById(id);
+  // input A (top), input B (bottom) -> AND gate -> OUT
+  const gx = 230, gy = 95; // gate top-left in this 520x260 space (gate is 130 wide block)
+  svg.innerHTML = `
+    <!-- wires -->
+    <path class="wire${c}" d="M70 90 H${gx+8}"/>
+    <path class="wire${c}" d="M70 175 H190 V150 H${gx+8}"/>
+    <path class="wire${c}" d="M${gx+165} 120 H450"/>
+    <!-- input nodes -->
+    <g transform="translate(20,72)"><rect rx="10" width="56" height="36" fill="var(--surface)" stroke="var(--ink)" stroke-width="2.5"/><text x="28" y="24" text-anchor="middle" font-family="JetBrains Mono" font-weight="700" font-size="18" fill="${live?'var(--signal-strong)':'var(--ink)'}">A</text></g>
+    <g transform="translate(20,157)"><rect rx="10" width="56" height="36" fill="var(--surface)" stroke="var(--ink)" stroke-width="2.5"/><text x="28" y="24" text-anchor="middle" font-family="JetBrains Mono" font-weight="700" font-size="18" fill="${live?'var(--signal-strong)':'var(--ink)'}">B</text></g>
+    <!-- AND gate, scaled -->
+    <g transform="translate(${gx},55) scale(1.6)">${gatePaths('AND', live)}</g>
+    <!-- output node -->
+    <g transform="translate(450,102)"><rect rx="10" width="56" height="36" fill="${live?'var(--signal-tint)':'var(--surface)'}" stroke="${live?'var(--signal-strong)':'var(--ink)'}" stroke-width="2.5"/><text x="28" y="24" text-anchor="middle" font-family="JetBrains Mono" font-weight="700" font-size="13" fill="${live?'var(--signal-strong)':'var(--ink)'}">OUT</text></g>`;
+}
+buildCircuit('circuit-rest', false);
+buildCircuit('circuit-live', true);
+</script>
+</body>
+</html>
