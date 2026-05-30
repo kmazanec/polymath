@@ -148,6 +148,7 @@ main {
 
 .cross-lesson-recall__dismiss,
 .continue-to-next-lesson,
+.try-the-playground,
 .hint-button,
 .truth-table-submit,
 .ask-agent button {
@@ -355,3 +356,53 @@ button:disabled {
 /* Pseudocode editor — friendly notebook (Task 6). */
 .pseudo-target { font-family: var(--font-mono); background: var(--color-lavender); color: var(--color-accent);
   padding: 0.1rem 0.5rem; border-radius: var(--radius-1); font-weight: 600; }
+
+/* Lesson shell header (Task 7). */
+.app-shell-top { display: flex; align-items: center; gap: 1rem; padding: 0.9rem 0; margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border); }
+.app-logo { display: flex; align-items: center; gap: 0.55rem; font-family: var(--font-display); font-weight: 700; color: var(--color-ink); }
+.app-logo__mark { width: 1.6rem; height: 1.6rem; border-radius: 8px; background: var(--gradient-primary);
+  display: flex; align-items: center; justify-content: center; color: #fff; box-shadow: var(--shadow-sm); }
+.app-shell-progress { margin-left: auto; }
+.phase-chip { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
+  font-weight: 600; padding: 0.2rem 0.6rem; border-radius: var(--radius-pill);
+  background: var(--color-signal-tint); color: var(--color-pass); }
+
+/* Mastery moment — the ONE place the signature spectrum gradient is used (Task 7).
+   White text sits on a DARK ink substrate; the gradient is laid over it at <1 opacity
+   via ::before, so contrast for the headings/body stays AA (white on near-ink). */
+.mastery-celebration {
+  position: relative; overflow: hidden; border: none; color: #fff; text-align: center;
+  /* fixed dark navy (NOT --color-ink, which flips to near-white in dark mode and would
+     collapse white-on-gradient contrast); the spectrum gradient is a fixed brand artifact
+     so its substrate is fixed too. */
+  background: #202344;
+  padding: 2.2rem 1.5rem;
+}
+.mastery-celebration::before {
+  content: ''; position: absolute; inset: 0; z-index: 0;
+  background: var(--gradient-spectrum); opacity: 0.85;
+  /* darken so white text keeps AA over the lighter (yellow/cyan) gradient stops */
+  mix-blend-mode: multiply;
+}
+.mastery-celebration > * { position: relative; z-index: 1; }
+.mastery-celebration h1, .mastery-celebration h2, .mastery-celebration h3 { color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,0.35); }
+.mastery-celebration p, .mastery-celebration li { color: #fff; text-shadow: 0 1px 8px rgba(0,0,0,0.30); }
+.mastery-celebration ul { list-style: none; padding: 0; display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap; }
+.mastery-celebration li { background: rgba(255,255,255,0.18); border-radius: var(--radius-pill); padding: 0.3rem 0.85rem; font-family: var(--font-mono); font-size: 0.85rem; }
+/* The continue/playground buttons keep their pill style but on a light chip so they
+   stay legible on the gradient. */
+.mastery-celebration .continue-to-next-lesson,
+.mastery-celebration .try-the-playground {
+  /* fixed dark text on a fixed white chip — --color-ink would flip near-white in dark
+     mode and go light-on-light against the fixed #fff background. */
+  background: #fff; color: #202344; box-shadow: 0 6px 18px rgba(0,0,0,0.25); margin-top: 1rem;
+}
+.mastery-celebration .continue-to-next-lesson:hover,
+.mastery-celebration .try-the-playground:hover {
+  /* fixed light hover chip — --color-lavender flips to dark navy (#1b1f3a) in dark mode,
+     which under the fixed #202344 button text is dark-on-dark (~1.1:1, invisible). The
+     button sits on the theme-fixed gradient substrate, so its hover must be fixed too. */
+  background: #eceaff;
+}
+.mastery-celebration .continue-to-next-lesson:disabled { background: rgba(255,255,255,0.75); color: #202344; }

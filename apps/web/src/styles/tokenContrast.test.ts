@@ -116,3 +116,26 @@ describe('design-token contrast on tinted surfaces (WCAG 2.1 AA, light)', () => 
     });
   }
 });
+
+describe('mastery celebration substrate (theme-fixed, WCAG AA)', () => {
+  // The whole celebration sits on the fixed brand spectrum gradient, so EVERY colour
+  // pair on it must be theme-FIXED literals — a theme token would flip in dark mode and
+  // collapse contrast (this bit us twice: the substrate, then the button :hover chip).
+  // These literals must match the values in global.css's .mastery-celebration block.
+  const SUBSTRATE = '#202344'; // .mastery-celebration background
+  const BTN_TEXT = '#202344'; // continue/playground button label
+  const BTN_REST = '#ffffff'; // resting button chip
+  const BTN_HOVER = '#eceaff'; // hover button chip (NOT --color-lavender, which flips dark)
+
+  it('white text clears AA on the fixed dark navy substrate', () => {
+    // The spectrum gradient over the substrate darkens via multiply; white text must clear AA.
+    expect(contrastRatio('#ffffff', SUBSTRATE)).toBeGreaterThanOrEqual(4.5);
+  });
+  it('button label clears AA on the resting AND hover chips (both theme-fixed)', () => {
+    // --color-lavender hover flipped to #1b1f3a in dark mode → dark-on-dark ~1.1:1 (Task 7
+    // review). Pinning the hover chip to a fixed light literal keeps the label legible in
+    // both themes; this guards against re-binding either chip to a theme token.
+    expect(contrastRatio(BTN_TEXT, BTN_REST)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(BTN_TEXT, BTN_HOVER)).toBeGreaterThanOrEqual(4.5);
+  });
+});

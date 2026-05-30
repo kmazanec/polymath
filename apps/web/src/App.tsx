@@ -657,6 +657,12 @@ export function App(): ReactElement {
 
   return (
     <main>
+      <header className="app-shell-top">
+        <div className="app-logo"><span className="app-logo__mark" aria-hidden="true">◑</span> Polymath</div>
+        <div className="app-shell-progress">
+          <span className="phase-chip" data-phase={phase}>{phase}</span>
+        </div>
+      </header>
       {/* Analytics opt-in (AC#2/#7): shown once at session start while consent is
           undecided. PostHog is never initialized until the learner clicks Accept, so
           analytics + session replay are OFF by default; declining leaves them off for
