@@ -326,3 +326,28 @@ button:disabled {
 }
 
 @media (prefers-color-scheme: dark) { body { background-image: none; } }
+
+/* Truth table — row-pill presentation over the existing <table> DOM (Task 4). */
+.truth-table table { border-collapse: separate; border-spacing: 0 0.5rem; width: 100%; }
+.truth-table thead th { font-family: var(--font-body); font-size: 0.72rem; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--color-text-muted); font-weight: 600; padding-bottom: 0.25rem; }
+.truth-table thead th:last-child { color: var(--color-pass); }
+.truth-table tbody tr { background: var(--color-surface-muted); }
+.truth-table tbody td { padding: 0.35rem 0.4rem; text-align: center; vertical-align: middle; }
+.truth-table tbody td:first-child { border-radius: var(--radius-pill) 0 0 var(--radius-pill); padding-left: 0.7rem; }
+.truth-table tbody td:last-child { border-radius: 0 var(--radius-pill) var(--radius-pill) 0; padding-right: 0.7rem; }
+.tt-bit { display: inline-flex; align-items: center; justify-content: center; width: 2.1rem; height: 2.1rem;
+  border-radius: 50%; font-family: var(--font-mono); font-weight: 600; }
+.tt-bit--on { background: var(--color-signal-tint); color: var(--color-pass); box-shadow: inset 0 0 0 1.5px var(--color-signal); }
+.tt-bit--off { background: var(--color-low-tint); color: var(--color-text-muted); box-shadow: inset 0 0 0 1.5px var(--color-border); }
+.truth-table-output-cell { width: 2.4rem; height: 2.4rem; border-radius: var(--radius-pill); border: none;
+  font-family: var(--font-mono); font-weight: 700; cursor: pointer; background: var(--color-surface);
+  color: var(--color-text-muted); box-shadow: inset 0 0 0 1.5px var(--color-border);
+  transition: transform var(--dur-hover) var(--ease-spring); }
+.truth-table-output-cell:hover { transform: translateY(-1px); }
+/* The pressed (signal-green) look is the PRACTICE state; once a verdict is set on
+ * submit, the deuteranopia-safe verdict rules above (color + box-shadow + glyph) must
+ * take over. Scoping to :not([data-verdict]) lets them layer on top with no !important
+ * and no specificity fight — the verdict rules stay fully effective. */
+.truth-table-output-cell[aria-pressed='true']:not([data-verdict]) { background: var(--color-signal-tint); color: var(--color-pass);
+  box-shadow: inset 0 0 0 2px var(--color-signal), 0 0 0 4px var(--color-signal-glow); }

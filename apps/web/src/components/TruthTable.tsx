@@ -162,7 +162,9 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
                     finding) — these cells are inherently read-only, so no attribute
                     is needed to say so. */}
                 {inputRow.map((val, colIdx) => (
-                  <td key={colIdx}>{val ? '1' : '0'}</td>
+                  <td key={colIdx}>
+                    <span className={`tt-bit ${val ? 'tt-bit--on' : 'tt-bit--off'}`}>{val ? '1' : '0'}</span>
+                  </td>
                 ))}
                 {/* Output cell — interactive button */}
                 <td role="cell">
