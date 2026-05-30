@@ -24,6 +24,7 @@ import { PulseProvider, pulseValue } from '../canvas/PulseContext.js';
 import { usePulseRunner } from '../canvas/usePulseRunner.js';
 import { evaluateSubmission } from '../canvas/circuitSubmission.js';
 import { GateNode, InputNode, OutputNode } from './circuitNodes.js';
+import { GateShape, type GateShapeKind } from './gateShapes.js';
 
 type CircuitSpec = Extract<ComponentSpec, { kind: 'CircuitBuilder' }>;
 
@@ -163,6 +164,26 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
   const activeSchedule = pulse.current;
   const ctx = pulseValue(activeSchedule, pulse.activeStep);
 
+  // The pulse lights the active node (via data-active) AND its incoming wires.
+  // `PulseStep.fromEdges` names the edges feeding the node lit this step; we
+  // decorate exactly those react-flow edges with `animated: true` so the
+  // signal-green edge CSS fires only on the active propagation front.
+  const activeEdgeKeys = useMemo(() => {
+    const step =
+      pulse.activeStep !== null ? activeSchedule?.steps[pulse.activeStep] : undefined;
+    if (!step) return new Set<string>();
+    return new Set(step.fromEdges.map((e) => `${e.source}->${e.target}`));
+  }, [activeSchedule, pulse.activeStep]);
+
+  const renderedEdges = useMemo(
+    () =>
+      edges.map((e) => ({
+        ...e,
+        animated: activeEdgeKeys.has(`${e.source}->${e.target}`),
+      })),
+    [edges, activeEdgeKeys],
+  );
+
   return (
     <PulseProvider value={ctx}>
       <section
@@ -178,6 +199,7 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
             )
             .map((g) => (
               <button key={g} type="button" onClick={() => addGate(g)} data-gate={g}>
+                <GateShape kind={g as GateShapeKind} />
                 Add {g} gate
               </button>
             ))}
@@ -189,7 +211,7 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
               re-renders only the lit node, not the whole array. */}
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={renderedEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

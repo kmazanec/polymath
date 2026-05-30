@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { usePulse } from '../canvas/PulseContext.js';
+import { GateShape, type GateShapeKind } from './gateShapes.js';
 
 /**
  * Custom react-flow node types for the circuit canvas. The pulse highlights the
@@ -17,21 +18,10 @@ function useIsActive(nodeId: string): boolean {
   return activeStep !== null && schedule[activeStep]?.nodeId === nodeId;
 }
 
-const activeStyle = (active: boolean): React.CSSProperties => ({
-  borderWidth: active ? 3 : 1,
-  borderStyle: 'solid',
-  borderColor: active ? '#2563eb' /* blue-600 */ : '#9ca3af' /* gray-400 */,
-  background: active ? '#dbeafe' /* blue-100 */ : '#f9fafb',
-  borderRadius: 6,
-  padding: '6px 10px',
-  fontFamily: 'monospace',
-  fontSize: 12,
-});
-
 export function InputNode({ id, data }: NodeProps): ReactElement {
   const active = useIsActive(id);
   return (
-    <div style={activeStyle(active)} data-node="input" data-active={active}>
+    <div className="rf-node rf-node--io" data-node="input" data-active={active}>
       {String((data as { name?: string }).name ?? '?')}
       <Handle type="source" position={Position.Right} />
     </div>
@@ -43,10 +33,16 @@ export function GateNode({ id, data }: NodeProps): ReactElement {
   const active = useIsActive(id);
   const isNot = d.gate === 'NOT';
   return (
-    <div style={activeStyle(active)} data-node="gate" data-gate={d.gate} data-active={active}>
+    <div
+      className="rf-node rf-node--gate"
+      data-node="gate"
+      data-gate={d.gate}
+      data-active={active}
+      style={{ width: 64, height: 46 }}
+    >
       <Handle type="target" position={Position.Left} id="a" style={{ top: isNot ? '50%' : '30%' }} />
       {!isNot && <Handle type="target" position={Position.Left} id="b" style={{ top: '70%' }} />}
-      {d.gate}
+      <GateShape kind={(d.gate as GateShapeKind) ?? 'AND'} live={active} />
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -55,7 +51,7 @@ export function GateNode({ id, data }: NodeProps): ReactElement {
 export function OutputNode({ id }: NodeProps): ReactElement {
   const active = useIsActive(id);
   return (
-    <div style={activeStyle(active)} data-node="output" data-active={active}>
+    <div className="rf-node rf-node--io" data-node="output" data-active={active}>
       <Handle type="target" position={Position.Left} id="a" />
       OUT
     </div>
