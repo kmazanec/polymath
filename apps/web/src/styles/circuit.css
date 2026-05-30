@@ -13,20 +13,24 @@
   box-shadow: var(--shadow-sm); transition: transform var(--dur-hover) var(--ease-spring); }
 .circuit-palette button:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
 .circuit-palette button .gate-shape { width: 26px; height: 18px; flex: 0 0 auto; }
-.circuit-canvas { border-radius: var(--radius-1); overflow: hidden;
+.circuit-canvas { border-radius: var(--radius-md); overflow: hidden;
   background: radial-gradient(circle at 1px 1px, rgba(32,35,68,0.10) 1px, transparent 0) 0 0 / 22px 22px, var(--color-surface-muted); }
 .circuit-controls { display: flex; gap: 0.6rem; }
 .circuit-verdict { font-family: var(--font-body); }
 .circuit-error { font-family: var(--font-body); color: var(--color-fail); }
 /* react-flow node wrappers (the pulse lights data-active='true'). */
-.rf-node { font-family: var(--font-mono); font-weight: 600; font-size: 12px; border-radius: var(--radius-1);
+.rf-node { font-family: var(--font-mono); font-weight: 600; font-size: 12px; border-radius: var(--radius-md);
   background: var(--color-surface); box-shadow: var(--shadow-sm); color: var(--color-ink); }
 .rf-node--io { padding: 6px 10px; border: 1.5px solid var(--color-ink); }
 .rf-node[data-active='true'] { color: var(--color-pass); }
 .rf-node--io[data-active='true'] { background: var(--color-signal-tint); border-color: var(--color-pass);
   box-shadow: 0 0 0 2px var(--color-pass), 0 0 12px var(--color-signal-glow); }
 .rf-node--gate { background: transparent; box-shadow: none; }
-/* react-flow edges carry the signal color. */
-.react-flow__edge-path { stroke: var(--color-low); stroke-width: 3; }
-.react-flow__edge.animated .react-flow__edge-path { stroke: var(--color-signal);
+/* react-flow edges carry the signal color. Scoped under .circuit-canvas so these win
+ * over @xyflow's own dist/style.css `.react-flow__edge-path` (same single-class
+ * specificity) by SPECIFICITY, not by CSS import order — otherwise a refactor that
+ * flips which stylesheet loads last would silently revert the wire colors to the
+ * library defaults (code-review finding). */
+.circuit-canvas .react-flow__edge-path { stroke: var(--color-low); stroke-width: 3; }
+.circuit-canvas .react-flow__edge.animated .react-flow__edge-path { stroke: var(--color-signal);
   filter: drop-shadow(0 0 4px var(--color-signal-glow)); }

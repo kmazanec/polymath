@@ -85,17 +85,44 @@ describe('design-token contrast (WCAG 2.1 AA)', () => {
   }
 });
 
+/** Composite an `rgba(r,g,b,a)` foreground over an opaque `#rrggbb` background into a
+ *  flat hex — needed because a tint token can be a translucent rgba() (e.g. the dark
+ *  --color-signal-tint), whose EFFECTIVE colour is what the eye sees over the surface. */
+function compositeOver(rgba: string, bgHex: string): string {
+  const m = rgba.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)/);
+  if (!m) return rgba; // already a hex — caller passes it through
+  const [fr, fg, fb, fa] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  const b = bgHex.replace('#', '');
+  const [br, bg, bb] = [parseInt(b.slice(0, 2), 16), parseInt(b.slice(2, 4), 16), parseInt(b.slice(4, 6), 16)];
+  const mix = (f: number, bk: number): string =>
+    Math.round(f * fa + bk * (1 - fa)).toString(16).padStart(2, '0');
+  return `#${mix(fr, br)}${mix(fg, bg)}${mix(fb, bb)}`;
+}
+
+/** Read a tint token as a flat hex, compositing an rgba() tint over the theme surface. */
+function tintHex(tokens: Record<string, string>, name: string, theme: 'light' | 'dark'): string {
+  const css = readFileSync(TOKENS_PATH, 'utf8');
+  // rgba tints aren't captured by parseBlock (#hex only), so pull the raw declaration.
+  const block = theme === 'light'
+    ? css.slice(0, darkIdx === -1 ? css.length : darkIdx)
+    : css.slice(darkIdx === -1 ? 0 : darkIdx);
+  const raw = block.match(new RegExp(`${name}\\s*:\\s*([^;]+);`))?.[1]?.trim();
+  if (raw && raw.startsWith('rgba')) return compositeOver(raw, tokens['--color-surface']!);
+  return tokens[name] ?? raw ?? '';
+}
+
 /**
- * Tinted-surface contrast (Task 4 review). The redesign renders status/body text on
- * coloured tint surfaces beyond bg/surface — the truth-table row-pill fill
+ * Tinted-surface contrast (Task 4 + code-review). The redesign renders status/body text
+ * on coloured tint surfaces beyond bg/surface — the truth-table row-pill fill
  * (--color-surface-muted), the ON bit-chip / pressed output cell (--color-signal-tint),
  * and the OFF bit-chip (--color-low-tint). The bg/surface check above does NOT cover
  * these, so a green/muted that clears AA on white can still fail on a tint. This guards
- * each text↔tint pair we actually ship in the light theme. (#0a8159 pass was 4.42:1 on
- * surface-muted; #6b6f8a muted was 4.32:1 on low-tint — both now corrected.)
+ * each text↔tint pair we ship in BOTH themes — the dark tints were unguarded (review),
+ * and the dark --color-signal-tint is a translucent rgba() composited over the surface.
+ * (#0a8159 pass was 4.42:1 on the light surface-muted; #6b6f8a muted was 4.32:1 on the
+ * light low-tint — both corrected.)
  */
-describe('design-token contrast on tinted surfaces (WCAG 2.1 AA, light)', () => {
-  const t = lightTokens;
+describe('design-token contrast on tinted surfaces (WCAG 2.1 AA)', () => {
   const pairs: ReadonlyArray<readonly [string, string, string]> = [
     // [textToken, tintToken, where it appears]
     ['--color-pass', '--color-surface-muted', 'row-pill output digit'],
@@ -103,17 +130,22 @@ describe('design-token contrast on tinted surfaces (WCAG 2.1 AA, light)', () => 
     ['--color-text-muted', '--color-low-tint', 'OFF bit-chip digit'],
     ['--color-text-muted', '--color-surface-muted', 'muted text on row pill'],
   ];
-  for (const [textTok, tintTok, where] of pairs) {
-    it(`light: ${textTok} clears AA on ${tintTok} (${where})`, () => {
-      const text = t[textTok];
-      const tint = t[tintTok];
-      expect(text, `${textTok} defined`).toBeTruthy();
-      expect(tint, `${tintTok} defined`).toBeTruthy();
-      expect(
-        contrastRatio(text!, tint!),
-        `${textTok} (${text}) vs ${tintTok} (${tint}) — ${where}`,
-      ).toBeGreaterThanOrEqual(AA);
-    });
+  for (const [theme, tokens] of [
+    ['light', lightTokens],
+    ['dark', darkTokens],
+  ] as const) {
+    for (const [textTok, tintTok, where] of pairs) {
+      it(`${theme}: ${textTok} clears AA on ${tintTok} (${where})`, () => {
+        const text = tokens[textTok];
+        const tint = tintHex(tokens, tintTok, theme);
+        expect(text, `${theme} ${textTok} defined`).toBeTruthy();
+        expect(tint, `${theme} ${tintTok} resolved`).toBeTruthy();
+        expect(
+          contrastRatio(text!, tint),
+          `${theme} ${textTok} (${text}) vs ${tintTok} (${tint}) — ${where}`,
+        ).toBeGreaterThanOrEqual(AA);
+      });
+    }
   }
 });
 
@@ -142,6 +174,31 @@ describe('filled-button label contrast (WCAG 2.1 AA)', () => {
       expect(
         contrastRatio(text!, hover!),
         `${theme} on-accent (${text}) vs accent-hover (${hover})`,
+      ).toBeGreaterThanOrEqual(AA);
+    });
+  }
+});
+
+/**
+ * Other branded text-on-tint chips (code-review). The pseudocode target chip
+ * (.pseudo-target: --color-accent on --color-lavender) and the phase chip
+ * (.phase-chip: --color-pass on --color-signal-tint, already covered by the tinted
+ * block) carry meaningful text; guard the accent/lavender pair in both themes so a
+ * future accent/lavender retune fails closed rather than silently dropping below AA.
+ */
+describe('branded chip contrast (WCAG 2.1 AA)', () => {
+  for (const [theme, tokens] of [
+    ['light', lightTokens],
+    ['dark', darkTokens],
+  ] as const) {
+    it(`${theme}: --color-accent clears AA on --color-lavender (pseudocode target chip)`, () => {
+      const text = tokens['--color-accent'];
+      const bg = tokens['--color-lavender'];
+      expect(text, `${theme} --color-accent`).toBeTruthy();
+      expect(bg, `${theme} --color-lavender`).toBeTruthy();
+      expect(
+        contrastRatio(text!, bg!),
+        `${theme} accent (${text}) vs lavender (${bg})`,
       ).toBeGreaterThanOrEqual(AA);
     });
   }

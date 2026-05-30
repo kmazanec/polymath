@@ -24,7 +24,7 @@ import { PulseProvider, pulseValue } from '../canvas/PulseContext.js';
 import { usePulseRunner } from '../canvas/usePulseRunner.js';
 import { evaluateSubmission } from '../canvas/circuitSubmission.js';
 import { GateNode, InputNode, OutputNode } from './circuitNodes.js';
-import { GateShape, type GateShapeKind } from './gateShapes.js';
+import { GateShape } from './gateShapes.js';
 
 type CircuitSpec = Extract<ComponentSpec, { kind: 'CircuitBuilder' }>;
 
@@ -199,7 +199,7 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
             )
             .map((g) => (
               <button key={g} type="button" onClick={() => addGate(g)} data-gate={g}>
-                <GateShape kind={g as GateShapeKind} />
+                <GateShape kind={g} />
                 Add {g} gate
               </button>
             ))}
@@ -207,8 +207,11 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
 
         <div className="circuit-canvas" style={{ height: 320 }}>
           {/* Nodes are passed by stable reference; each node component reads the
-              active pulse step from PulseContext itself, so a pulse tick
-              re-renders only the lit node, not the whole array. */}
+              active pulse step from PulseContext itself, so a pulse tick re-renders
+              only the lit node, not the whole node array. Edges, by contrast, ARE
+              remapped each pulse step (`renderedEdges` decorates the active-path wires
+              with `animated:true` from the step's `fromEdges`) — cheap for these small
+              teaching circuits, and the wire animation is the point. */}
           <ReactFlow
             nodes={nodes}
             edges={renderedEdges}

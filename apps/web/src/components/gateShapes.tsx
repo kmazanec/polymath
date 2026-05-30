@@ -1,6 +1,11 @@
 import type { ReactElement } from 'react';
+import type { GateKind } from '../canvas/circuitModel.js';
 
-export type GateShapeKind = 'AND' | 'OR' | 'NOT' | 'NAND' | 'NOR';
+/** The gate alphabet is owned by the circuit model (`GateKind`); this is the SAME union,
+ *  re-exported under a rendering-focused name so there is ONE source of truth. If the
+ *  alphabet ever grows (e.g. XOR), `bodyPath`/`bubbleCx`'s switches become non-exhaustive
+ *  and FAIL to compile — surfacing the gap instead of rendering an empty `<path>`. */
+export type GateShapeKind = GateKind;
 
 /** Canonical ANSI distinctive-shape gate symbols. Drawn in a 100x70 viewBox.
  *  The inversion bubble (a small circle at the output) is the reusable "NOT" token:
