@@ -16,7 +16,10 @@
   --color-surface: #ffffff;
   --color-surface-muted: #f3f3f8;
   --color-text: #202344;
-  --color-text-muted: #6b6f8a;
+  /* #646883 clears AA (4.5:1) as small text on every light surface we pair it with —
+   * white, --color-bg, --color-surface-muted (the row-pill fill), AND --color-low-tint
+   * (the truth-table OFF bit-chip). #6b6f8a was 4.32:1 on low-tint (Task 4 review). */
+  --color-text-muted: #646883;
   --color-border: rgba(32,35,68,0.10);
 
   /* Accent + brand */
@@ -27,8 +30,11 @@
   --color-cyan: #17e2ea;
 
   /* Status — AA-verified TEXT colours. pass=deep green, fail=orange, warn=amber.
-     The brighter fill/glow green is --color-signal (fills/borders/shadows only, never text). */
-  --color-pass: #0a8159;
+     The brighter fill/glow green is --color-signal (fills/borders/shadows only, never text).
+     #097a54 clears AA on every light surface pass-green text lands on: white,
+     --color-bg, --color-signal-tint (ON bit-chip / pressed cell), AND --color-surface-muted
+     (the row-pill fill). #0a8159 was 4.42:1 on surface-muted (Task 4 review). */
+  --color-pass: #097a54;
   --color-fail: #b3500a;
   --color-warn: #8a6d00;
 

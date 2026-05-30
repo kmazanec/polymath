@@ -84,3 +84,35 @@ describe('design-token contrast (WCAG 2.1 AA)', () => {
     }
   }
 });
+
+/**
+ * Tinted-surface contrast (Task 4 review). The redesign renders status/body text on
+ * coloured tint surfaces beyond bg/surface — the truth-table row-pill fill
+ * (--color-surface-muted), the ON bit-chip / pressed output cell (--color-signal-tint),
+ * and the OFF bit-chip (--color-low-tint). The bg/surface check above does NOT cover
+ * these, so a green/muted that clears AA on white can still fail on a tint. This guards
+ * each text↔tint pair we actually ship in the light theme. (#0a8159 pass was 4.42:1 on
+ * surface-muted; #6b6f8a muted was 4.32:1 on low-tint — both now corrected.)
+ */
+describe('design-token contrast on tinted surfaces (WCAG 2.1 AA, light)', () => {
+  const t = lightTokens;
+  const pairs: ReadonlyArray<readonly [string, string, string]> = [
+    // [textToken, tintToken, where it appears]
+    ['--color-pass', '--color-surface-muted', 'row-pill output digit'],
+    ['--color-pass', '--color-signal-tint', 'ON bit-chip / pressed output cell'],
+    ['--color-text-muted', '--color-low-tint', 'OFF bit-chip digit'],
+    ['--color-text-muted', '--color-surface-muted', 'muted text on row pill'],
+  ];
+  for (const [textTok, tintTok, where] of pairs) {
+    it(`light: ${textTok} clears AA on ${tintTok} (${where})`, () => {
+      const text = t[textTok];
+      const tint = t[tintTok];
+      expect(text, `${textTok} defined`).toBeTruthy();
+      expect(tint, `${tintTok} defined`).toBeTruthy();
+      expect(
+        contrastRatio(text!, tint!),
+        `${textTok} (${text}) vs ${tintTok} (${tint}) — ${where}`,
+      ).toBeGreaterThanOrEqual(AA);
+    });
+  }
+});
