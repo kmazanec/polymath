@@ -111,14 +111,18 @@ main {
   font-size: 0.8rem;
 }
 .hint-card__label {
-  color: var(--color-warn);
+  /* On the warm --color-tint-yellow card, the amber --color-warn dipped below AA
+   * (4.17:1) for this small uppercase label; --color-text clears it comfortably
+   * (~12.8:1) while the level is still carried in the label TEXT, never colour-only. */
+  color: var(--color-text);
 }
 
 /* The hint ladder: each level a touch more prominent, but level is also carried in
  * the `hint-card__label` text — never colour-only. */
 .hint-card {
+  /* The --level-N rules below set the full `border-left` shorthand (width+style+colour),
+   * so a bare border-left-width here would be redundant — the tint is the only override. */
   background: var(--color-tint-yellow);
-  border-left-width: 4px;
 }
 .hint-card--level-1 {
   border-left: 4px solid var(--color-border);
