@@ -24,10 +24,13 @@
 
   /* Accent + brand */
   --color-accent: #4a4bb6;
-  --color-accent-blue: #1756e2;
   --color-accent-hover: #4041c2;
+  /* Text colour that pairs with --color-accent on a filled button. In light mode the
+   * accent is a deep indigo, so white clears AA (7:1); in dark mode the accent is a
+   * LIGHT lavender, so the dark override flips this to ink (white-on-lavender was 2.95:1
+   * — below AA; final-review finding). Keeps "tokens are the single source". */
+  --color-on-accent: #ffffff;
   --color-ink: #202344;
-  --color-cyan: #17e2ea;
 
   /* Status — AA-verified TEXT colours. pass=deep green, fail=orange, warn=amber.
      The brighter fill/glow green is --color-signal (fills/borders/shadows only, never text).
@@ -83,10 +86,11 @@
     --color-border: rgba(255,255,255,0.12);
 
     --color-accent: #8b8cf0;
-    --color-accent-blue: #5376ff;
     --color-accent-hover: #a3a4ff;
+    /* The dark-mode accent is a LIGHT lavender, so button text flips to ink to clear AA
+     * (white-on-#8b8cf0 was 2.95:1; #202344-on-#8b8cf0 is 5.13:1, hover 6.72:1). */
+    --color-on-accent: #202344;
     --color-ink: #f1f5ff;
-    --color-cyan: #17e2ea;
 
     --color-pass: #4fd6a0;
     --color-fail: #f0954a;

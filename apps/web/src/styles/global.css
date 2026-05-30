@@ -154,7 +154,7 @@ main {
 .ask-agent button {
   font-family: var(--font-display); font-weight: 600; font-size: 0.92rem;
   padding: 0.62rem 1.3rem; border: none; border-radius: var(--radius-pill);
-  background: var(--color-accent); color: #fff; cursor: pointer;
+  background: var(--color-accent); color: var(--color-on-accent); cursor: pointer;
   box-shadow: 0 6px 18px rgba(74,75,182,0.30);
   transition: transform var(--dur-hover) var(--ease-spring), background var(--dur-hover) ease;
 }

@@ -117,6 +117,36 @@ describe('design-token contrast on tinted surfaces (WCAG 2.1 AA, light)', () => 
   }
 });
 
+/**
+ * Filled-button label contrast (final-review finding). The primary pill buttons are
+ * `background: --color-accent; color: --color-on-accent`. In dark mode --color-accent is
+ * a LIGHT lavender, so white text was 2.95:1 (below AA) — --color-on-accent flips to ink
+ * there. Guard the label against BOTH the resting accent and the hover accent, both themes.
+ */
+describe('filled-button label contrast (WCAG 2.1 AA)', () => {
+  for (const [theme, tokens] of [
+    ['light', lightTokens],
+    ['dark', darkTokens],
+  ] as const) {
+    it(`${theme}: --color-on-accent clears AA on --color-accent AND --color-accent-hover`, () => {
+      const text = tokens['--color-on-accent'];
+      const accent = tokens['--color-accent'];
+      const hover = tokens['--color-accent-hover'];
+      expect(text, `${theme} --color-on-accent`).toBeTruthy();
+      expect(accent, `${theme} --color-accent`).toBeTruthy();
+      expect(hover, `${theme} --color-accent-hover`).toBeTruthy();
+      expect(
+        contrastRatio(text!, accent!),
+        `${theme} on-accent (${text}) vs accent (${accent})`,
+      ).toBeGreaterThanOrEqual(AA);
+      expect(
+        contrastRatio(text!, hover!),
+        `${theme} on-accent (${text}) vs accent-hover (${hover})`,
+      ).toBeGreaterThanOrEqual(AA);
+    });
+  }
+});
+
 describe('mastery celebration substrate (theme-fixed, WCAG AA)', () => {
   // The whole celebration sits on the fixed brand spectrum gradient, so EVERY colour
   // pair on it must be theme-FIXED literals — a theme token would flip in dark mode and
