@@ -61,6 +61,15 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
     if (!editorRef.current) return;
     if (viewRef.current) return; // already mounted
 
+    // Design tokens are SNAPSHOTTED at mount: CodeMirror injects its theme into a
+    // generated stylesheet rather than as inline style, so `var(--token)` can't resolve
+    // live there the way the rest of the app's CSS does. A mid-session OS light/dark flip
+    // therefore won't re-theme an already-mounted editor until it remounts (a new item
+    // re-keys this component, so practice flow refreshes it naturally). getPropertyValue
+    // returns '' for an unset var, so the hex fallbacks engage under jsdom (tests).
+    const cs = getComputedStyle(document.documentElement);
+    const tok = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
+
     const state = EditorState.create({
       doc: '',
       extensions: [
@@ -74,9 +83,24 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
         }),
         EditorView.contentAttributes.of({ 'aria-labelledby': EDITOR_LABEL_ID }),
         EditorView.theme({
-          '&': { border: '1px solid #d1d5db', borderRadius: '4px', padding: '4px' },
-          '.cm-content': { minHeight: '4em', fontFamily: 'monospace' },
-          '.cm-placeholder': { color: '#9ca3af', fontStyle: 'italic' },
+          '&': {
+            borderRadius: tok('--radius-1', '0.625rem'),
+            border: `1px solid ${tok('--color-border', 'rgba(32,35,68,0.10)')}`,
+            background: tok('--color-surface', '#ffffff'),
+            fontFamily: tok('--font-mono', "'JetBrains Mono', ui-monospace, monospace"),
+          },
+          '.cm-content': {
+            minHeight: '5em',
+            padding: '12px',
+            fontSize: '16px',
+            lineHeight: '1.6',
+            caretColor: tok('--color-accent', '#4a4bb6'),
+            color: tok('--color-text', '#202344'),
+          },
+          '.cm-placeholder': { color: tok('--color-text-muted', '#646883'), fontStyle: 'italic' },
+          '&.cm-focused': { outline: `2px solid ${tok('--color-focus', '#4a4bb6')}`, outlineOffset: '2px' },
+          '.cm-line': { padding: '0 4px' },
+          '.cm-gutters': { background: 'transparent', border: 'none', color: tok('--color-text-muted', '#646883') },
         }),
       ],
     });
@@ -150,9 +174,7 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
     >
       <h2 id={EDITOR_LABEL_ID} style={{ fontSize: '1rem', margin: 0 }}>
         Write a Boolean expression equivalent to:{' '}
-        <code style={{ background: '#f3f4f6', padding: '2px 6px', borderRadius: '4px' }}>
-          {spec.targetExpression}
-        </code>
+        <code className="pseudo-target">{spec.targetExpression}</code>
       </h2>
 
       {/* Hidden input for test-driving the editor content (data-testid for tests) */}
