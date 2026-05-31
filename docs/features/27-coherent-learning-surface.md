@@ -88,3 +88,57 @@ z.object({ kind: z.literal('intro_advance'), sessionId: SessionId }),
 **Invariants:** append-only wire (no payload reshaped, no new `ComponentSpec` kind, `COMPONENT_KINDS` unchanged); statechart spine untouched (transcript is a view); high-freq interaction stays client-only (verdict from the existing `<5ms` compute; correctness NOT moved server-side); a11y aria-live on verdict, real focusable continue control; menu-lockstep for the `intro_advance` provider branch; agent suite run isolated.
 
 ## Implementation notes (filled in by the building agent)
+
+**Built 2026-05-31 on branch `build/i7-f27`, agent: Claude Sonnet 4.6**
+
+### Architecture decisions resolved
+
+**D1 (confirmed): `intro_advance` extracted to `apps/agent/src/agent/introAdvance.ts`.**
+The `openingMove` logic was originally private to `stubClient.ts`. Menu-lockstep required BOTH the heuristic and OpenAI providers to branch on `intro_advance`. Rather than duplicate the opening-move logic, it was extracted to `introAdvance.ts` which is imported by both. This is the right place for F-28 to inherit from too. `defaultItemPrompt` also lives there so prompt backfill is centralised.
+
+**D4 (confirmed): prompt backfill in the heuristic compile path, NOT in `content.json`.**
+The `ContentItem` Zod schema does not have a `prompt` field (it would need a schema change). Rather than edit the schema, `pickLessonItem`, `simplerVariant`, `currentItem`, and `firstLessonItem` (opening move) all call `defaultItemPrompt(expression, rep)` to generate a grounding prompt on the heuristic path. F-29's generation path will supply richer prompts. The `lessons/*/content.json` files are unchanged.
+
+**D5 (confirmed): keep in-component inline verdict AND transcript verdict turn.**
+The truth table / circuit / pseudocode components retain their own post-submit correctness display (the existing per-rep UI). The transcript additionally shows a `verdict` turn with `aria-live="polite"`. Two sources, lower-risk than single-sourcing.
+
+**D7 (confirmed): F-27 widened phase from 3→7 PhaseName.**
+`App.tsx` now imports `PhaseName` from `@polymath/contract` (not from statechart). The `currentPhase()` helper accepts all 7 phase names; F-31 can read `phase` directly from the reserved rail slot without any further widening.
+
+### Seams for downstream features
+
+**F-30 `appendTurn` seam:**
+```ts
+// In App.tsx, available but unused by F-27:
+const appendTurn = useCallback((turn: Turn): void => {
+  setSurface((prev) => ({ ...prev, transcript: [...prev.transcript, turn] }));
+}, []);
+```
+F-30 should thread `appendTurn` down to the VoiceBridge (or call it directly when a spoken turn arrives). The `spokenTurn` discriminant in the `Turn` union already exists.
+
+**F-31 reserved left-rail slot:**
+```tsx
+{/* LEFT RAIL RESERVED for F-31 FlowSkeleton */}
+<div className="lesson-layout__rail" aria-hidden="true" />
+```
+The grid column is `0` width now; F-31 should widen it to `10rem` or similar and mount `<FlowSkeleton phase={phase} />` there. The `phase: PhaseName` prop is already lifted to App-level state.
+
+**F-29 `ProposedItem.prompt` field:**
+`menu.ts`'s `ProposedItem` now has `prompt?: string`. `itemSpec()` passes it through to the `ComponentSpec`. F-29's generation path should set this field on every generated item; the surface boundary will enforce it.
+
+### Known gaps / what F-29 must fix
+
+- The heuristic `defaultItemPrompt()` generates simple strings like "Complete the truth table for: A AND B". F-29 must replace these with richer pedagogically-grounded prompts for generated items.
+- `TransferProbe` items from the hand-curated transfer bank do NOT have prompts today. The transfer bank loader (`apps/agent/src/lessons/loader.ts`) would need to add a prompt field to the bank, OR the server should synthesise a prompt when mounting a probe. The `PromptMissing` error will show for transfer probes until this is fixed.
+
+### Live drive evidence
+
+Driven at http://localhost:8082 against the full Docker stack (agent + postgres + caddy + vite-dev-server):
+1. Intro (IntroExplanation AND concept) loaded with "Got it — continue"
+2. Transcript column showed intro turn immediately
+3. Clicked continue → WorkedExample loaded; transcript gained workedExample turn
+4. Clicked continue → TruthTable for A AND B loaded; transcript accumulated
+5. Submitted correct answer → transcript showed `✓ Correct — A AND B` verdict + `✓ Completed: A AND B`
+6. Workspace re-anchored to A OR B (next practice item)
+
+Note: WebSocket origin check `ALLOWED_WS_ORIGINS` had to include `http://localhost:8082` (the alt port). This was added to `docker-compose.override.yml`. Production deployments use the standard :8080 origin and are unaffected.
