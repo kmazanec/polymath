@@ -1625,6 +1625,16 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(await res.json()).toEqual({ error: 'voice not configured' });
     });
 
+    it('availability GET → { available: false } when unconfigured (no mic prompt)', async () => {
+      // The client probes this on mount to decide whether to offer the voice button. It
+      // mints nothing and needs no session — it only mirrors the env-config check, so it
+      // must agree with the 503 above (both fail closed when LIVEKIT_* is unset).
+      clearVoiceEnv();
+      const res = await fetch(`${baseUrl}/api/realtime/availability`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ available: false });
+    });
+
     it('returns 503 when LIVEKIT_API_KEY+SECRET are set but LIVEKIT_URL is empty', async () => {
       // Regression guard: a blank URL with valid credentials must still be treated
       // as "not configured" (the URL is required for the client to connect).

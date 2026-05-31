@@ -374,6 +374,25 @@ button:disabled {
   font-weight: 600; padding: 0.2rem 0.6rem; border-radius: var(--radius-pill);
   background: var(--color-signal-tint); color: var(--color-pass); }
 
+/* Ask-the-tutor (voice) affordance. The button mirrors the pill style; the
+ * unavailable variant is an honest, explicitly-disabled control with a one-line
+ * explanation so a learner never clicks a dead-looking button (the degraded-state
+ * fix — voice 503 when LiveKit isn't configured). */
+.ask-tutor { display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
+.ask-tutor__button {
+  font-family: var(--font-display); font-weight: 600; font-size: 0.92rem;
+  padding: 0.62rem 1.3rem; border: none; border-radius: var(--radius-pill);
+  background: var(--color-accent); color: var(--color-on-accent); cursor: pointer;
+  box-shadow: 0 6px 18px rgba(74,75,182,0.30);
+  transition: transform var(--dur-hover) var(--ease-spring), background var(--dur-hover) ease;
+}
+.ask-tutor__button:not(:disabled):hover { transform: translateY(-2px); background: var(--color-accent-hover); }
+.ask-tutor--unavailable .ask-tutor__button {
+  background: var(--color-surface-muted); color: var(--color-text-muted);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+.ask-tutor__note { font-size: 0.82rem; color: var(--color-text-muted); max-width: 30rem; line-height: 1.4; }
+
 /* Mastery moment — the ONE place the signature spectrum gradient is used (Task 7).
    White text sits on a DARK ink substrate; the gradient is laid over it at <1 opacity
    via ::before, so contrast for the headings/body stays AA (white on near-ink). */

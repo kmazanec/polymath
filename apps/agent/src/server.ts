@@ -796,6 +796,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *  Per-process is fine — this is a safety backstop, not a billing quota. */
 const realtimeMintLimiter = createRateLimiter({ limit: 6, windowMs: 60_000 });
 
+/** Whether voice is configured on this deployment. The LiveKit credentials are
+ *  env-only and fail closed: all three of key, secret, and a non-empty URL must be
+ *  present (a token with no server URL is useless to the browser). This is the single
+ *  source of truth shared by the mint route (503 when false) and the lightweight
+ *  availability probe (`GET /api/realtime/availability`) the client uses to decide
+ *  whether to offer the voice button at all — so the two can never disagree. */
+function voiceConfigured(): boolean {
+  const livekitUrl = (process.env['LIVEKIT_URL'] ?? '').trim();
+  const apiKey = process.env['LIVEKIT_API_KEY'];
+  const apiSecret = process.env['LIVEKIT_API_SECRET'];
+  return Boolean(apiKey) && Boolean(apiSecret) && livekitUrl !== '';
+}
+
 /** Mint a LiveKit join token for an existing session. The browser calls this to
  *  join the session's room directly, so the long-lived API secret never reaches
  *  the client — only a 5-minute, single-room token does. Read the env credentials
@@ -807,16 +820,14 @@ async function handleRealtimeSession(
   res: http.ServerResponse,
 ): Promise<void> {
   // Credentials are env-only; the repo ships no real keys, so an unconfigured
-  // deploy serves a clean 503 rather than minting an unusable token. The URL is
-  // required too — a token with no server URL is useless to the browser, so a
-  // missing/blank LIVEKIT_URL is "not configured", not a 201 with url:"".
-  const livekitUrl = (process.env['LIVEKIT_URL'] ?? '').trim();
-  const apiKey = process.env['LIVEKIT_API_KEY'];
-  const apiSecret = process.env['LIVEKIT_API_SECRET'];
-  if (!apiKey || !apiSecret || livekitUrl === '') {
+  // deploy serves a clean 503 rather than minting an unusable token.
+  if (!voiceConfigured()) {
     sendJson(res, 503, { error: 'voice not configured' });
     return;
   }
+  const livekitUrl = (process.env['LIVEKIT_URL'] ?? '').trim();
+  const apiKey = process.env['LIVEKIT_API_KEY']!;
+  const apiSecret = process.env['LIVEKIT_API_SECRET']!;
 
   let body: unknown;
   try {
@@ -2156,6 +2167,16 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       handleRealtimeSession(deps, req, res).catch(() =>
         sendJson(res, 500, { error: 'failed to mint realtime token' }),
       );
+      return;
+    }
+
+    // A side-effect-free availability probe: the client calls this on mount to decide
+    // whether to offer the voice button at all (vs. an honest disabled state). It mints
+    // nothing, takes no body, needs no session — it only reflects whether the LiveKit
+    // env is configured (the same fail-closed check the mint route's 503 uses), so the
+    // browser never prompts for the mic on a deployment where voice can't work.
+    if (req.method === 'GET' && url.pathname === '/api/realtime/availability') {
+      sendJson(res, 200, { available: voiceConfigured() });
       return;
     }
 
