@@ -348,6 +348,88 @@ describe('App a11y structure (F-27 AC#8)', () => {
   });
 });
 
+// ── F-30 spoken-turn transcript rendering (checklist item 17) ────────────────
+// An `answer_question{spoken:true}` from the server should:
+//  - Append a `spokenTurn{speaker:'learner'}` turn for the question.
+//  - Then append the AgentAnswer turn as a side turn.
+//  - The workspace should not be re-anchored (AgentAnswer is a side turn).
+//  - An `answer_question` WITHOUT spoken should still produce a typed answer
+//    (no learner bubble).
+describe('App F-30 spoken-turn transcript rendering (AC#3, D9)', () => {
+  it('answer_question{spoken:true} appends a learner spokenTurn then the answer, interleaved', async () => {
+    const { container } = render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    // Mount a practice item first so there's a workspace.
+    pushAction(TT_PRACTICE_1);
+    await waitFor(() => {
+      const ws = container.querySelector('[data-testid="workspace"]');
+      expect(ws?.querySelector('[aria-label*="A AND B"]')).not.toBeNull();
+    });
+
+    // Push an answer_question with spoken:true (the F-30 server path).
+    const msg: ServerMessage = {
+      kind: 'action',
+      sessionId: SESSION_ID,
+      action: {
+        type: 'answer_question',
+        question: 'what is NAND?',
+        answer: 'NAND is NOT AND — it is true except when both inputs are 1.',
+        topicClassification: 'on_topic',
+        rationale: 'r',
+        spoken: true,
+      },
+    };
+    act(() => { capturedHandlers?.onMessage(msg); });
+
+    // Both the learner's spoken question AND the agent's answer appear in the transcript.
+    const transcript = container.querySelector('[aria-label="Lesson log"]');
+    expect(transcript?.textContent).toContain('what is NAND?');
+    expect(transcript?.textContent).toContain('NAND is NOT AND');
+
+    // The workspace is STILL the practice item (AgentAnswer is a side turn).
+    const workspace = container.querySelector('[data-testid="workspace"]');
+    expect(workspace?.querySelector('[aria-label*="A AND B"]')).not.toBeNull();
+  });
+
+  it('answer_question WITHOUT spoken → typed answer only, no learner spoken bubble', async () => {
+    const { container } = render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    pushAction(TT_PRACTICE_1);
+    await waitFor(() => {
+      const ws = container.querySelector('[data-testid="workspace"]');
+      expect(ws?.querySelector('[aria-label*="A AND B"]')).not.toBeNull();
+    });
+
+    // Push a regular (typed) answer_question — no spoken flag.
+    const msg: ServerMessage = {
+      kind: 'action',
+      sessionId: SESSION_ID,
+      action: {
+        type: 'answer_question',
+        question: 'how does AND work?',
+        answer: 'AND outputs 1 only when both inputs are 1.',
+        topicClassification: 'on_topic',
+        rationale: 'r',
+        // No spoken field.
+      },
+    };
+    act(() => { capturedHandlers?.onMessage(msg); });
+
+    // The agent's answer appears in the transcript.
+    const transcript = container.querySelector('[aria-label="Lesson log"]');
+    expect(transcript?.textContent).toContain('AND outputs 1 only when both inputs are 1');
+
+    // For a typed question, the transcript still shows the question
+    // (via the AgentAnswer component rendering) — no extra spokenTurn learner bubble.
+    // The workspace remains anchored on the practice item.
+    const workspace = container.querySelector('[data-testid="workspace"]');
+    expect(workspace?.querySelector('[aria-label*="A AND B"]')).not.toBeNull();
+  });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe('App AC#6 regressions — recall and L1→L2 still work in transcript model', () => {
   it('recall card appends as a transcript turn and workspace survives', async () => {
     const { container } = render(<App />);

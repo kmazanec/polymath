@@ -25,7 +25,15 @@ export interface AdapterResult {
   /** A new component to mount, if this Action mounts one. */
   mount?: ComponentSpec;
   /** An answer to surface to the learner, if this Action is a Q&A response. */
-  answer?: { question: string; answer: string; topicClassification: 'on_topic' | 'off_topic' };
+  answer?: {
+    question: string;
+    answer: string;
+    topicClassification: 'on_topic' | 'off_topic';
+    /** F-30 (D9): true when the question arrived as a server-captured spoken turn.
+     *  The surface renders a spoken-turn bubble for the learner side when set.
+     *  Absent or false → typed bubble (fail-safe default). */
+    spoken?: boolean;
+  };
   /** True when a mount was refused by the transfer-probe hidden-rep guard
    *  (ADR-005 refusal #2). The caller drops the mount and may surface the refusal. */
   refused?: boolean;
@@ -119,6 +127,9 @@ export function adaptAction(action: Action, ctx?: AdapterContext): AdapterResult
           question: action.question,
           answer: action.answer,
           topicClassification: action.topicClassification,
+          // F-30 (D9): forward the spoken flag so App.tsx can append a spoken-turn
+          // bubble for the learner's side. Absent → typed (fail-safe default).
+          ...(action.spoken ? { spoken: true } : {}),
         },
       };
     case 'no_action':

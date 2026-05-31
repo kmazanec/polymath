@@ -52,6 +52,31 @@ describe('adaptAction', () => {
     expect(r.lessonEvents).toBeUndefined();
   });
 
+  // F-30 (D9): spoken flag forwarded through the adapter
+  it('I7/F-30: answer_question{spoken:true} → answer.spoken is true', () => {
+    const r = adaptAction({
+      type: 'answer_question',
+      question: 'what is NAND?',
+      answer: 'NAND is...',
+      topicClassification: 'on_topic',
+      rationale: 'r',
+      spoken: true,
+    });
+    expect(r.answer?.spoken).toBe(true);
+    expect(r.answer?.question).toBe('what is NAND?');
+  });
+
+  it('I7/F-30: answer_question without spoken flag → answer.spoken is absent (typed default)', () => {
+    const r = adaptAction({
+      type: 'answer_question',
+      question: 'q',
+      answer: 'a',
+      topicClassification: 'on_topic',
+      rationale: 'r',
+    });
+    expect(r.answer?.spoken).toBeUndefined();
+  });
+
   it('no_action → no effect', () => {
     expect(adaptAction({ type: 'no_action', reason: 'thinking', rationale: 'r' })).toEqual({});
   });

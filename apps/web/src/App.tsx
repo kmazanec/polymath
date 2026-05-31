@@ -357,7 +357,15 @@ export function App(): ReactElement {
               };
               // For lesson sessions, route through applyMount (transcript side turn).
               if (!playground) {
-                setSurface((prev) => applyMount(prev, answerSpec));
+                setSurface((prev) => {
+                  // F-30 (D9): when the answer is a spoken turn, prepend a learner
+                  // spokenTurn bubble (the learner's question) before the agent reply,
+                  // so the transcript shows learner→agent interleaved in order.
+                  const withLearner = r.answer!.spoken
+                    ? appendSpokenTurn(prev, 'learner', r.answer!.question)
+                    : prev;
+                  return applyMount(withLearner, answerSpec);
+                });
               } else {
                 // For the playground, update the separate playground answer slot.
                 setPlaygroundAnswer(answerSpec);
