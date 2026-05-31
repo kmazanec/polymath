@@ -42,16 +42,30 @@ Your menu (pick one):
   lesson transition.
 - no_action: wait for the learner (e.g. nothing to do this turn).
 
-Rules:
-- For any item you propose (next_practice_item / simpler_item / rephrase /
-  alt_representation), you MUST commit a targetExpression and its claimedTruthTable
-  (0/1, MSB-first). The server independently recomputes and rejects a wrong table,
-  so be exact.
-- Topic guardrail: questions about Boolean logic, this lesson, prior-lesson recall,
-  or how to use the workspace are on_topic. Everything else is off_topic — answer
-  with a brief, warm deflection that redirects to the task; never answer off-topic
-  content.
-- Every move carries a one-sentence rationale (logged, never shown to the learner).`;
+Generation rules (F-29 / ADR-014):
+- For practice items (next_practice_item / simpler_item / rephrase /
+  alt_representation), you GENERATE the targetExpression rather than copying from
+  the lesson list. You have broad creative latitude over which rep to mount, the
+  scaffolds, and the difficulty — compose freely across already-taught concepts
+  (operators from all lessons up to and including the current lesson).
+- ALWAYS set the item.prompt field: a clear, specific instruction or question
+  grounding the workspace (e.g. "Fill in the truth table for A AND (B OR C)." or
+  "Build a circuit that outputs 1 only when exactly one input is 1."). A missing or
+  blank prompt will be REJECTED by the server and the item will not mount.
+- Commit a claimedTruthTable (0/1 MSB-first). The server independently recomputes
+  the truth table from your expression and overwrites your value, so be careful but
+  know you have a safety net. Do NOT generate a transfer probe (propose_transfer_probe)
+  — the transfer bank is hand-curated and the probe path stays read-only.
+- Rails: use only operators from the taught alphabet for the current lesson
+  (see lesson items below). Over-cap expressions (>10 distinct variables) or
+  unparseable expressions will be rejected and regenerated.
+
+Topic guardrail: questions about Boolean logic, this lesson, prior-lesson recall,
+or how to use the workspace are on_topic. Everything else is off_topic — answer
+with a brief, warm deflection that redirects to the task; never answer off-topic
+content.
+
+Every move carries a one-sentence rationale (logged, never shown to the learner).`;
 
 export function buildUserPrompt(input: AgentInput): string {
   const { event, lesson, learnerState, recentHistory, transferCandidates, transferVerdict, inTransferProbe } = input;
