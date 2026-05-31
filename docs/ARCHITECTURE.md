@@ -178,6 +178,11 @@ The explain-back is the **integrity boundary**: deterministic preconditions catc
 | [ADR-010](./adrs/ADR-010-content-correctness-and-validation.md) | Five-layer validation: truth-table compare for submissions; agent-commits-answer for items; templated hints; deterministic preconditions + LLM judge for explain-back; hand-curated transfer bank | Accepted | no |
 | [ADR-011](./adrs/ADR-011-evaluation-and-mastery-instrumentation.md) | Mastery gate parameters (BKT 0.95 + consecutive-3 + 2/60s + behavioral flags + transfer + explain-back); six counter-metrics; N=5–8 wizard-of-oz chat-baseline comparison | Accepted | no |
 | [ADR-012](./adrs/ADR-012-stretch-features-for-nerdy.md) | Three MVP+ features (Nerdy-KPI-shape telemetry, FERPA/accessibility writeup, cross-lesson recall); stretch order L3 → L4 → Handoff-to-tutor → Teacher artifact → L5 Playground | Accepted | mixed |
+| [ADR-013](./adrs/ADR-013-playground-micro-statechart.md) | The L5 free-build playground is its own micro-statechart (a sibling machine composed after the lesson spine's `mastered` final state), not a substate of the locked lesson spine | Accepted | yes |
+| [ADR-014](./adrs/ADR-014-validator-gated-generative-agent.md) | The inner agent GENERATES challenge content within rails; the engine owns the answer key and the unchanged Layer-2 + earned-it gate disposes (refines ADR-005's "never invents"; generation drives practice only, never mastery) | Accepted | no |
+| [ADR-015](./adrs/ADR-015-coherent-learning-surface-transcript.md) | The learning surface is an anchored workspace + an append-only transcript (incl. spoken turns) with an always-present forward affordance, a locked flow-skeleton, a grounding prompt on every challenge, and explicit verdicts — not a single overwriting mount slot (refines ADR-008) | Accepted | no |
+| [ADR-016](./adrs/ADR-016-spoken-turns-and-tablet-touch.md) | Spoken responses are first-class tutoring input (server-captured, fed to the LLM tutor, in the transcript); the surface is tablet-first / touch-native (≥44px targets, touch drag) — supersedes ADR-004's mouse-primary + single-device input clauses | Accepted | no |
+| [ADR-017](./adrs/ADR-017-agent-eval-policy-golden-set.md) | The agent has a deterministic golden set that always runs offline (100%-gating every MR) + labeled scenario banks (adversarial, generation, spoken-turn, pedagogical) judged live on protected main at agreement thresholds | Accepted | no |
 
 The ADR files are the source of truth; this index exists so a reader can find decisions. ADRs are not modified after acceptance — superseded decisions get a new ADR with `Supersedes: ADR-NNN`.
 
@@ -216,7 +221,7 @@ Deliberate omissions, each with the reason it's *not* in scope:
 - **24-hour false-positive mastery measurement at scale.** Out of scope to measure at scale; *in scope* to design for. Measured only on the N=5–8 baseline-experiment subjects. Documented in the Limitations memo. [ADR-011](./adrs/ADR-011-evaluation-and-mastery-instrumentation.md).
 - **AWS / GCP deployment.** The portal lists these under "cloud platforms" but the submission criterion is a working prototype, not a specific cloud. We deploy to Keith's existing DigitalOcean droplet pattern; the AWS-equivalent architecture is documented in [ADR-009](./adrs/ADR-009-backend-persistence-and-hosting.md).
 - **User accounts, authentication, multi-tenant data isolation.** Opaque session tokens; no PII; suitable for prototype, documented as a production-migration concern.
-- **Mobile app, tablet app, native clients.** Web-only.
+- **Native mobile/tablet apps, native clients.** Web-only — but the web surface is now **tablet-first / touch-native** ([ADR-016](./adrs/ADR-016-spoken-turns-and-tablet-touch.md)): touch drag, ≥44px targets, designed for use on a tablet browser. A *native* app is still out of scope; phone-camera / cross-device sensor fusion remains deferred (ADR-004).
 
 ---
 

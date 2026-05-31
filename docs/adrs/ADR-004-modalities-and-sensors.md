@@ -1,7 +1,7 @@
 # ADR-004: Input modalities = mouse/keyboard + voice; Output modalities = three live representations + spoken tutor TTS + a learner-triggered pulse-through-the-circuit; skip multi-device for MVP
 
-**Status:** Accepted · **Date:** 2026-05-27 · **Stretch:** no
-**Supersedes:** none · **Superseded by:** none
+**Status:** Accepted (Inputs + Multi-device clauses partially superseded) · **Date:** 2026-05-27 · **Stretch:** no
+**Supersedes:** none · **Superseded by:** [ADR-016](./ADR-016-spoken-turns-and-tablet-touch.md) — the *Inputs* clause (touch becomes co-primary; spoken conversational Q&A becomes first-class wired input) and the *Multi-device* framing (a tablet/touch device is now the assumed surface, still single-device). The voice rationale, the anti-cheat explain-back thesis, the pulse, and the TTS-out-for-explain-back-only output asymmetry are NOT superseded and still stand.
 
 ## Context
 

@@ -6,7 +6,7 @@
 
 ## Overview
 
-Polymath is a multimodal hyperresponsive mastery interface for Boolean logic ([ADR-001](./adrs/ADR-001-learning-domain-boolean-logic.md)). This roadmap decomposes the architecture into **7 iterations** containing **26 vertical-slice features**, designed for a build cadence of **many Claude sessions each spinning up many sub-agents**, with agent teams running concurrent feature branches against tightly locked contracts. The arc runs from a walking-skeleton deploy (iteration 0), through MVP (L1+L2 with the full mastery gate and the chat-baseline experiment) by week 4, into stretch (L3 → L4 → tutor handoff → teacher artifact → L5 playground) by week 6. Two iteration pairs are designed for cross-iteration concurrency: I3 (Lesson 2) ‖ I4 (chat-baseline app), and the stretch features (I6) are independently shippable in priority order.
+Polymath is a multimodal hyperresponsive mastery interface for Boolean logic ([ADR-001](./adrs/ADR-001-learning-domain-boolean-logic.md)). This roadmap decomposes the architecture into **8 iterations** containing **32 vertical-slice features**, designed for a build cadence of **many Claude sessions each spinning up many sub-agents**, with agent teams running concurrent feature branches against tightly locked contracts. The arc runs from a walking-skeleton deploy (iteration 0), through MVP (L1+L2 with the full mastery gate and the chat-baseline experiment) by week 4, into stretch (L3 → L4 → tutor handoff → teacher artifact → L5 playground) by week 6, then a **post-MVP re-architecture (I7)** that makes the experience coherent and the agent genuinely generative (the brief's "the interface itself is part of the tutoring"). Two iteration pairs are designed for cross-iteration concurrency: I3 (Lesson 2) ‖ I4 (chat-baseline app), and the stretch features (I6) are independently shippable in priority order.
 
 The iteration arc — what each merge buys, in order:
 
@@ -19,6 +19,7 @@ The iteration arc — what each merge buys, in order:
 | 4 | Chat-baseline experiment | …run the within-subject baseline experiment; pre/post tests + 24h follow-up are captured. (Runs concurrent with I3.) |
 | 5 | MVP+ polish | …see Nerdy-KPI-shape telemetry, the privacy/accessibility posture, and all six counter-metrics on a dashboard. |
 | 6 | Stretch (priority-ordered, may be cut) | …work through L3 → L4 → tutor handoff → teacher artifact → L5 playground, in that order, as time permits. |
+| 7 | Coherent surface + generative agent | …learn on a touch-native tablet surface (anchored workspace + transcript, explicit verdicts, a flow-skeleton, an always-present "what's next"), **speaking** to a front-line LLM tutor that hears them and replies, while that tutor *generates* the next grounded challenge from their live state — validator-gated so content stays correct. |
 
 The most consequential single decision in this roadmap: **contracts lock at the end of iteration 0** so iterations 1–6 can safely fan out across many sub-agent workstreams in parallel. Iteration 0 is therefore atypically slow and atypically critical; it converts wall-clock time into parallelism budget for everything that follows.
 
@@ -89,6 +90,12 @@ The longest-serial residue (the **critical path**): `I0 → I1 → I2 → I3 →
 | F-24 | [Handoff-to-tutor artifact](./features/24-handoff-to-tutor.md) | I6 | Session ends silently → end-of-session artifact (PDF or URL) auto-populated from session log + mastery state, framed as handoff to a Nerdy human tutor | F-18 | F-25 | F-22, F-23 |
 | F-25 | [Teacher artifact (VT4S shape)](./features/25-teacher-artifact.md) | I6 | No teacher-side report → per-KC mastery + misconception flags + next-session focus, reusing the handoff summarisation pipeline | F-24 | (none) | F-22, F-23 |
 | F-26 | [L5 Playground (capstone)](./features/26-l5-playground.md) | I6 | Curriculum ends at L4 → free-build mode lets learner propose a target and the system challenges them across all three reps | F-23 | (none) | F-24, F-25 |
+| F-27 | [Coherent learning surface](./features/27-coherent-learning-surface.md) | I7 | Single overwriting mount slot (no history, no "continue", invisible verdict) → anchored workspace + append-only transcript with explicit verdicts, a forward affordance, and an orientation banner | none | F-29 (soft) | F-28 |
+| F-28 | [Stateful agent flow + live LLM](./features/28-stateful-agent-flow.md) | I7 | Single-node `propose` graph, no memory, canned Q&A → multi-node assess→decide→realize→validate→emit graph with per-session deliberation memory; real LLM Q&A when keyed, heuristic fallback | none | F-29 | F-27 |
+| F-29 | [Validator-gated generation](./features/29-validator-gated-generation.md) | I7 | Agent selects from a fixed authored array → agent *generates* the next challenge (rep, expression, scaffolds, **prompt**) with broad latitude within rails; engine owns the answer key; gate validates or regenerates | F-28 | (none) | F-30, F-31 |
+| F-30 | [Spoken-turn tutoring](./features/30-spoken-turn-tutoring.md) | I7 | Spoken feedback used nowhere but explain-back → student speaks mid-lesson; utterance captured server-side, fed to the LLM tutor, answered in text, and both turns enter the transcript (no client-trusted transcript) | none | (none) | F-27, F-28, F-31 |
+| F-31 | [Tablet-touch + flow skeleton](./features/31-tablet-touch-and-flow-skeleton.md) | I7 | Mouse/desktop UI, no arc orientation → touch-native (drag/tap, ≥44px targets) on a tablet, with a fixed sidebar flow-skeleton highlighting the live locked phase | none | (none) | F-27, F-29, F-30 |
+| F-32 | [Agent eval — golden set + scenario banks](./features/32-agent-eval-golden-set.md) | I7 | Ad-hoc evals, no named always-run set, no I7-surface coverage → a deterministic golden set gating every MR at 100% + labeled banks (adversarial, generation, spoken-turn, pedagogical) judged live on protected main | none | (gates F-29/F-30 "done") | F-27, F-28, F-30, F-31 |
 
 ---
 
@@ -108,6 +115,11 @@ A contract is shared shape that multiple features must agree on. Every contract 
 | **Lesson config JSON** | `lessons/<id>/mastery_config.json` + `lessons/<id>/content.json` | F-01 (lesson_1 stub: thresholds + 3 items) | F-09 (full mastery params), F-13 (lesson_2), F-22, F-23, F-26 | Adding a lesson = new directory + new JSON. Existing lesson configs are not edited cross-feature (only by the feature that owns that lesson). | None expected — directory-scoped ownership. |
 | **Curated component registry (rendering)** | `apps/web/src/components/registry.ts` (switch on `ComponentSpec.kind`) | F-01 (stub components) | F-02..F-04, F-06, F-07, F-11, F-14, F-18, F-22..F-26 | Every new `ComponentSpec.kind` adds a `case` to the switch. The switch must remain exhaustive (TS enforced via discriminated union). | ⚠ I1: F-02/F-03/F-04 all add a `case` to the same switch file. Sub-agents must coordinate at the file-edit level (claim a case alphabetically; merge order matters). |
 | **`PulseContext`** | `apps/web/src/canvas/PulseContext.tsx` | F-03 (introduces; circuit-only initially) | F-02 (truth-table row subscribes), F-04 (pseudocode line subscribes) | The context shape (`{ activeStep: number | null, schedule: PulseStep[] }`) is locked in F-03 before F-02 and F-04 subscribe. F-02 and F-04 must not modify the producer side. | ⚠ This is the highest-friction convergence in I1: F-02/F-04 cannot complete the "rep subscribes to pulse" piece until F-03 has merged its `PulseContext` producer. Plan: F-03 lands the producer first (within its own PR); F-02 and F-04 subscribe in follow-up commits within their PRs. |
+| **Learning surface** (anchored workspace + transcript) | `apps/web/src/App.tsx` (transcript model + append-vs-re-anchor policy) | F-27 | (none yet — F-29 renders generated items into it but builds against the frozen surface) | Source of truth: **[ADR-015](./adrs/ADR-015-coherent-learning-surface-transcript.md)**. The transcript renders the **existing** `ComponentSpec` kinds — **no new kind** (registry change protocol not triggered). At most ONE append-only optional WebSocket signal (deterministic intro-advance); no existing payload reshaped. | None within I7 (F-27 ships first, alone). |
+| **Inner-agent flow + generation rails** | `apps/agent/src/agent/` (the `StateGraph` nodes + the generation rails) | F-28 (multi-node graph + provider seam) | F-29 (fills the `realize` node with validator-gated generation) | Source of truth: **[ADR-014](./adrs/ADR-014-validator-gated-generative-agent.md)** (+ ADR-003/006). The `MoveProvider` interface widens minimally for deliberation state; the validate/emit tail (retry-once → fallback → `no_action`, Layer-2, 15s timeout) is unchanged. **Generation adds a `@polymath/booleans` call site — it MUST be var-capped.** The engine owns the answer key; the model never asserts a trusted `claimedTruthTable`; **every generated item carries a grounding prompt.** | F-29 hard-depends on F-28 (its generation IS the `realize` node) — serial within I7. The keyless path stays behavior-preserving so existing agent suites hold. |
+| **Voice capture seam (general utterance)** | `apps/agent/src/voice/` (a getter beside the explain-back registry, fed by `VoiceBridge`) | F-30 | (none) | Source of truth: **[ADR-016](./adrs/ADR-016-spoken-turns-and-tablet-touch.md)** (+ ADR-006). Adds a per-session `latestLearnerUtteranceFor(sessionId)`-style getter; **does NOT reshape `RealtimeSession`** (add a getter). **The agent answers ONLY the server-captured transcript, never a client frame** — same integrity rule as explain-back, fail-closed to empty. Explain-back's gated seam is untouched (sibling, not modification). | None — F-30 is independent within I7; the explain-back seam is the pattern to copy. |
+| **Touch design contract (≥44px targets + touch-native drag)** | `apps/web/src/components/*` + the react-flow canvas + I7 affordances | F-31 | (every interactive component conforms) | Source of truth: **[ADR-016](./adrs/ADR-016-spoken-turns-and-tablet-touch.md)** (extends ADR-012 a11y posture). WCAG 2.5.5 target-size floor; drag works under touch (pointer events, finger-sized handles). Enforced in review + the axe suite. | None new — a conformance contract every component meets; F-31 introduces it, F-27's new affordances conform from the start. |
+| **Agent eval contract (golden set + labeled banks)** | `apps/agent/src/agent/eval/` + `evals/` (JSON fixtures + vitest runner) | F-32 (harness, named golden set, CI policy, thresholds) | F-29 (generation validity/quality scenarios), F-30 (spoken-turn scenarios); existing F-05 inner-agent + F-11 explain-back banks fold in | Source of truth: **[ADR-017](./adrs/ADR-017-agent-eval-policy-golden-set.md)**. Deterministic golden set gates every MR at 100% (no key); labeled banks judged live on protected `main` only (≥95% agent move, ≥90% explain-back + spoken-turn groundedness). Validity checks reuse the var-capped `@polymath/booleans` (no second correctness source). **No provider secret in MR pipelines.** | F-29/F-30 each contribute a bank — the planner reconciles both into the one harness. The golden set is the floor that makes "always run" real. |
 
 A roadmap reader who only reads this section understands the architecture's joints — and the points where parallel sub-agent workstreams will need to reconcile.
 
@@ -352,6 +364,47 @@ However, the priority order admits **two viable concurrent pairs**: F-22 (L3) ca
 **Cut rule:** at the end of each week in I6, the highest-priority unstarted feature is dropped if it cannot finish in the remaining time. Do not start what cannot be finished — half-built stretch features hurt the submission.
 
 **Wall-clock estimate: 7–10 days, with up to 2 features in flight at once via the L3‖Handoff and L4‖Teacher pairs.**
+
+---
+
+### I7 — Coherent surface + generative agent (post-MVP re-architecture)
+
+```mermaid
+graph TB
+  F27[F-27 Coherent learning surface]
+  F28[F-28 Stateful agent flow + live LLM]
+  F29[F-29 Validator-gated generation]
+  F30[F-30 Spoken-turn tutoring]
+  F31[F-31 Tablet-touch + flow skeleton]
+  F32[F-32 Agent eval — golden set]
+  F28 --> F29
+  F27 -.soft.-> F29
+  F27 -.soft.-> F30
+  F27 -.soft.-> F31
+  F29 -.labels.-> F32
+  F30 -.labels.-> F32
+```
+
+I7 closes the gap between what shipped and the brief's core idea — *"the interface itself is part of the tutoring"* — surfaced by driving a real lesson: the UI was a single overwriting slot (no history, no forward affordance, invisible verdict), the agent *selected* from a fixed array rather than *generating* challenges, the student's spoken feedback was used nowhere, and the surface assumed mouse-on-desktop. Three new ADRs are the source of truth: **[ADR-014](./adrs/ADR-014-validator-gated-generative-agent.md)** (the agent generates *with broad creative latitude* within rails; the engine owns the answer key; the unchanged Layer-2 + earned-it gates dispose; every challenge carries a grounding prompt), **[ADR-015](./adrs/ADR-015-coherent-learning-surface-transcript.md)** (anchored workspace + append-only transcript incl. spoken turns + a locked flow-skeleton + always-present "what's next" + prompt-on-every-challenge), and **[ADR-016](./adrs/ADR-016-spoken-turns-and-tablet-touch.md)** (spoken responses as first-class server-captured tutoring input; tablet-first touch-native surface — superseding ADR-004's mouse-primary/single-device clauses).
+
+The five gaps this iteration closes (the product owner's I7 direction):
+
+1. **The tutor hears the student (F-30).** A spoken turn is captured + transcribed server-side and fed to the LLM front-line tutor, which replies in text (confirm understanding / re-instruct); both turns enter the transcript. The transcript the agent answers is **server-captured, never a client frame** — the explain-back integrity rule, reused.
+2. **Touch-native tablet surface (F-31).** Everything draggable/tappable with ≥44px finger targets; a new touch design contract enforced across every component.
+3. **A locked flow-skeleton (F-31).** The fixed lesson phases render as a sidebar rail with the live position highlighted — orientation for a non-deterministic path (the phases are fixed up front; the path through them is the agent's call).
+4. **Creative agent freedom (F-29 / ADR-014).** The agent freely chooses the next challenge — rep, expression, scaffolds, framing — composing across taught concepts, bounded only by the rails + fail-closed gates.
+5. **Every challenge is grounded (F-29 + F-27 / ADR-015).** No bare truth table / circuit / code box — every item-bearing surface carries an instruction or question; the agent generates it, the surface enforces it.
+6. **The agent is evaluated, not just unit-tested (F-32 / ADR-017).** A deterministic **golden set** gates every MR at 100% (no key), and **labeled scenario banks** — adversarial/anti-gaming, generation quality & safety, spoken-turn tutoring, pedagogical soundness — are judged live on protected `main` at stated agreement thresholds. The new generative + listening surfaces are exactly where a behavior eval (not a type check) earns its keep.
+
+- **F-27** is purely client-side (+ at most one append-only optional wire signal) and ships **first** — it fixes every *visible* symptom and is verified by a **live browser drive**, not just jsdom units (the prior verification gap). It also lands the transcript model that F-30's spoken turns and F-31's skeleton sit in.
+- **F-28** restructures the agent into a real multi-node `StateGraph` (assess → decide → realize → validate → emit) and wires the live LLM provider behind the keyed seam; behavior-preserving for the keyless path.
+- **F-29** fills F-28's `realize` node with validator-gated, prompt-carrying generation.
+- **F-30** and **F-31** are independent of the F-28→F-29 chain (they build against the frozen F-27 surface) and can run concurrently with the agent rework.
+- **F-32** (eval) owns the golden-set harness and folds in the existing banks immediately; F-29 and F-30 contribute their labeled scenarios as they land. It is the gate F-29/F-30 are "done" against, not a blocker on their start.
+
+The longest chain is **F-28 → F-29** (generation is F-28's `realize` node); F-27, F-30, F-31, F-32 run concurrent with it. I7 has **no cross-iteration hard dep** beyond the shipped I0–I6 product, so it can be planned/built as its own unit.
+
+**Every I0–I6 invariant is preserved, explicitly:** the locked contract is append-only (no payload reshaped; the only additions are append-only optional fields — `prompt` on item kinds, an intro-advance signal — and no new `ComponentSpec` kind); the statechart spine is untouched (the flow-skeleton *reads* the phase, the transcript is a *view*); the server never trusts the agent (Layer-2 + earned-it gates unchanged) **and never trusts a client-sent transcript** (spoken Q&A uses the server-captured seam, like explain-back); var-cap on every `@polymath/booleans` call site (incl. the new generation one); `events.app IS NULL`; server-recomputed correctness; uncapped off-topic counter (folds spoken off-topic too); server-minted mastery celebration; TTS-out stays explain-back-only; high-frequency interaction stays client-only.
 
 ---
 
