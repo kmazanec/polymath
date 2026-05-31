@@ -40,6 +40,10 @@ services:
     build:
       context: /srv/polymath/current
       dockerfile: apps/agent/Dockerfile
+      # Explicit prod stage. The Dockerfile's last stage is `dev` (tsx watch, local
+      # hot-reload only); an untargeted build would ship that to the droplet. Pin
+      # the production `runtime` stage. (dev-stack HMR.)
+      target: runtime
     image: polymath-agent:${GIT_SHA:-latest}
     container_name: polymath-agent
     restart: unless-stopped
@@ -70,6 +74,8 @@ services:
     build:
       context: /srv/polymath/current
       dockerfile: apps/web/Dockerfile
+      # Prod static-bundle stage (the Dockerfile's `dev` Vite stage is local-only).
+      target: runtime
       # Vite INLINES import.meta.env at BUILD time, so PostHog config must reach
       # `docker build` as build args — compose env_file is runtime-only and never
       # reaches the build (MR !8 review). Without this the deployed bundle ships

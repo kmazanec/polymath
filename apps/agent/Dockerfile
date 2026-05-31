@@ -41,3 +41,25 @@ WORKDIR /app/apps/agent
 EXPOSE 8080
 # Migrations run on boot (index.ts calls runMigrations before listening).
 CMD ["pnpm", "exec", "tsx", "src/index.ts"]
+
+# --------------------------------------------------------------------------
+# Dev target: `tsx watch` so backend edits auto-restart the agent (~1s), used by
+# docker-compose.override.yml. It carries the installed node_modules from `deps`
+# and a full copy of the source as a fallback; the override bind-mounts the live
+# host source (apps/agent, packages, lessons, seed_data) over it so saves on the
+# host trigger the in-container watcher. NOT used in production (compose.prod.yaml
+# builds the `runtime` stage, the default final target).
+# --------------------------------------------------------------------------
+FROM base AS dev
+WORKDIR /app
+ENV NODE_ENV=development
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages ./packages
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY packages packages
+COPY apps/agent apps/agent
+COPY lessons lessons
+COPY seed_data seed_data
+WORKDIR /app/apps/agent
+EXPOSE 8080
+CMD ["pnpm", "exec", "tsx", "watch", "src/index.ts"]

@@ -18,6 +18,21 @@
 #         docker compose -f docker-compose.yml up -d --build web
 
 services:
+  # Backend hot-reload: `tsx watch` restarts the agent (~1s) on a source save instead
+  # of needing `up --build agent`. Bind-mount the live source + the runtime-read data
+  # dirs (lessons/, seed_data/ are read at boot — migrations + transfer-bank seed) so a
+  # host edit reaches the in-container watcher. node_modules stays from the image.
+  agent:
+    build:
+      target: dev
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./apps/agent/src:/app/apps/agent/src
+      - ./packages:/app/packages
+      - ./lessons:/app/lessons
+      - ./seed_data:/app/seed_data
+
   web:
     build:
       # Build the Vite dev-server stage instead of the nginx static-bundle stage.

@@ -26,6 +26,10 @@ services:
     build:
       context: .
       dockerfile: apps/agent/Dockerfile
+      # Pin the prod stage explicitly: the Dockerfile also has a `dev` stage (last),
+      # and an untargeted build picks the LAST stage. docker-compose.override.yml
+      # flips this to `dev` for local hot-reload. (dev-stack HMR.)
+      target: runtime
     environment:
       PORT: '8080'
       POSTGRES_URL: postgres://polymath:polymath@postgres:5432/polymath
@@ -55,6 +59,9 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # Pin the prod (static nginx) stage; the Dockerfile's `dev` stage (Vite HMR)
+      # is selected only by docker-compose.override.yml. (dev-stack HMR.)
+      target: runtime
     expose:
       - '80'
 
