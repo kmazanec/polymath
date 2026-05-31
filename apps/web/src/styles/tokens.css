@@ -71,7 +71,14 @@
 
   /* Signature gradient — RESERVE for mastery */
   --gradient-spectrum: linear-gradient(100deg, #ffc32b 8%, #fb43da 38%, #d684ff 62%, #17e2ea 88%);
-  --gradient-primary: linear-gradient(135deg, #4a4bb6, #5376ff);
+  /* --gradient-primary: the brand-mark logotype gradient ONLY. It is NOT used on
+   * buttons anymore — the diagonal indigo→bright-blue sweep is the single most
+   * recognizable "AI-SaaS template" tell, and its light stop (#5376ff) failed AA for
+   * white text (3.89:1). The light stop is darkened to #4060d0 (white = 5.25:1) so the
+   * one remaining use — the small decorative brand-mark chip — stays AA. Primary CTAs
+   * now use a FLAT --color-accent fill (more intentional, lets signal-green stand apart).
+   * (design-audit: color rebalance + a11y H-1.) */
+  --gradient-primary: linear-gradient(135deg, #4a4bb6, #4060d0);
 
   /* Type */
   --font-display: 'Poppins', system-ui, -apple-system, sans-serif;
@@ -81,9 +88,28 @@
    * gives the large Poppins display its distinctive brand weight; several headline rules
    * were hard-coding -0.045em locally to get it — now they can inherit. */
   --tracking-display: -0.045em;
-  /* Fine-grained supporting-text sizes (was a spray of 0.7/0.72/0.8/0.82rem one-offs). */
-  --font-size-xs: 0.72rem;   /* mono utility labels: phase chip, table headers */
-  --font-size-sm: 0.85rem;   /* prose support text: notes, captions */
+  /* Type scale — a tight modular ladder. The landing/overview views previously sprayed
+   * ~18 distinct font-sizes (seven in the 0.86–0.98rem band alone). Snapping every view
+   * value to one of these stops is what makes the type read as DESIGNED rather than
+   * templated. (design-audit TYPE-1.) */
+  --font-size-xs: 0.72rem;   /* mono utility labels: eyebrows, tags, phase chip, table headers */
+  --font-size-sm: 0.85rem;   /* prose support text: notes, captions, footer */
+  --font-size-base: 0.95rem; /* body prose, card blurbs, list items, nav links */
+  --font-size-md: 1.05rem;   /* card titles, CTA labels, sub-leads */
+  --font-size-lg: 1.18rem;   /* section/panel titles, brand name */
+  --font-size-xl: 1.4rem;    /* sub-headline */
+  /* Display clamps — the two headline sizes, named so landing/overview reference one value. */
+  --font-size-display-sm: clamp(2.4rem, 5.5vw, 3.6rem);  /* overview headline */
+  --font-size-display:    clamp(2.8rem, 6.8vw, 4.6rem);  /* landing headline */
+
+  /* Eyebrow / label tracking — the mono-uppercase label is the most-repeated motif and
+   * had four different letter-spacings (0.14/0.12/0.1/0.08em). One token, one look. */
+  --tracking-eyebrow: 0.12em;  /* section eyebrows + card tags */
+  --tracking-label:   0.07em;  /* dense data labels: table headers, phase chip */
+
+  /* Line-height — was five raw values (1.4/1.45/1.5/1.55/1.6) doing the work of two. */
+  --line-height-body:  1.55;   /* body prose */
+  --line-height-tight: 1.4;    /* compact captions / list items */
 
   /* Spacing + radius.
    * --radius-1/2 keep their ORIGINAL pre-redesign values — the un-redesigned report
@@ -98,15 +124,37 @@
    * the new larger steps are additive. (design-audit H2.) */
   --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 1rem; --space-4: 1.5rem;
   --space-5: 2rem; --space-6: 3rem; --space-7: 4rem; --space-8: 6rem;
+  /* Half-steps. The jump 0.5→1→1.5rem was too coarse: the views freelanced 0.6/0.65/
+   * 0.7/0.75/0.8/0.9rem and 1.1/1.25/1.3rem to land between stops. Two half-steps absorb
+   * almost all of them so the magic values can collapse to tokens. (design-audit SPACE-1/3.) */
+  --space-2-5: 0.75rem; --space-3-5: 1.25rem;
+  /* Canonical card padding — was five different values across pillar/rep-card/panel. */
+  --padding-card: var(--space-4) var(--space-4);
   --radius-1: 0.25rem; --radius-2: 0.5rem;
   --radius-md: 0.75rem; --radius-card: 1.25rem; --radius-lg: 1.5rem; --radius-pill: 9999px;
 
+  /* Page content width. The entry flow previously drifted across three widths
+   * (landing 72rem, overview 60rem, global main 64rem) with no shared anchor, so the
+   * landing→overview transition felt like a different app. One transitional token unifies
+   * the marketing pages; the lesson shell (<main>) keeps its own tighter 64rem. The
+   * landing stays slightly wider for its full-width hero. (design-audit hierarchy H-3.) */
+  --width-page: 68rem;
+
   /* Shadow + motion */
   --shadow-card: 0 6px 24px rgba(50,54,97,0.10), 0 1px 3px rgba(50,54,97,0.06);
-  --shadow-sm: 0 2px 8px rgba(50,54,97,0.06);
+  /* Resting content-card shadow. Was 0.06 alpha — nearly invisible on the near-white
+   * surface, so cards read as flush with the page. Boosted + a tight contact shadow added
+   * so a card reads as resting ON the surface. (design-audit color F5.) */
+  --shadow-sm: 0 2px 8px rgba(50,54,97,0.10), 0 1px 2px rgba(50,54,97,0.06);
   /* Button elevation — a token so dark mode can raise the alpha (a light-mode indigo
    * shadow is nearly invisible on the dark surface, which made buttons read as disabled). */
   --shadow-button: 0 6px 18px rgba(74,75,182,0.30);
+  /* Signal-green CTA glow — the marketing CTAs ("Begin Lesson 1", "Begin lesson") use this
+   * instead of a generic indigo shadow, so the page's primary action carries a PROMISE of
+   * the signal-green "correct" feeling rather than the AI-template indigo glow. The button
+   * fill stays indigo (--color-accent); only the cast shadow is green. (design-audit color
+   * rebalance.) */
+  --shadow-cta: 0 10px 28px rgba(20,201,138,0.30);
   /* Hover lift for interactive cards. */
   --shadow-lift: 0 12px 32px rgba(50,54,97,0.16), 0 2px 8px rgba(50,54,97,0.08);
   --ease-spring: cubic-bezier(0.16,0.84,0.44,1);
@@ -147,6 +195,9 @@
      * #0f1228 dark surface, so a filled button read as flat/disabled. Raise the alpha and
      * tint it toward the (lighter) dark-mode accent so the button keeps visible depth. */
     --shadow-button: 0 4px 16px rgba(139,140,240,0.45);
+    /* The dark-mode signal green is brighter (#2fe3a3); raise the glow alpha so the CTA
+     * keeps a visible green cast on the #0f1228 surface. */
+    --shadow-cta: 0 8px 24px rgba(47,227,163,0.40);
     --shadow-lift: 0 12px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
     /* --color-text-on-ink* are already light; they sit on a fixed dark surface in both
      * themes, so no dark override is needed. --color-backdrop already reads as a dark scrim. */

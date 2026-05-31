@@ -1,6 +1,10 @@
 /*
  * Lesson overview (`/learn`) — the calm bridge between landing and lesson.
  * On-brand per docs/BRAND.md, token-driven (tokens.css). No spectrum gradient here.
+ *
+ * Shared card/button/eyebrow/glyph-chip/brand-mark primitives come from global.css —
+ * this file adds only the layout, colour-overrides, and context-specific details that
+ * are unique to the overview page.
  */
 
 .overview {
@@ -20,126 +24,202 @@
 }
 .overview > * { position: relative; z-index: 1; }
 
+/* ── header ─────────────────────────────────────────────────────────────── */
+
 .overview__top {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 1.3rem clamp(1.25rem, 5vw, 3rem);
+  padding: var(--space-3-5) clamp(var(--space-3-5), 5vw, var(--space-6));
 }
-.overview__brand { display: flex; align-items: center; gap: 0.55rem; text-decoration: none; }
-.overview__brand-mark {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.8rem; height: 1.8rem; border-radius: 8px;
-  background: var(--gradient-primary); color: #fff; font-size: 0.9rem; box-shadow: var(--shadow-sm);
+
+.overview__brand {
+  display: flex; align-items: center; gap: var(--space-2-5); text-decoration: none;
 }
+
+/* .brand-mark from global.css — use at ~1.8–2rem default size, no override needed */
+
 .overview__brand-name {
-  font-family: var(--font-display); font-weight: 700; font-size: 1.1rem;
+  font-family: var(--font-display); font-weight: 700; font-size: var(--font-size-lg);
   letter-spacing: var(--tracking-display); color: var(--color-ink);
 }
+
+/* Back link — underlined (not color-only) with a 44px tap target. */
 .overview__back {
-  font-family: var(--font-display); font-weight: 600; font-size: 0.9rem;
-  color: var(--color-text-muted); text-decoration: none;
+  display: inline-flex; align-items: center;
+  min-height: 2.75rem;
+  font-family: var(--font-display); font-weight: 600; font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-decoration: underline; text-underline-offset: 2px;
   transition: color var(--dur-hover) ease;
 }
 .overview__back:hover { color: var(--color-accent); }
 
+/* ── main container ──────────────────────────────────────────────────────── */
+
 .overview__main {
-  flex: 1; width: 100%; max-width: 60rem; margin: 0 auto;
-  padding: clamp(1rem, 3vw, 2.5rem) clamp(1.25rem, 5vw, 3rem) 4rem;
-  display: flex; flex-direction: column; gap: clamp(1.75rem, 3.5vw, 2.75rem);
+  flex: 1; width: 100%;
+  /* Shared entry-flow width token (tokens.css), so landing/overview stop drifting. */
+  max-width: var(--width-page);
+  margin: 0 auto;
+  padding: clamp(var(--space-3), 3vw, var(--space-5)) clamp(var(--space-3-5), 5vw, var(--space-6)) var(--space-7);
+  display: flex; flex-direction: column; gap: clamp(var(--space-4), 3.5vw, var(--space-5));
 }
 
-/* hero */
+/* ── hero ────────────────────────────────────────────────────────────────── */
+
 .overview__hero { animation: ov-rise 0.45s var(--ease-spring) both; }
+
+/* .eyebrow from global.css owns the shape (mono, xs, uppercase, tracking-eyebrow).
+ * This context layer adds colour, the horizontal-rule prefix, and bottom margin. */
 .overview__eyebrow {
-  font-family: var(--font-mono); font-size: 0.76rem; letter-spacing: 0.12em;
-  text-transform: uppercase; color: var(--color-accent); margin: 0 0 0.8rem;
+  color: var(--color-accent);
+  margin: 0 0 var(--space-3);
 }
+/* Horizontal-rule prefix — mirrors the landing eyebrow so both pages feel like one system. */
+.overview__eyebrow::before {
+  content: '';
+  display: inline-block;
+  width: 1.5rem; height: 2px;
+  background: var(--color-cyan);
+  border-radius: 1px;
+  vertical-align: middle;
+  margin-right: var(--space-2-5);
+  position: relative; top: -1px;
+}
+
 .overview__title {
   font-family: var(--font-display); font-weight: 700;
-  font-size: clamp(2.1rem, 5vw, 3.2rem); line-height: 1.02;
-  letter-spacing: -0.045em; color: var(--color-ink); margin: 0 0 1rem;
+  font-size: var(--font-size-display-sm); /* clamp(2.4rem, 5.5vw, 3.6rem) */
+  line-height: 1.02;
+  /* letter-spacing inherits --tracking-display from the global h1 rule — no local override */
+  color: var(--color-ink); margin: 0 0 var(--space-3);
 }
-.overview__lede {
-  font-size: clamp(1rem, 1.5vw, 1.12rem); line-height: 1.6;
-  color: var(--color-text); max-width: 42rem; margin: 0 0 1.75rem;
-}
-.overview__cta-row { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
-.overview__begin {
-  display: inline-flex; align-items: center; gap: 0.55rem;
-  font-family: var(--font-display); font-weight: 600; font-size: 1.05rem;
-  color: #fff; border: none; cursor: pointer;
-  padding: 0.85rem 1.7rem; border-radius: var(--radius-pill);
-  background: var(--gradient-primary);
-  box-shadow: 0 10px 28px rgba(74, 75, 182, 0.36);
-  transition: transform var(--dur-hover) var(--ease-spring), box-shadow var(--dur-hover) ease;
-}
-.overview__begin:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(74, 75, 182, 0.44); }
-.overview__begin-arrow { transition: transform var(--dur-hover) var(--ease-spring); }
-.overview__begin:hover .overview__begin-arrow { transform: translateX(4px); }
-.overview__cta-note { font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-text-muted); }
 
-/* reps row */
+.overview__lede {
+  font-size: var(--font-size-md); line-height: var(--line-height-body);
+  color: var(--color-text); max-width: 42rem; margin: 0 0 var(--space-4);
+}
+
+.overview__cta-row {
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+}
+
+/* .btn .btn--cta from global.css — no bespoke button CSS here */
+
+.overview__cta-note {
+  font-family: var(--font-mono); font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* ── rep cards ───────────────────────────────────────────────────────────── */
+
+/* .card and .card--interactive from global.css provide bg/border/radius/shadow/hover-lift.
+ * .glyph-chip from global.css provides the icon chip shape (lavender bg, accent icon). */
+
 .overview__reps {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; align-items: stretch;
-  position: relative;
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3); align-items: stretch;
 }
 @media (max-width: 720px) { .overview__reps { grid-template-columns: 1fr; } }
-.rep-card {
-  background: var(--color-surface); border: 1px solid var(--color-border);
-  border-radius: var(--radius-card); box-shadow: var(--shadow-sm);
-  padding: 1.25rem 1.3rem;
-}
-.rep-card__glyph {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 2.4rem; height: 2.4rem; border-radius: 11px; margin-bottom: 0.75rem;
-  background: var(--color-signal-tint); color: var(--color-accent);
-  font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700;
-}
-.rep-card__label {
-  font-family: var(--font-display); font-weight: 600; font-size: 1.05rem;
-  margin: 0 0 0.35rem; color: var(--color-ink);
-}
-.rep-card__blurb { margin: 0; color: var(--color-text-muted); line-height: 1.5; font-size: 0.9rem; }
-.overview__reps-link { display: none; } /* decorative hook reserved; hidden for now */
 
-/* two-column panels */
+/* Rep card context — global .card handles structural styling */
+.rep-card__label {
+  font-family: var(--font-display); font-weight: 600; font-size: var(--font-size-md);
+  margin: 0 0 var(--space-2); color: var(--color-ink);
+  /* Reset heading letter-spacing from the global h1–h4 rule — card titles sit at md size
+   * and the -0.045em display tracking is too tight for this body-adjacent size. */
+  letter-spacing: 0;
+}
+
+.rep-card__blurb {
+  margin: 0; color: var(--color-text-muted);
+  line-height: var(--line-height-tight); font-size: var(--font-size-base);
+}
+
+/* ── two-column outcome / gate panels ────────────────────────────────────── */
+
 .overview__cols {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; align-items: start;
+  display: grid;
+  /* 0.9 / 1.1 ratio makes the mastery-gate panel intentionally dominant — editorial,
+   * not accidental misalignment. */
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: var(--space-3); align-items: start;
 }
 @media (max-width: 720px) { .overview__cols { grid-template-columns: 1fr; } }
+
+/* .card from global.css gives the light panel its bg/border/radius/shadow.
+ * The panels need a touch more breathing room than the default --padding-card gives
+ * for the dense text content inside — override with a slightly more generous padding. */
 .overview__panel {
-  background: var(--color-surface); border: 1px solid var(--color-border);
-  border-radius: var(--radius-card); box-shadow: var(--shadow-sm); padding: 1.5rem 1.6rem;
+  padding: var(--space-4) var(--space-4);
 }
+
+/* Gate panel — dark ink override. The element is `.overview__panel .overview__panel--gate
+ * .card`; since `.card` (global.css) and `.overview__panel--gate` are both single-class
+ * (equal specificity), source order would let `.card`'s light surface win. Chain the
+ * modifier with `.card` so the dark editorial surface wins unambiguously regardless of
+ * import order. (design-audit integration: gate panel went invisible.) */
+.overview__panel--gate.card,
 .overview__panel--gate {
-  background: var(--color-ink-deep); color: var(--color-text-on-ink); border: none;
-  box-shadow: var(--shadow-card);
+  background: var(--color-ink-deep); color: var(--color-text-on-ink);
+  border: none; box-shadow: var(--shadow-card);
 }
+
 .overview__panel-title {
-  font-family: var(--font-display); font-weight: 600; font-size: 1.15rem;
-  margin: 0 0 1rem; color: var(--color-ink);
+  font-family: var(--font-display); font-weight: 600; font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-3); color: var(--color-ink);
+  letter-spacing: 0; /* body-adjacent size — suppress display tracking */
 }
 .overview__panel--gate .overview__panel-title { color: var(--color-text-on-ink); }
 
-.overview__outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
-.overview__outcomes li { display: flex; gap: 0.65rem; line-height: 1.45; color: var(--color-text); }
+/* Outcomes list */
+.overview__outcomes {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--space-2-5);
+}
+.overview__outcomes li {
+  display: flex; gap: var(--space-2-5);
+  line-height: var(--line-height-body); color: var(--color-text);
+  font-size: var(--font-size-base);
+}
 .overview__tick {
   flex: 0 0 auto; color: var(--color-pass); font-weight: 700;
   width: 1.4rem; height: 1.4rem; border-radius: 50%; background: var(--color-signal-tint);
-  display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: var(--font-size-xs);
 }
 
-.overview__gate-lead { margin: 0 0 0.9rem; color: var(--color-text-on-ink-muted); line-height: 1.5; font-size: 0.94rem; }
-.overview__gate-list { margin: 0 0 0.9rem; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.6rem; }
+/* Gate panel content */
+.overview__gate-lead {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-on-ink-muted);
+  line-height: var(--line-height-body);
+  font-size: var(--font-size-base);
+}
+
+.overview__gate-list {
+  margin: 0 0 var(--space-3); padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: var(--space-2-5);
+}
 .overview__gate-list li {
-  position: relative; padding-left: 1.4rem; line-height: 1.45; color: var(--color-text-on-ink); font-size: 0.94rem;
+  position: relative; padding-left: var(--space-4);
+  line-height: var(--line-height-tight);
+  color: var(--color-text-on-ink); font-size: var(--font-size-base);
 }
 .overview__gate-list li::before {
   content: ''; position: absolute; left: 0; top: 0.5rem;
   width: 0.55rem; height: 0.55rem; border-radius: 2px;
-  background: var(--color-cyan);
+  /* Muted white — not cyan. Cyan carries the eyebrow meaning; using it here as a bullet
+   * creates a gratuitous second semantic for the same hue (color audit F6). */
+  background: var(--color-text-on-ink-muted);
 }
 .overview__gate-list strong { color: var(--color-text-on-ink); font-weight: 700; }
-.overview__gate-foot { margin: 0; font-size: 0.86rem; color: var(--color-text-on-ink-muted); font-style: italic; }
+
+.overview__gate-foot {
+  margin: 0; font-size: var(--font-size-sm);
+  color: var(--color-text-on-ink-muted); font-style: italic;
+}
+
+/* ── entrance animation ──────────────────────────────────────────────────── */
 
 @keyframes ov-rise {
   from { opacity: 0; transform: translateY(14px); }

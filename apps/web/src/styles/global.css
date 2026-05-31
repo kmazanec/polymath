@@ -49,10 +49,12 @@ main {
   gap: var(--space-4, 1.5rem);
 }
 
-/* Visible focus ring for keyboard users (never `outline: none` without a replacement). */
+/* Visible focus ring for keyboard users (never `outline: none` without a replacement).
+ * 3px offset so the ring sits clearly OUTSIDE a pill/ghost button's own border rather
+ * than merging with it (design-audit a11y L-3). */
 :focus-visible {
   outline: 2px solid var(--color-focus, #1d4ed8);
-  outline-offset: 2px;
+  outline-offset: 3px;
   border-radius: var(--radius-1, 0.25rem);
 }
 
@@ -165,8 +167,8 @@ main {
  * use `.btn .btn--primary` / `.btn .btn--ghost` directly.
  * ------------------------------------------------------------------------ */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
-  font-family: var(--font-display); font-weight: 600; font-size: 0.95rem;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  font-family: var(--font-display); font-weight: 600; font-size: var(--font-size-base);
   min-height: 2.75rem;            /* 44px — WCAG 2.5.5 tap target */
   padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
   cursor: pointer; text-decoration: none; white-space: nowrap;
@@ -188,6 +190,72 @@ main {
   transform: translateY(-2px); box-shadow: inset 0 0 0 1.5px var(--color-accent);
 }
 .btn--block { width: 100%; }
+/* The marketing CTA: a filled indigo pill (NOT the AI-template gradient) carrying the
+ * signal-GREEN glow — the page's primary action promises the "correct" feeling. Slightly
+ * larger type/padding than a workspace button. Used by the landing + overview begin CTAs.
+ * (design-audit color rebalance + SYS-1.) */
+.btn--cta {
+  background: var(--color-accent); color: var(--color-on-accent);
+  font-size: var(--font-size-md); padding: 0.85rem 1.7rem;
+  box-shadow: var(--shadow-cta);
+}
+.btn--cta:not(:disabled):hover {
+  transform: translateY(-2px); background: var(--color-accent-hover);
+  box-shadow: 0 14px 34px rgba(20,201,138,0.38);
+}
+/* The arrow that trails a CTA label nudges forward on hover. Markup: a trailing
+ * <span class="btn__arrow" aria-hidden="true">→</span> inside the .btn. */
+.btn__arrow { transition: transform var(--dur-hover) var(--ease-spring); }
+.btn:not(:disabled):hover .btn__arrow { transform: translateX(4px); }
+
+/* --------------------------------------------------------------------------
+ * Shared entry-flow primitives — extracted so the landing and overview read as ONE
+ * product, not two parallel stylesheets re-solving the same surfaces. (design-audit
+ * SYS-2/3/4/5 — brand mark ×3, card ×4, eyebrow ×5, glyph-chip ×2 collapsed to one each.)
+ * ------------------------------------------------------------------------ */
+
+/* The square brand-mark chip (the ◑ logotype). Sizes via --brand-mark-size. */
+.brand-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--brand-mark-size, 2rem); height: var(--brand-mark-size, 2rem);
+  border-radius: var(--radius-md); background: var(--gradient-primary);
+  color: #fff; box-shadow: var(--shadow-sm);
+  font-size: calc(var(--brand-mark-size, 2rem) * 0.5);
+}
+.brand-mark--sm { --brand-mark-size: 1.4rem; border-radius: var(--radius-2); }
+
+/* The mono-uppercase eyebrow / tag label. Color is per-context (add it at the call site);
+ * this owns only the shape so the five copies stop drifting in size + tracking. */
+.eyebrow {
+  font-family: var(--font-mono); font-size: var(--font-size-xs);
+  letter-spacing: var(--tracking-eyebrow); text-transform: uppercase;
+  font-weight: 600; margin: 0;
+}
+
+/* The rounded glyph chip that fronts a pillar / rep card. Holds an SVG icon (currentColor)
+ * drawn from the product's own visual language. Background = faint lavender (neutral
+ * "branded info", NOT the green signal-tint which means "correct"); icon = accent.
+ * (design-audit color F3 — green-tint+indigo-glyph was a mixed signal.) */
+.glyph-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.5rem; height: 2.5rem; border-radius: var(--radius-md);
+  background: var(--color-lavender); color: var(--color-accent);
+  margin-bottom: var(--space-3);
+}
+.glyph-chip svg { width: 1.45rem; height: 1.45rem; display: block; }
+
+/* The content card primitive — pillars, rep-cards, panels. One radius/shadow/padding so
+ * the entry flow stops looking assembled from four different card recipes. The hero-widget
+ * cards (.ihero__card) are an intentional documented exception (rounder, --shadow-card). */
+.card {
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-sm);
+  padding: var(--padding-card);
+}
+.card--interactive {
+  transition: transform var(--dur-hover) var(--ease-spring), box-shadow var(--dur-hover) ease;
+}
+.card--interactive:hover { transform: translateY(-3px); box-shadow: var(--shadow-card); }
 
 /* Legacy aliases → the primitive. The primary actions are filled; Hint is now a
  * GHOST secondary (it was a full-width filled bar that dominated Submit — inverted

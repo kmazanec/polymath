@@ -5,6 +5,10 @@
  * from tokens.css (no fallback literals needed — tokens are now defined).
  * No `--gradient-spectrum` anywhere; signal green is the single accent.
  *
+ * Layout: THREE columns (table | gate | code) on desktop so "One idea, three forms"
+ * is literally the layout, not a cramped 2×2. Collapses to 1 column on mobile
+ * (≤640px) and passes through an intermediate 1-column at tablet (≤900px).
+ *
  * Accessibility notes:
  *  - The A/B toggle buttons have min 44px height + generous padding (WCAG 2.5.5).
  *  - :focus-visible ring is global; this file does not override it.
@@ -17,7 +21,7 @@
 .ihero {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);          /* 2rem */
+  gap: var(--space-4);             /* 1.5rem — tighter than before to read as one unit */
   align-items: stretch;
   animation: rise 0.55s var(--ease-spring) both;
   animation-delay: 0.12s;
@@ -27,7 +31,7 @@
 .ihero__controls {
   display: flex;
   align-items: center;
-  gap: var(--space-3);          /* 1rem */
+  gap: var(--space-3);             /* 1rem */
   flex-wrap: wrap;
 }
 
@@ -35,14 +39,14 @@
   /* Pill toggle that mirrors the real lesson input toggles */
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  min-height: 2.75rem;          /* 44px WCAG tap target */
-  padding: 0.55rem 1.1rem;
+  gap: var(--space-2-5);           /* 0.75rem */
+  min-height: 2.75rem;             /* 44px WCAG tap target */
+  padding: 0.55rem var(--space-3-5);  /* 0.55rem 1.25rem */
   border-radius: var(--radius-pill);
   border: none;
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 1.05rem;
+  font-size: var(--font-size-md);  /* 1.05rem */
   cursor: pointer;
   transition:
     background var(--dur-hover) ease,
@@ -82,8 +86,8 @@
 .ihero__toggle-label {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 1.1rem;
-  letter-spacing: 0.05em;
+  font-size: var(--font-size-lg);  /* 1.18rem — slightly larger for prominence */
+  letter-spacing: var(--tracking-label);
 }
 
 .ihero__toggle-bit {
@@ -95,7 +99,7 @@
   border-radius: 50%;
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 0.88rem;
+  font-size: var(--font-size-sm);  /* 0.85rem */
   background: var(--color-low-tint);
   color: var(--color-text-muted);
   box-shadow: inset 0 0 0 1px var(--color-border);
@@ -108,27 +112,27 @@
   box-shadow: 0 0 0 2px var(--color-signal-glow);
 }
 
+/* Hint text — visible to sighted users and accessible to AT (no aria-hidden).
+ * It's a polite prompt, not decorative noise. */
 .ihero__hint {
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);   /* 0.72rem */
+  font-size: var(--font-size-xs);  /* 0.72rem */
   color: var(--color-text-muted);
   margin: 0;
   letter-spacing: 0.04em;
 }
 
-/* ── Three panels ──────────────────────────────────────────────────────────── */
+/* ── Three panels — 3-column on desktop, tablet, 1-column on mobile ─────── */
 .ihero__panels {
   display: grid;
-  gap: var(--space-3);           /* 1rem */
-  grid-template-columns: 1fr 1fr;
-  grid-template-areas:
-    'table gate'
-    'table code';
+  gap: var(--space-3);             /* 1rem */
+  /* Desktop: three equal columns — truth table | circuit | pseudocode */
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-areas: 'table gate code';
 }
 
-/* Stack on narrow viewports (≤860px handled in landing.css hero breakpoint,
-   but the panels themselves reflow at ≤640px) */
-@media (max-width: 640px) {
+/* Tablet: collapse to one column so each panel has room to breathe */
+@media (max-width: 900px) {
   .ihero__panels {
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -138,12 +142,14 @@
   }
 }
 
+/* Narrow mobile (≤640px) is already 1-column from the tablet rule */
+
 .ihero__card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);       /* 1.5rem */
   box-shadow: var(--shadow-card);
-  padding: 1rem 1.15rem;
+  padding: var(--space-4) var(--space-4); /* --padding-card equivalent */
   transition: box-shadow var(--dur-hover) ease;
 }
 
@@ -155,10 +161,10 @@
   display: block;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);        /* 0.72rem */
-  letter-spacing: 0.1em;
+  letter-spacing: var(--tracking-eyebrow);
   text-transform: uppercase;
   color: var(--color-text-muted);
-  margin-bottom: 0.65rem;
+  margin-bottom: var(--space-2-5);       /* 0.75rem — more breathing room */
 }
 
 /* ── Truth table ───────────────────────────────────────────────────────────── */
@@ -172,19 +178,18 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--color-text-muted);
   text-align: center;
-  padding-bottom: 0.2rem;
+  padding-bottom: var(--space-1);
 }
 
 .ihero__tt-th--out { color: var(--color-pass); }
 
 .ihero__tt td {
   text-align: center;
-  padding: 0.1rem;
-  /* Smooth row highlight transition */
+  padding: var(--space-1);
   transition: background var(--dur-hover) ease;
 }
 
@@ -206,8 +211,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.75rem;              /* slightly larger in the full-width layout */
+  height: 1.75rem;
   border-radius: 50%;
   font-family: var(--font-mono);
   font-weight: 600;
@@ -241,7 +246,7 @@
 .ihero__svg {
   width: 100%;
   height: auto;
-  margin-top: auto;   /* push down in flex column so tag sits at top */
+  margin-top: auto;    /* push down in flex column so tag sits at top */
   flex: 1;
   overflow: visible;
 }
@@ -287,7 +292,7 @@
 .ihero__gatelabel {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 1.15rem;
+  font-size: var(--font-size-lg);  /* 1.18rem — visible at full width */
   fill: var(--color-ink);
   dominant-baseline: middle;
   text-anchor: middle;
@@ -297,7 +302,7 @@
 .ihero__wirelabel {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);  /* 0.85rem */
   fill: var(--color-text-muted);
   dominant-baseline: auto;
   text-anchor: start;
@@ -320,7 +325,7 @@
 /* ── Pseudocode ────────────────────────────────────────────────────────────── */
 .ihero__code {
   margin: 0;
-  padding: 0.7rem 0.85rem;
+  padding: var(--space-2-5) var(--space-3);  /* 0.75rem 1rem */
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);
   overflow-x: auto;
@@ -328,7 +333,7 @@
 
 .ihero__code code {
   font-family: var(--font-mono);
-  font-size: 0.93rem;
+  font-size: var(--font-size-base);  /* 0.95rem — up from 0.93rem, snapped to token */
   color: var(--color-text);
   white-space: pre;
 }
@@ -360,13 +365,13 @@
 }
 
 .ihero__code-sub {
-  margin: 0.5rem 0 0;
+  margin: var(--space-2) 0 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  line-height: 1.4;
+  gap: var(--space-1);
+  line-height: var(--line-height-tight);
   transition: color var(--dur-hover) ease;
 }
 

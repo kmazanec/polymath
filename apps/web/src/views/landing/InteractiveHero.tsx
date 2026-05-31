@@ -38,18 +38,27 @@ const ROWS = [
 ] as const;
 
 export function InteractiveHero(): ReactElement {
-  const [a, setA] = useState<0 | 1>(0);
-  const [b, setB] = useState<0 | 1>(0);
+  // Start A=1, B=1 so the output is HIGH on page load — signal-green is the first
+  // thing the eye sees, not an all-gray widget. The aria-live summary derives from
+  // state so AT users get the correct initial reading automatically.
+  const [a, setA] = useState<0 | 1>(1);
+  const [b, setB] = useState<0 | 1>(1);
   const output = (a === 1 && b === 1 ? 1 : 0) as 0 | 1;
   const liveId = useId();
 
   return (
     <div className="ihero">
       {/* ── Input toggles ── */}
-      <div className="ihero__controls" role="group" aria-label="AND gate inputs">
+      <div
+        className="ihero__controls"
+        role="group"
+        aria-label="AND gate inputs"
+        aria-describedby={liveId}
+      >
         <InputToggle label="A" value={a} onToggle={() => setA(v => (v === 0 ? 1 : 0))} />
         <InputToggle label="B" value={b} onToggle={() => setB(v => (v === 0 ? 1 : 0))} />
-        <p className="ihero__hint" aria-hidden="true">Try it — toggle the inputs</p>
+        {/* Hint is visible to sighted users AND AT — no aria-hidden */}
+        <p className="ihero__hint">Try it — toggle the inputs</p>
       </div>
 
       {/* Screen-reader live summary — always present, never reads the 12 cells */}

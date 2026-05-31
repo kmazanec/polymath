@@ -5,6 +5,10 @@
  * contrast change lands once. The signature spectrum gradient is intentionally
  * absent here — reserved for the mastery moment. Springy 0.3s reveals on load
  * (the brand's signature ease), respecting prefers-reduced-motion via global.css.
+ *
+ * Layout: DEMO-AS-HERO. A narrow copy band (headline + CTA) lives at the top of the
+ * hero section; the InteractiveHero widget spans the full content width below it as
+ * the centerpiece. No 50/50 split — the demo IS the hero.
  */
 
 .landing {
@@ -18,201 +22,218 @@
   overflow: hidden;
 }
 
-/* Atmospheric depth — soft indigo + cyan blooms, not flat color. */
+/* Atmospheric depth — ONE soft indigo bloom. The old triple bloom (indigo + cyan +
+ * purple) competed with the lit green interactive hero. One source, one focal point. */
 .landing__field {
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(60rem 38rem at 12% -8%, rgba(74, 75, 182, 0.16), transparent 60%),
-    radial-gradient(50rem 36rem at 108% 18%, rgba(23, 226, 234, 0.14), transparent 55%),
-    radial-gradient(44rem 40rem at 80% 112%, rgba(214, 132, 255, 0.10), transparent 60%);
+    radial-gradient(60rem 38rem at 12% -8%, rgba(74, 75, 182, 0.14), transparent 58%);
 }
 
 .landing > *:not(.landing__field) { position: relative; z-index: 1; }
 
-/* ---- top bar ---- */
+/* ── top bar ── */
 .landing__top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.4rem clamp(1.25rem, 5vw, 3.5rem);
+  padding: var(--space-4) clamp(var(--space-3-5), 5vw, var(--space-6));
 }
-.landing__brand { display: flex; align-items: center; gap: 0.6rem; }
-.landing__brand-mark {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 2rem; height: 2rem; border-radius: 9px;
-  background: var(--gradient-primary); color: #fff; font-size: 1rem;
-  box-shadow: var(--shadow-sm);
-}
-.landing__brand-mark--sm { width: 1.4rem; height: 1.4rem; font-size: 0.8rem; border-radius: 6px; }
+
+.landing__brand { display: flex; align-items: center; gap: var(--space-2-5); }
+
+/* .brand-mark and .brand-mark--sm are the global.css primitives — no redefinition. */
+
 .landing__brand-name {
-  font-family: var(--font-display); font-weight: 700; font-size: 1.2rem;
+  font-family: var(--font-display); font-weight: 700; font-size: var(--font-size-lg);
   letter-spacing: var(--tracking-display); color: var(--color-ink);
 }
-.landing__top-cta {
-  font-family: var(--font-display); font-weight: 600; font-size: 0.9rem;
-  color: var(--color-accent); text-decoration: none;
-  padding: 0.5rem 1.1rem; border-radius: var(--radius-pill);
-  box-shadow: inset 0 0 0 1.5px var(--color-border);
-  transition: box-shadow var(--dur-hover) ease, transform var(--dur-hover) var(--ease-spring);
-}
-.landing__top-cta:hover { box-shadow: inset 0 0 0 1.5px var(--color-accent); transform: translateY(-1px); }
 
-/* ---- main ---- */
+/* .btn.btn--ghost covers shape + tap target; this override keeps landing nav compact. */
+.landing__top-cta {
+  font-size: var(--font-size-sm);
+}
+
+/* ── main ── */
 .landing__main {
   flex: 1;
   width: 100%;
   max-width: 72rem;
   margin: 0 auto;
-  padding: clamp(1.5rem, 4vw, 3rem) clamp(1.25rem, 5vw, 3.5rem) 4rem;
+  padding: clamp(var(--space-4), 4vw, var(--space-6)) clamp(var(--space-3-5), 5vw, var(--space-6)) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: clamp(3rem, 7vw, 6rem);
+  gap: clamp(var(--space-6), 7vw, var(--space-8));
 }
 
-/* ---- hero ---- */
+/* ── hero: vertical stack (copy band → full-width interactive demo) ── */
 .landing__hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-  gap: clamp(2rem, 5vw, 4rem);
-  align-items: center;
-  padding-top: clamp(1rem, 4vw, 3rem);
-}
-@media (max-width: 860px) {
-  .landing__hero { grid-template-columns: 1fr; }
+  display: flex;
+  flex-direction: column;
+  gap: clamp(var(--space-5), 4vw, var(--space-6));
+  padding-top: clamp(var(--space-2-5), 4vw, var(--space-6));
 }
 
-.landing__hero-copy { animation: rise 0.5s var(--ease-spring) both; }
-.landing__eyebrow {
-  font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--color-accent); margin: 0 0 1rem;
-  display: inline-flex; align-items: center; gap: 0.5rem;
+.landing__hero-copy {
+  max-width: 46rem;                  /* comfortable measure for the copy band */
+  animation: rise 0.5s var(--ease-spring) both;
 }
+
+/* Eyebrow: .eyebrow from global.css owns the shape (mono/xs/uppercase/tracking).
+ * This rule adds the context-specific color + the green rule-line prefix. */
+.landing__eyebrow {
+  /* Green ABOVE the headline — but use --color-pass (the AA-safe green TEXT token, 5.35:1),
+   * NOT --color-signal (the bright fill/glow green, which is only 2.03:1 as text — fails AA).
+   * The brighter --color-signal lives on the decorative rule-line below, where contrast
+   * isn't a text requirement. (design-audit verify: eyebrow-as-text contrast.) */
+  color: var(--color-pass);
+  margin: 0 0 var(--space-3);
+  display: inline-flex; align-items: center; gap: var(--space-2);
+}
+
 .landing__eyebrow::before {
   content: ''; width: 1.6rem; height: 2px; border-radius: 2px;
-  background: var(--color-cyan);
+  background: var(--color-signal);   /* bright green rule-line (decorative, not text) */
+  flex-shrink: 0;
 }
+
 .landing__headline {
   font-family: var(--font-display); font-weight: 700;
-  font-size: clamp(2.6rem, 6.5vw, 4.4rem); line-height: 1.05;
-  /* letter-spacing comes from --tracking-display via global.css h1 rule */
-  color: var(--color-ink); margin: 0 0 1.25rem;
+  font-size: var(--font-size-display); line-height: 1.05;
+  color: var(--color-ink); margin: 0 0 var(--space-3-5);
 }
+
+/* Light mode: solid accent — the gradient text fails AA (1.89:1). Intentional,
+ * and more committed than the generic gradient look anyway. Dark mode keeps the
+ * cyan gradient where cyan passes contrast against the dark surface. */
 .landing__headline-accent {
-  /* The accent line uses the cyan→indigo brand pair (NOT the reserved spectrum). */
-  background: linear-gradient(92deg, var(--color-accent) 0%, var(--color-cyan) 120%);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  color: var(--color-accent);
 }
+
+@media (prefers-color-scheme: dark) {
+  .landing__headline-accent {
+    background: linear-gradient(92deg, var(--color-accent) 0%, var(--color-cyan) 120%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+}
+
 .landing__sub {
-  font-size: clamp(1.02rem, 1.6vw, 1.18rem); line-height: 1.55;
-  color: var(--color-text); max-width: 34rem; margin: 0 0 2rem;
+  font-size: clamp(var(--font-size-base), 1.6vw, var(--font-size-lg));
+  line-height: var(--line-height-body);
+  color: var(--color-text);
+  /* ~30rem ≈ 65 chars — comfortable measure, tighter than the old 34rem */
+  max-width: 30rem;
+  margin: 0 0 var(--space-5);
 }
 .landing__sub strong { color: var(--color-ink); font-weight: 700; }
 
-.landing__cta-row { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
-.landing__cta {
-  display: inline-flex; align-items: center; gap: 0.6rem;
-  font-family: var(--font-display); font-weight: 600; font-size: 1.05rem;
-  color: #fff; text-decoration: none;
-  padding: 0.85rem 1.6rem; border-radius: var(--radius-pill);
-  background: var(--gradient-primary);
-  box-shadow: 0 10px 28px rgba(74, 75, 182, 0.36);
-  transition: transform var(--dur-hover) var(--ease-spring), box-shadow var(--dur-hover) ease;
+.landing__cta-row {
+  display: flex; align-items: center; gap: var(--space-3-5); flex-wrap: wrap;
 }
-.landing__cta:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(74, 75, 182, 0.44); }
-.landing__cta-arrow { transition: transform var(--dur-hover) var(--ease-spring); }
-.landing__cta:hover .landing__cta-arrow { transform: translateX(4px); }
-.landing__cta-note { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text-muted); }
 
-/* ---- three-modality hero (interactive) ---- */
+/* .btn.btn--cta owns shape, size, fill, shadow. No redefinition needed. */
+
+.landing__cta-note {
+  font-family: var(--font-mono); font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+/* ── three-modality hero (interactive) ── */
 /*
- * The hero centerpiece styles live in apps/web/src/views/landing/interactiveHero.css
- * (imported by InteractiveHero.tsx). This file no longer contains the old static
- * `.trio` rules — they were removed when ModalityTrio was replaced by InteractiveHero.
+ * The InteractiveHero widget styles live in interactiveHero.css.
+ * In the new layout the widget spans the full hero width below the copy band —
+ * no separate column constraint is applied here.
  */
 
-/* ---- pillars ---- */
+/* ── pillars ── */
 .landing__pillars {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.25rem;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3-5);
 }
 @media (max-width: 760px) { .landing__pillars { grid-template-columns: 1fr; } }
-.pillar {
-  background: var(--color-surface); border: 1px solid var(--color-border);
-  border-radius: var(--radius-card); box-shadow: var(--shadow-sm);
-  padding: 1.6rem 1.5rem;
-  transition: transform var(--dur-hover) var(--ease-spring), box-shadow var(--dur-hover) ease;
-}
-.pillar:hover { transform: translateY(-3px); box-shadow: var(--shadow-card); }
-.pillar__glyph {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 2.6rem; height: 2.6rem; border-radius: 12px; margin-bottom: 1rem;
-  background: var(--color-signal-tint); color: var(--color-accent);
-  font-size: 1.3rem; font-weight: 700;
-}
-.pillar__title {
-  font-family: var(--font-display); font-weight: 600; font-size: 1.18rem;
-  margin: 0 0 0.5rem; color: var(--color-ink);
-}
-.pillar__body { margin: 0; color: var(--color-text-muted); line-height: 1.55; font-size: 0.96rem; }
 
-/* ---- curriculum strip ---- */
+/* .card and .card--interactive from global.css supply background/border/radius/shadow/hover.
+ * .pillar adds only the internal layout (flex column, internal text sizing). */
+.pillar {
+  display: flex; flex-direction: column;
+}
+
+/* .glyph-chip from global.css: lavender bg, accent icon, sizing, margin-bottom.
+ * The signal variant overrides color to signal-green for the "Practice" pillar. */
+.glyph-chip--signal {
+  color: var(--color-pass);
+}
+
+.pillar__title {
+  font-family: var(--font-display); font-weight: 600; font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-2); color: var(--color-ink);
+  letter-spacing: var(--tracking-display);
+}
+.pillar__body {
+  margin: 0; color: var(--color-text-muted);
+  line-height: var(--line-height-body); font-size: var(--font-size-base);
+}
+
+/* ── curriculum strip ── */
 .landing__strip {
   background: var(--color-ink-deep);
   border-radius: var(--radius-lg);
-  padding: clamp(1.75rem, 4vw, 2.75rem);
-  display: flex; flex-direction: column; gap: 1.1rem;
+  padding: clamp(var(--space-4), 4vw, var(--space-5));
+  display: flex; flex-direction: column; gap: var(--space-3);
   color: var(--color-text-on-ink);
   box-shadow: var(--shadow-card);
 }
+
+/* The strip eyebrow is an <h2> for landmark semantics, styled via .eyebrow from
+ * global.css. We add color + low weight to match the old mono-label look. */
 .landing__strip-lead {
-  font-family: var(--font-mono); font-size: 0.74rem; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--color-cyan); margin: 0;
+  color: var(--color-cyan);
+  font-weight: 400;              /* eyebrow look — not bold like a heading */
+  margin: 0;
 }
+
 .landing__lessons {
   list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2-5);
 }
 @media (max-width: 700px) { .landing__lessons { grid-template-columns: 1fr 1fr; } }
 .landing__lessons li {
-  display: flex; align-items: center; gap: 0.6rem;
-  font-family: var(--font-display); font-weight: 500; font-size: 0.98rem; color: var(--color-text-on-ink);
+  display: flex; align-items: center; gap: var(--space-2-5);
+  font-family: var(--font-display); font-weight: 500;
+  font-size: var(--font-size-base); color: var(--color-text-on-ink);
+  line-height: var(--line-height-tight);
 }
 .landing__lesson-n {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 1.7rem; height: 1.7rem; flex: 0 0 auto; border-radius: 8px;
-  background: rgba(255,255,255,0.12); font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem;
+  width: 1.7rem; height: 1.7rem; flex: 0 0 auto; border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.12);
+  font-family: var(--font-mono); font-weight: 700; font-size: var(--font-size-sm);
 }
 .landing__strip-cta {
-  align-self: flex-start; margin-top: 0.4rem;
-  font-family: var(--font-display); font-weight: 600; font-size: 0.95rem;
-  color: #20205f; text-decoration: none; background: #fff;
-  padding: 0.6rem 1.3rem; border-radius: var(--radius-pill);
+  align-self: flex-start; margin-top: var(--space-1);
+  font-family: var(--font-display); font-weight: 600; font-size: var(--font-size-base);
+  color: var(--color-ink-deep); text-decoration: none; background: #fff;
+  padding: 0.6rem var(--space-4); border-radius: var(--radius-pill);
   transition: transform var(--dur-hover) var(--ease-spring), background var(--dur-hover) ease;
 }
-.landing__strip-cta:hover { transform: translateY(-2px); background: #eceaff; }
+.landing__strip-cta:hover { transform: translateY(-2px); background: var(--color-lavender); }
 
-/* ---- footer ---- */
+/* ── footer ── */
 .landing__footer {
-  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
-  padding: 1.75rem clamp(1.25rem, 5vw, 3.5rem);
+  display: flex; align-items: center; gap: var(--space-2-5); flex-wrap: wrap;
+  padding: var(--space-4) clamp(var(--space-3-5), 5vw, var(--space-6));
   border-top: 1px solid var(--color-border);
-  color: var(--color-text-muted); font-size: 0.88rem;
+  color: var(--color-text-muted); font-size: var(--font-size-sm);
 }
 
-/* ---- reveal animation ---- */
+/* ── reveal animation ── */
 @keyframes rise {
   from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: none; }
 }
 
-/*
- * Reduced-motion: suppress the page-load rise animations on the copy column
- * and the interactive hero widget. The interactive hero's own reduced-motion
- * overrides (glow/pulse animations only) live in interactiveHero.css and
- * extend this intent — state-driven class changes still apply immediately.
- */
 @media (prefers-reduced-motion: reduce) {
   .landing__hero-copy { animation: none; }
 }

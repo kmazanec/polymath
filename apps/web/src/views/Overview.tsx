@@ -28,11 +28,67 @@ const LESSON_META: Record<number, LessonMeta> = {
   },
 };
 
-/** The three irreducible representations, named with their brand glyphs. */
-const REPS: Array<{ glyph: string; label: string; blurb: string }> = [
-  { glyph: '▦', label: 'Truth table', blurb: 'A grid of toggles — flip inputs, watch the result column light up.' },
-  { glyph: '⏚', label: 'Circuit', blurb: 'Canonical gate shapes you wire together, then pulse to see the signal flow.' },
-  { glyph: '›_', label: 'Pseudocode', blurb: 'A friendly line of code — the same logic, written out.' },
+/** Truth-table icon: a small 2-column grid mark. */
+function IconTruthTable(): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {/* outer border */}
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      {/* vertical divider */}
+      <line x1="12" y1="3" x2="12" y2="21" />
+      {/* horizontal header divider */}
+      <line x1="3" y1="9" x2="21" y2="9" />
+      {/* two data rows */}
+      <line x1="3" y1="15" x2="21" y2="15" />
+    </svg>
+  );
+}
+
+/** Circuit icon: ANSI AND-gate D-shape with input stubs and an output stub. */
+function IconCircuit(): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {/* AND-gate body: flat back at x=5, semicircular front */}
+      <path d="M5 6 L5 18 L11 18 Q19 18 19 12 Q19 6 11 6 Z" />
+      {/* input stubs — top and bottom left */}
+      <line x1="2" y1="9" x2="5" y2="9" />
+      <line x1="2" y1="15" x2="5" y2="15" />
+      {/* output stub — right */}
+      <line x1="19" y1="12" x2="22" y2="12" />
+    </svg>
+  );
+}
+
+/** Pseudocode icon: a prompt cursor mark (two code lines with a leading angle). */
+function IconPseudocode(): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {/* chevron prompt › */}
+      <polyline points="4,9 8,12 4,15" />
+      {/* two code lines */}
+      <line x1="11" y1="9" x2="20" y2="9" />
+      <line x1="11" y1="15" x2="17" y2="15" />
+    </svg>
+  );
+}
+
+/** The three irreducible representations with inline SVG icons. */
+const REPS: Array<{ icon: ReactElement; label: string; blurb: string }> = [
+  {
+    icon: <IconTruthTable />,
+    label: 'Truth table',
+    blurb: 'A grid of toggles — flip inputs, watch the result column light up.',
+  },
+  {
+    icon: <IconCircuit />,
+    label: 'Circuit',
+    blurb: 'Canonical gate shapes you wire together, then pulse to see the signal flow.',
+  },
+  {
+    icon: <IconPseudocode />,
+    label: 'Pseudocode',
+    blurb: 'A friendly line of code — the same logic, written out.',
+  },
 ];
 
 export function Overview(): ReactElement {
@@ -45,7 +101,7 @@ export function Overview(): ReactElement {
     <div className="overview">
       <header className="overview__top">
         <Link to="/" className="overview__brand" aria-label="Polymath home">
-          <span className="overview__brand-mark" aria-hidden="true">◑</span>
+          <span className="brand-mark" aria-hidden="true">◑</span>
           <span className="overview__brand-name">Polymath</span>
         </Link>
         <Link to="/" className="overview__back">← Home</Link>
@@ -53,17 +109,17 @@ export function Overview(): ReactElement {
 
       <main className="overview__main">
         <div className="overview__hero">
-          <p className="overview__eyebrow">Lesson {lessonId} of 4 · ~10 min</p>
+          <p className="eyebrow overview__eyebrow">Lesson {lessonId} of 4 · ~10 min</p>
           <h1 className="overview__title">{intro.title.replace(/^Lesson \d+ — /, '')}</h1>
           <p className="overview__lede">{intro.body}</p>
           <div className="overview__cta-row">
             <button
               type="button"
-              className="overview__begin"
+              className="btn btn--cta"
               onClick={() => navigate('/lesson')}
             >
               Begin lesson
-              <span className="overview__begin-arrow" aria-hidden="true">→</span>
+              <span className="btn__arrow" aria-hidden="true">→</span>
             </button>
             <span className="overview__cta-note">Voice tutor optional · your data stays private</span>
           </div>
@@ -71,17 +127,16 @@ export function Overview(): ReactElement {
 
         <section className="overview__reps" aria-label="The three representations">
           {REPS.map((r) => (
-            <article key={r.label} className="rep-card">
-              <span className="rep-card__glyph" aria-hidden="true">{r.glyph}</span>
+            <article key={r.label} className="rep-card card card--interactive">
+              <span className="glyph-chip" aria-hidden="true">{r.icon}</span>
               <h2 className="rep-card__label">{r.label}</h2>
               <p className="rep-card__blurb">{r.blurb}</p>
             </article>
           ))}
-          <span className="overview__reps-link" aria-hidden="true">+</span>
         </section>
 
         <div className="overview__cols">
-          <section className="overview__panel" aria-labelledby="ov-outcomes">
+          <section className="overview__panel card" aria-labelledby="ov-outcomes">
             <h2 id="ov-outcomes" className="overview__panel-title">By the end you can</h2>
             <ul className="overview__outcomes">
               {meta.outcomes.map((o) => (
@@ -90,7 +145,7 @@ export function Overview(): ReactElement {
             </ul>
           </section>
 
-          <section className="overview__panel overview__panel--gate" aria-labelledby="ov-gate">
+          <section className="overview__panel overview__panel--gate card" aria-labelledby="ov-gate">
             <h2 id="ov-gate" className="overview__panel-title">How mastery is earned</h2>
             <p className="overview__gate-lead">
               Polymath only declares you a master when you genuinely can&rsquo;t be
