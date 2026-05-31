@@ -31,6 +31,7 @@ import {
   appendVerdict,
   appendSpokenTurn,
 } from './surfaceState.js';
+import { FlowSkeleton } from './components/FlowSkeleton.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
 
@@ -127,7 +128,9 @@ interface LessonBridge {
 }
 
 /** One lesson's worth of UI: the XState spine + the mounted workspace.
- *  F-27: receives the transcript `turns` + `appendTurn` seam for F-30. */
+ *  F-27: receives the transcript `turns` + `appendTurn` seam for F-30.
+ *  F-31: receives the lifted `phase` prop so FlowSkeleton can render in the
+ *  reserved left-rail slot without needing its own useMachine call. */
 function LessonSession({
   lessonId,
   bridge,
@@ -177,13 +180,16 @@ function LessonSession({
         <span className="orientation-banner__text">{orientationText(phase)}</span>
       </div>
 
-      {/* F-27 layout: two-column grid (workspace | transcript).
-          Left column: the anchored workspace (never scrolls away).
-          Right column: the append-only transcript log.
-          Reserved left-rail slot for F-31 (FlowSkeleton). */}
+      {/* F-27/F-31 layout: three-column grid [left-rail | workspace | transcript].
+          Left column: FlowSkeleton orientation rail (F-31).
+          Center: the anchored workspace (never scrolls away).
+          Right: the append-only transcript log. */}
       <div className="lesson-layout">
-        {/* LEFT RAIL RESERVED for F-31 FlowSkeleton */}
-        <div className="lesson-layout__rail" aria-hidden="true" />
+        {/* F-31 FlowSkeleton — mounted in the reserved left-rail slot.
+            aria-hidden is removed (the skeleton IS orientation content). */}
+        <div className="lesson-layout__rail">
+          <FlowSkeleton phase={phase} />
+        </div>
 
         {/* ANCHORED WORKSPACE — pinned; re-anchors only on new active item. */}
         <div className="lesson-layout__workspace" data-testid="workspace">

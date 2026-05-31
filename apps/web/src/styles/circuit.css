@@ -1,3 +1,42 @@
+/* ─── F-31: Touch contract for the circuit canvas (ADR-016) ─────────────────
+ * react-flow handles default to ~6–8px (impossible with a finger). We grow the
+ * visible dot to 14px and add a transparent ::before pseudo-element that gives a
+ * full 44px hit-slop so touches land on wire endpoints reliably.
+ * `touch-action: none` on the pane + nodes lets react-flow's pointer-event drag
+ * work without the browser trying to scroll or pan the viewport at the same time.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* Visible handle dot: 14px — large enough to see, small enough to not clutter.
+ * The transparent ::before adds a 44px (2.75rem) hit-slop around each handle. */
+.react-flow__handle {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  position: relative; /* needed for ::before absolute positioning */
+}
+.react-flow__handle::before {
+  content: '';
+  position: absolute;
+  /* inset: -(44px - 14px) / 2 = -15px on all sides */
+  inset: -15px;
+  border-radius: 50%;
+  /* Transparent hit area — no visual clutter */
+}
+
+/* Prevent browser from intercepting pointer events as scroll/pan on the canvas
+ * pane and the draggable nodes. @xyflow/react uses pointer events for drag;
+ * touch-action:none lets them fire uninterrupted. */
+.react-flow__pane,
+.react-flow__node {
+  touch-action: none;
+}
+
+/* IO nodes (input/output) must clear the 44px height floor so the tap area for
+ * the node itself (not just its handle) is finger-sized. */
+.rf-node--io {
+  min-height: var(--touch-target-min, 2.75rem);
+}
+
 /* Circuit canvas — calm dotted surface, ANSI gate shapes, green signal (Task 5). */
 .gate-shape { width: 100%; height: 100%; }
 .gate-shape__body { fill: var(--color-surface); stroke: var(--color-ink); stroke-width: 2.5; }
@@ -11,7 +50,7 @@
   border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: 0.35rem 0.8rem 0.35rem 0.45rem;
   font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; color: var(--color-ink); cursor: pointer;
   box-shadow: var(--shadow-sm); transition: transform var(--dur-hover) var(--ease-spring);
-  min-height: 2.75rem; }
+  min-height: var(--touch-target-min, 2.75rem); min-width: var(--touch-target-min, 2.75rem); }
 .circuit-palette button:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
 .circuit-palette button .gate-shape { width: 26px; height: 18px; flex: 0 0 auto; }
 .circuit-canvas { border-radius: var(--radius-md); overflow: hidden;

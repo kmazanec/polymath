@@ -168,10 +168,21 @@ main {
  * aliased onto the primitive below so existing markup keeps working; new markup should
  * use `.btn .btn--primary` / `.btn .btn--ghost` directly.
  * ------------------------------------------------------------------------ */
+/* Touch-target utility — ensures both dimensions clear the 44px floor (WCAG 2.5.5).
+ * Apply to any interactive element that isn't already `.btn` (e.g. the truth-table
+ * output cell, a custom icon button). `.btn` sets min-height via the same token;
+ * `.touch-target` sets BOTH min-height and min-width so even square controls clear
+ * the floor without imposing a horizontal minimum on the text-bearing button. */
+.touch-target {
+  min-height: var(--touch-target-min, 2.75rem);
+  min-width: var(--touch-target-min, 2.75rem);
+}
+
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
   font-family: var(--font-display); font-weight: 600; font-size: var(--font-size-base);
-  min-height: 2.75rem;            /* 44px — WCAG 2.5.5 tap target */
+  min-height: var(--touch-target-min, 2.75rem); /* WCAG 2.5.5 tap target — token reference */
+  min-width: var(--touch-target-min, 2.75rem);  /* ensure square/narrow buttons clear the floor */
   padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
   cursor: pointer; text-decoration: none; white-space: nowrap;
   transition: transform var(--dur-hover) var(--ease-spring),
@@ -268,7 +279,8 @@ main {
 .ask-agent button {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
   font-family: var(--font-display); font-weight: 600; font-size: 0.95rem;
-  min-height: 2.75rem; padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
+  min-height: var(--touch-target-min, 2.75rem); min-width: var(--touch-target-min, 2.75rem);
+  padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
   cursor: pointer; white-space: nowrap;
   background: var(--color-accent); color: var(--color-on-accent);
   box-shadow: var(--shadow-button);
@@ -287,7 +299,8 @@ main {
 .cross-lesson-recall__dismiss {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
   font-family: var(--font-display); font-weight: 600; font-size: 0.92rem;
-  min-height: 2.75rem; padding: 0.55rem 1.3rem; border: none; border-radius: var(--radius-pill);
+  min-height: var(--touch-target-min, 2.75rem); min-width: var(--touch-target-min, 2.75rem);
+  padding: 0.55rem 1.3rem; border: none; border-radius: var(--radius-pill);
   cursor: pointer; white-space: nowrap; align-self: flex-start;
   background: transparent; color: var(--color-accent);
   box-shadow: inset 0 0 0 1.5px var(--color-border);
@@ -533,7 +546,7 @@ button:disabled,
 /* The output column is the answer target — it must look distinct from the read-only
  * input bit-chips (audit H-4 / BRAND.md "output column tinted"). Faint lavender fill +
  * an ACCENT ring (not the muted border) says "this one is yours to set". 44px tap target. */
-.truth-table-output-cell { width: 2.75rem; height: 2.75rem; border-radius: var(--radius-pill); border: none;
+.truth-table-output-cell { width: var(--touch-target-min, 2.75rem); height: var(--touch-target-min, 2.75rem); border-radius: var(--radius-pill); border: none;
   font-family: var(--font-mono); font-weight: 700; cursor: pointer; background: var(--color-lavender);
   color: var(--color-text); box-shadow: inset 0 0 0 2px var(--color-accent);
   transition: transform var(--dur-hover) var(--ease-spring); }
@@ -578,7 +591,8 @@ button:disabled,
 .ask-tutor__button {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
   font-family: var(--font-display); font-weight: 600; font-size: 0.92rem;
-  min-height: 2.75rem; padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
+  min-height: var(--touch-target-min, 2.75rem); min-width: var(--touch-target-min, 2.75rem);
+  padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
   background: var(--color-accent); color: var(--color-on-accent); cursor: pointer;
   box-shadow: var(--shadow-button);
   transition: transform var(--dur-hover) var(--ease-spring), background var(--dur-hover) ease;
@@ -674,12 +688,14 @@ button:disabled,
 
 .lesson-layout {
   display: grid;
-  grid-template-columns: 0 1fr 1fr;
+  /* F-31: rail is now 10rem (was 0 reserved for F-31); workspace + transcript share 1fr each. */
+  grid-template-columns: 10rem 1fr 1fr;
   grid-template-rows: auto;
   gap: var(--space-4, 1.5rem);
   align-items: start;
 }
-@media (max-width: 48rem) {
+@media (max-width: 56rem) {
+  /* Collapse to single column on narrow / tablet-portrait viewports. */
   .lesson-layout {
     grid-template-columns: 1fr;
   }
@@ -687,10 +703,10 @@ button:disabled,
   .lesson-layout__transcript { margin-top: var(--space-4, 1.5rem); }
 }
 
-/* Left rail: reserved width-0 slot for F-31 FlowSkeleton */
+/* Left rail: sticky orientation column — houses FlowSkeleton (F-31). */
 .lesson-layout__rail {
-  width: 0;
-  overflow: hidden;
+  position: sticky;
+  top: var(--space-4, 1.5rem);
 }
 
 /* Anchored workspace: never scrolls away, anchored to the top */
@@ -795,7 +811,8 @@ button:disabled,
   font-size: .9375rem;
   font-weight: 600;
   cursor: pointer;
-  min-height: 2.75rem; /* 44px touch target */
+  min-height: var(--touch-target-min, 2.75rem); /* WCAG 2.5.5 tap target — token reference */
+  min-width: var(--touch-target-min, 2.75rem);
 }
 .intro-continue-btn:hover { background: #4f46e5; }
 .intro-continue-btn:focus-visible { outline: 2px solid var(--color-accent, #6366f1); outline-offset: 2px; }
@@ -819,4 +836,92 @@ button:disabled,
   border-radius: .5rem;
   padding: var(--space-2, .5rem) var(--space-3, 1rem);
   color: #991b1b;
+}
+
+/* ─── F-31: FlowSkeleton — orientation rail ─────────────────────────────────
+ * Curated mainline + branch display (D8). Semantics: <nav>/<ul role="list">
+ * with aria-current="step" on the live phase. NEVER role="progressbar".
+ * The highlight transition is gated by the existing @media (prefers-reduced-motion)
+ * block above (animation/transition: none !important) so no separate override needed.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+.flow-skeleton {
+  padding: var(--space-2, .5rem) 0;
+}
+
+.flow-skeleton__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, .5rem);
+}
+
+.flow-skeleton__step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, .5rem);
+  font-size: var(--font-size-sm, .85rem);
+  color: var(--color-text-muted);
+  line-height: var(--line-height-tight, 1.4);
+  padding: .25rem 0;
+  position: relative;
+}
+
+.flow-skeleton__dot {
+  display: inline-block;
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: var(--color-low, #c2c6d8);
+  flex: 0 0 auto;
+  transition: background var(--dur-hover, .18s) ease,
+              transform var(--dur-hover, .18s) var(--ease-spring);
+}
+
+/* Active step (current phase on the mainline, or the mainline parent of a branch). */
+.flow-skeleton__step--active .flow-skeleton__dot {
+  background: var(--color-accent, #4a4bb6);
+  transform: scale(1.4);
+}
+.flow-skeleton__step--active .flow-skeleton__label {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+[aria-current='step'] > .flow-skeleton__dot {
+  background: var(--color-accent, #4a4bb6);
+  box-shadow: 0 0 0 3px rgba(74, 75, 182, .25);
+}
+
+/* Completed mainline step (earlier than the furthest reached). */
+.flow-skeleton__step--completed .flow-skeleton__dot {
+  background: var(--color-pass, #097a54);
+}
+.flow-skeleton__step--completed .flow-skeleton__label {
+  color: var(--color-text-muted);
+  text-decoration-line: none;
+}
+
+/* Branch marker — appears inline below the active mainline label. */
+.flow-skeleton__branch {
+  display: block;
+  margin-left: calc(.5rem + var(--space-2, .5rem));
+  margin-top: .1rem;
+  font-size: var(--font-size-xs, .72rem);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label, .07em);
+  text-transform: uppercase;
+  color: var(--color-accent, #4a4bb6);
+  background: var(--color-lavender, #f4f5ff);
+  border-radius: var(--radius-pill, 9999px);
+  padding: .15rem .5rem;
+  white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  .flow-skeleton__branch {
+    background: var(--color-lavender, #1b1f3a);
+  }
 }

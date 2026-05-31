@@ -111,6 +111,11 @@
   --line-height-body:  1.55;   /* body prose */
   --line-height-tight: 1.4;    /* compact captions / list items */
 
+  /* Touch target floor (WCAG 2.5.5, ADR-016).
+   * 44px = 2.75rem — every interactive control must clear this in both dimensions.
+   * Use the .touch-target utility (global.css) or reference this token directly. */
+  --touch-target-min: 2.75rem;
+
   /* Spacing + radius.
    * --radius-1/2 keep their ORIGINAL pre-redesign values — the un-redesigned report
    * and metrics stylesheets (sessionReport.css, metrics.css) consume them and were
