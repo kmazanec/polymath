@@ -1,5 +1,6 @@
 import type { Action, ClientEvent, Lesson } from './types.js';
 import type { TacticalMove } from './menu.js';
+import type { DeliberationContext } from './deliberation.js';
 
 /**
  * The provider-abstraction seam (ADR-006 / ADR-007). The inner agent's reasoning
@@ -97,9 +98,14 @@ export interface TurnSummary {
 
 /** The raw model call. Returns one tactical move; may throw or return a value the
  *  flow then validates. A second call carries `validationError` so the model can
- *  correct itself (ADR-010 Layer 2 retry). */
+ *  correct itself (ADR-010 Layer 2 retry).
+ *
+ *  F-28: the optional 3rd param `deliberation` carries the session's classification
+ *  + intent + memory from the assess/decide nodes. EVERY existing provider compiles
+ *  unchanged because the param is optional — the heuristic ignores it (keyless path
+ *  remains byte-identical). The LLM provider may use it for richer context. */
 export interface MoveProvider {
-  proposeMove(input: AgentInput, validationError?: string): Promise<TacticalMove>;
+  proposeMove(input: AgentInput, validationError?: string, deliberation?: DeliberationContext): Promise<TacticalMove>;
 }
 
 /** What the server calls each turn. */

@@ -1,6 +1,6 @@
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
-import { StubAgentClient } from './agent/stubClient.js';
+import { makeAgentClient } from './agent/makeAgentClient.js';
 import { createServer } from './server.js';
 import { startSessionDeletionSweep } from './privacy/sessionDeletion.js';
 import { registerOtel } from './voice/otelSdk.js';
@@ -41,7 +41,13 @@ async function main(): Promise<void> {
   // registry, so every real explain-back runs on an empty transcript and FAILS CLOSED
   // at precondition #3 — never a silent client-trusting pass. The keyed judge
   // (makeExplainBackJudge) self-gates on OPENAI_API_KEY.
-  const server = createServer({ db, agent: new StubAgentClient(), allowedOrigins });
+  //
+  // F-28: `makeAgentClient()` replaces the hardcoded `new StubAgentClient()`.
+  // When OPENAI_API_KEY is present the real FlowAgentClient(OpenAIMoveProvider) is
+  // selected; otherwise the heuristic StubAgentClient is used unchanged. The boot log
+  // line from makeAgentClient confirms which provider was selected.
+  const agent = makeAgentClient();
+  const server = createServer({ db, agent, allowedOrigins });
 
   // Privacy posture (ADR-012, AC#9): periodically hard-delete the events +
   // learner_state of sessions whose deletion grace has expired (sessions are scheduled
