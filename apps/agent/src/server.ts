@@ -72,6 +72,7 @@ import type { TransferBankItemRef } from './explainback/itemTokens.js';
 import type { ExplainBackJudge, ProsodyFeatures } from '@polymath/graph';
 import { makeExplainBackJudge } from '@polymath/graph';
 import { ExplainBackCaptureRegistry } from './voice/explainBackRegistry.js';
+import { LearnerUtteranceRegistry } from './voice/learnerUtteranceRegistry.js';
 import { tryHandleBaselineRoute } from './baseline/route.js';
 import { tryHandleHandoffRoute } from './handoff/route.js';
 import type { BaselineChatProvider } from './baseline/chatProvider.js';
@@ -108,6 +109,21 @@ export interface ServerDeps {
    *  a fresh registry; populating it from a live device session is the deferred
    *  cross-platform smoke (see explainBackRegistry.ts). */
   explainBackCaptureRegistry?: ExplainBackCaptureRegistry;
+  /**
+   * F-30 (ADR-016): the general-utterance registry backing `latestLearnerUtteranceFor`.
+   * This IS the integrity seam: the `spoken_turn` handler reads from here, NEVER from
+   * the client frame. When not injected, `createServer` defaults a fresh registry and
+   * wires the production `VoiceBridge.onLearnerUtterance` callback to it. Tests inject
+   * either the registry (to prime it) or the getter directly.
+   */
+  learnerUtteranceRegistry?: LearnerUtteranceRegistry;
+  /**
+   * F-30: server-captured utterance getter for the `spoken_turn` handler. Mirrors
+   * `explainBackTranscriptFor` (same integrity pattern). When not injected, `createServer`
+   * defaults to `learnerUtteranceRegistry.latestFor(sessionId)`. A missing capture →
+   * undefined → the spoken-turn handler acks without answering (fail closed).
+   */
+  latestLearnerUtteranceFor?: (sessionId: string) => string | undefined;
   /** F-16 baseline chat provider (the GPT-5 chat-baseline arm). Injectable for
    *  tests (a deterministic stub; CI is offline); defaults to the key-gated GPT-5
    *  provider when `OPENAI_API_KEY` is set, else `undefined` → the `/api/baseline/*`
@@ -1093,6 +1109,19 @@ export interface FrameOptions {
    *  recall still flows through the same throttle + phase suppression, so the seam
    *  exercises the real reflex, it doesn't bypass it. */
   testL1Bkt?: Record<string, number>;
+  /**
+   * F-30 (ADR-016): the session id bound to THIS WebSocket connection via its opening
+   * `session_start` frame. The spoken-turn handler keys off the bound id, NOT the id
+   * on the incoming `spoken_turn` frame (the MR !8 deletion-scheduling binding rule:
+   * any stateful WS-triggered action must key off the `session_start`-bound id).
+   *
+   * Production: set from `boundSessionId` in the `ws.on('message')` closure (already
+   * bound in `createServer`). Tests that exercise `spoken_turn` must supply this so the
+   * handler can look up the captured utterance.
+   *
+   * null/undefined → treated as "no bound session" → ack without answering (fail closed).
+   */
+  boundSessionId?: string | null;
 }
 
 /**
@@ -1585,6 +1614,126 @@ async function handleExitPlaygroundTurn(
   send(ws, { kind: 'action', sessionId: event.sessionId, action });
 }
 
+/**
+ * F-30 (ADR-016): `spoken_turn` handler.
+ *
+ * The client fires `spoken_turn { sessionId }` (no transcript, no question field)
+ * after the learner has spoken. The server reads the captured utterance from the
+ * `latestLearnerUtteranceFor` seam (backed by `LearnerUtteranceRegistry`, which is
+ * populated by `VoiceBridge.onLearnerUtterance`). If no utterance was captured, the
+ * handler acks and returns — NEVER answers a client-provided string.
+ *
+ * When a captured utterance exists, it builds a synthetic in-process `learner_question`
+ * event (reusing the same generic Q&A turn: `proposeWithTimeout → answer_question`)
+ * so off-topic folding, topic classification, and the text reply come for free. The
+ * persisted event row uses the `spoken_turn` kind so the replay is traceable. The
+ * outbound action carries `spoken:true` so F-27's surface renders the learner side
+ * as a spoken bubble.
+ *
+ * WS binding invariant (MR !8 review): the utterance lookup ALWAYS uses
+ * `opts.boundSessionId` (the id bound from the opening `session_start` frame),
+ * never the `event.sessionId` on the incoming frame. This ensures a client forging
+ * a `spoken_turn` with a different `sessionId` cannot trigger an answer for that
+ * victim's captured utterance.
+ *
+ * Integrity guarantees:
+ *  - No capture → ack, no answer, no persisted row.
+ *  - The answered `question` is the server-captured string, never the client frame.
+ *  - Off-topic folding via `countOffTopicAnswers` (the uncapped monotonic query).
+ *  - `events.app IS NULL` (Polymath discriminator) on the persisted row.
+ */
+async function handleSpokenTurnTurn(
+  deps: ServerDeps,
+  ws: WebSocket,
+  event: Extract<ClientEvent, { kind: 'spoken_turn' }>,
+  lesson: Lesson,
+  opts: FrameOptions,
+): Promise<void> {
+  // WS-binding rule (MR !8): key off the bound session, not the frame's sessionId.
+  // A client that forges spoken_turn.sessionId=victimSession can't make the server:
+  //   (a) look up the victim's captured utterance (boundId prevents this), or
+  //   (b) persist state under the victim's session (effectiveSessionId = boundId).
+  // If no bound session or bound ≠ frame session, ack without answering.
+  const boundId = opts.boundSessionId ?? null;
+  if (!boundId) {
+    send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
+    return;
+  }
+  const utterance = deps.latestLearnerUtteranceFor?.(boundId);
+
+  if (!utterance) {
+    // No server capture → fail closed (AC#2). Ack the trigger so the client knows
+    // the frame was received, but do NOT answer a non-existent question.
+    send(ws, { kind: 'ack', sessionId: boundId, event: event.kind });
+    return;
+  }
+
+  // Use the WS-bound session id for ALL DB operations (not the frame's sessionId).
+  // This ensures a forged sessionId on the frame can't route state reads/writes
+  // to a different session.
+  const effectiveSessionId = boundId;
+
+  // Build a synthetic in-process `learner_question` event so the spoken Q&A goes
+  // through the SAME generic Q&A path (proposeWithTimeout → answer_question) as
+  // a typed question. This gives off-topic folding + topic classification for free.
+  const syntheticQuestion: Extract<ClientEvent, { kind: 'learner_question' }> = {
+    kind: 'learner_question',
+    sessionId: effectiveSessionId,
+    question: utterance,
+  };
+
+  // Run the generic agent turn on the synthetic question.
+  const [learnerDerived, recentHistory, transferCandidates, inTransferProbe] = await Promise.all([
+    updateAndReadLearnerState(deps.db, effectiveSessionId, syntheticQuestion, lesson, undefined, undefined),
+    readRecentHistory(deps.db, effectiveSessionId),
+    readTransferCandidates(deps.db, effectiveSessionId, lesson.content.lessonId),
+    isInTransferProbe(deps.db, effectiveSessionId),
+  ]);
+
+  const agentInput: AgentInput = {
+    event: syntheticQuestion,
+    lesson,
+    learnerState: learnerDerived.snapshot,
+    recentHistory,
+    transferCandidates,
+    transferVerdict: undefined,
+    inTransferProbe,
+    hintsByItem: learnerDerived.hintsByItem,
+    priorMissesByItem: learnerDerived.priorMissesByItem,
+    currentSubmitCorrect: undefined,
+  };
+
+  const proposed = await proposeWithTimeout(deps.agent, agentInput);
+  const { action: shaped } = validateOutboundAction(proposed);
+  const layer2 = validateLayer2(shaped);
+  const validatedAction: Action = !layer2.ok
+    ? noAction('agent_unsure', `outbound Layer-2 rejection (spoken turn): ${layer2.detail}`)
+    : shaped;
+
+  // Annotate the action as spoken so F-27's surface renders a spoken-turn bubble.
+  // Only apply to `answer_question` (the expected type for a Q&A response).
+  const spokenAction: Action =
+    validatedAction.type === 'answer_question'
+      ? { ...validatedAction, spoken: true }
+      : validatedAction;
+
+  // Persist under `spoken_turn` kind (not `learner_question`) so the replay is
+  // traceable as a spoken interaction. `events.app IS NULL` (Polymath discriminator).
+  // Key by effectiveSessionId (= boundId) — never the forged frame sessionId.
+  await deps.db.insert(events).values({
+    sessionId: effectiveSessionId,
+    kind: 'spoken_turn',
+    payload: {
+      event: { ...event, capturedQuestion: utterance }, // record the server-captured question
+      action: spokenAction,
+      learnerSnapshot: learnerDerived.snapshot,
+    },
+    app: null,
+  });
+
+  send(ws, { kind: 'action', sessionId: effectiveSessionId, action: spokenAction });
+}
+
 /** Handle one inbound WebSocket frame: validate → run agent → validate output →
  *  persist → reply. Exported for direct unit/integration testing. */
 export async function handleClientFrame(
@@ -1751,6 +1900,15 @@ export async function handleClientFrame(
     await handleExitPlaygroundTurn(deps, ws, event, lesson);
     return;
   }
+
+  // F-30 (ADR-016): spoken-turn trigger — dispatch BEFORE the generic practice turn.
+  // The handler reads the server-captured utterance (latestLearnerUtteranceFor keyed by
+  // the WS-bound id), NOT the frame's sessionId. No capture → ack+return (fail closed).
+  if (event.kind === 'spoken_turn') {
+    await handleSpokenTurnTurn(deps, ws, event, lesson, opts);
+    return;
+  }
+
   // The transfer verdict (server-computed) must be known before deriving learner
   // state, so a passed transfer sets the gate's transfer condition this turn.
   const transferVerdict = await computeTransferVerdict(deps.db, event);
@@ -2051,6 +2209,14 @@ export interface PolymathServer {
    *  RealtimeSession per explain-back utterance — making a real spoken explain-back
    *  produce the server-side transcript the route reads (never the client string). */
   explainBackCaptureRegistry: ExplainBackCaptureRegistry;
+  /**
+   * F-30: the general-utterance registry backing `latestLearnerUtteranceFor`.
+   * Exposed so the production VoiceBridge can call `setLatest(sessionId, text)` via
+   * its `onLearnerUtterance` callback when a learner chunk finalizes — filling the
+   * seam the spoken-turn handler reads. Without this exposure, the registry only
+   * exists in the server closure and the live bridge can't populate it.
+   */
+  learnerUtteranceRegistry: LearnerUtteranceRegistry;
   /** Drain WS connections, close the HTTP server, then resolve. Without
    *  terminating the WS clients first, `httpServer.close()` waits forever for
    *  open sockets and a SIGTERM hangs (the container never exits). */
@@ -2087,6 +2253,16 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     rawDeps.explainBackProsodyFor ??
     ((sessionId: string, targetItemId: string) => captureRegistry.prosodyFor(sessionId, targetItemId));
 
+  // F-30 (ADR-016): the general-utterance registry IS the integrity seam for spoken Q&A.
+  // Default a fresh registry; `createServer` wires `VoiceBridge.onLearnerUtterance` to it
+  // so the production path fills it. Tests may inject a registry pre-primed with utterances.
+  // `latestLearnerUtteranceFor` is injected into `deps` so `handleSpokenTurnTurn` can read
+  // the captured text without trusting the client frame (the server-captured-only rule).
+  const utteranceRegistry = rawDeps.learnerUtteranceRegistry ?? new LearnerUtteranceRegistry();
+  const latestLearnerUtteranceFor =
+    rawDeps.latestLearnerUtteranceFor ??
+    ((sessionId: string) => utteranceRegistry.latestFor(sessionId));
+
   // F-16: default the baseline chat provider from the key-gated GPT-5 impl when the
   // caller didn't inject one (tests inject a deterministic stub; production never
   // constructs it). `makeOpenAiBaselineChatProvider` self-gates on `OPENAI_API_KEY`
@@ -2108,6 +2284,11 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     explainBackCaptureRegistry: captureRegistry,
     explainBackTranscriptFor: transcriptFor,
     explainBackProsodyFor: prosodyFor,
+    // F-30: wire the utterance registry and getter so handleSpokenTurnTurn can read
+    // the server-captured utterance.  The production VoiceBridge populates the registry
+    // via its onLearnerUtterance callback (see createServer → VoiceBridge opts wiring).
+    learnerUtteranceRegistry: utteranceRegistry,
+    latestLearnerUtteranceFor,
   };
 
   const httpServer = http.createServer((req, res) => {
@@ -2446,6 +2627,9 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
         testExplainBackVerdict,
         allowLessonOverride,
         testL1Bkt,
+        // F-30 (MR !8 binding rule): pass the WS-bound session id so
+        // handleSpokenTurnTurn keys off it, not the per-frame sessionId.
+        boundSessionId,
       }).catch((err) => {
         console.error('error handling client frame', err);
         try {
@@ -2463,7 +2647,7 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       wss.close(() => httpServer.close(() => resolve()));
     });
 
-  return { httpServer, wss, explainBackCaptureRegistry: captureRegistry, close };
+  return { httpServer, wss, explainBackCaptureRegistry: captureRegistry, learnerUtteranceRegistry: utteranceRegistry, close };
 }
 
 /** Session-id helper used by the REST layer's callers/tests. */
