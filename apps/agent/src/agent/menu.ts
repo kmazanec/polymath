@@ -26,10 +26,12 @@ export interface ProposedItem {
   /** Gates the circuit builder may use (consumed only by the circuit rep). */
   allowedGates?: Gate[];
   /**
-   * I7/F-27 (ADR-015): the grounding instruction shown with the item at the
-   * surface boundary. Optional here (the heuristic backfills it; F-29's
-   * generation always supplies it). Lockstep: this field MUST stay in sync
-   * with `openaiClient.ts`'s `ItemSchema.prompt` and `itemSpec`'s use below.
+   * I7/F-27 + F-29 (ADR-015): the grounding instruction/question shown with the
+   * item at the surface boundary. Agent-internal; threaded into the ComponentSpec
+   * `prompt` field by `itemSpec`. Optional here — the keyless/authored path carries
+   * the authored prompt from content.json (heuristic backfill); F-29's generated
+   * items MUST supply it or the rails check rejects. Lockstep: this field stays in
+   * sync with `openaiClient.ts`'s `ItemSchema.prompt` and `itemSpec`'s use below.
    */
   prompt?: string;
 }
@@ -111,8 +113,9 @@ const DEFAULT_GATES: Gate[] = ['AND', 'OR', 'NOT'];
 
 /** Build the item-generating `ComponentSpec` for a proposed item. The three
  *  item-generating variants differ in their expression field name and (circuit
- *  only) `allowedGates`. F-27: passes through `item.prompt` to the spec so the
- *  surface boundary can enforce prompt-on-every-challenge (AC#7). */
+ *  only) `allowedGates`. F-27/F-29: passes through `item.prompt` to the spec so the
+ *  surface boundary can enforce prompt-on-every-challenge (AC#7); absent, the field
+ *  is omitted (optional on the wire — the surface renders a visible PromptMissing). */
 function itemSpec(item: ProposedItem): ComponentSpec {
   // F-27 AC#7 / ADR-015: prompt-on-every-challenge at the generation path.
   // If the ProposedItem has a prompt, include it; otherwise omit (the surface

@@ -23,6 +23,11 @@ const ItemSchema = z.object({
   targetExpression: z.string(),
   claimedTruthTable: z.array(z.union([z.literal(0), z.literal(1)])),
   visibleReps: z.array(Rep),
+  // F-29 / ADR-015: lockstep with ProposedItem.prompt in menu.ts.
+  // The model MUST emit a prompt for every item it generates (the rails check
+  // enforces this). Nullable in the schema so OpenAI strict mode accepts it
+  // (missing vs null are both treated as absent in toTacticalMove below).
+  prompt: z.string().max(2000).nullable(),
 });
 
 /** The structured-output schema the model fills. Mapped to `TacticalMove` below.
@@ -61,9 +66,21 @@ const MoveSchema = z.object({
 });
 type RawMove = z.infer<typeof MoveSchema>;
 
+/** Convert a nullable Zod-validated ItemSchema output to a ProposedItem.
+ *  Translates prompt: null → undefined (ProposedItem.prompt is optional, not nullable). */
+function toProposedItem(raw: z.infer<typeof ItemSchema>): ProposedItem {
+  return {
+    rep: raw.rep,
+    targetExpression: raw.targetExpression,
+    claimedTruthTable: raw.claimedTruthTable,
+    visibleReps: raw.visibleReps,
+    ...(raw.prompt !== null ? { prompt: raw.prompt } : {}),
+  };
+}
+
 function toTacticalMove(raw: RawMove): TacticalMove {
   const r = raw.rationale;
-  const item = raw.item as ProposedItem | null;
+  const item: ProposedItem | null = raw.item !== null ? toProposedItem(raw.item) : null;
   switch (raw.move) {
     case 'next_practice_item':
       if (!item) throw new Error('next_practice_item requires item');
