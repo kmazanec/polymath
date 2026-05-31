@@ -329,6 +329,78 @@
       "prosody": { "filledPauses": 0, "midUtteranceSilences": 0, "restarts": 0 },
       "expectPreconditionPass": true,
       "expectJudgePass": false
+    },
+    {
+      "id": "adversarial-article-evasion-no-uppercase-vars",
+      "_note": "Anti-cheat (precondition #5, case-sensitivity): a learner who never engaged with THIS item but speaks 10+ generic words. Single-letter variable tokens match case-SENSITIVELY, so a lowercase article must NOT satisfy the item-reference check — this fixture pins that defense (it would slip through a naive case-insensitive matcher). Deliberately avoids the multi-char token 'and', which matches case-insensitively.",
+      "transcript": "the gate just takes two inputs i guessed the output column for each row honestly",
+      "durationMs": 9000,
+      "maxDurationSec": 15,
+      "kcVocabulary": ["AND", "OR", "NOT", "gate", "input", "output", "row"],
+      "itemTokens": ["A", "B", "AND"],
+      "prosody": { "filledPauses": 0, "midUtteranceSilences": 0, "restarts": 0 },
+      "expectPreconditionPass": false,
+      "expectFailedReason": "no_item_reference"
+    },
+    {
+      "id": "adversarial-generic-gates-no-item-tokens",
+      "_note": "Anti-cheat (precondition #5): fluent generic boolean talk that hits KC vocab (#4 passes) but never references THIS item's variables/operator — the #4-vs-#5 distinction is the load-bearing defense (ADR-010). Must fail no_item_reference, not slip through on generic vocab.",
+      "transcript": "logic gates take inputs produce an output value you read off the truth table for any expression",
+      "durationMs": 10000,
+      "maxDurationSec": 15,
+      "kcVocabulary": ["gate", "input", "output", "truth table", "expression"],
+      "itemTokens": ["A", "B", "OR"],
+      "prosody": { "filledPauses": 0, "midUtteranceSilences": 0, "restarts": 0 },
+      "expectPreconditionPass": false,
+      "expectFailedReason": "no_item_reference"
+    },
+    {
+      "id": "adversarial-boundary-just-over-min-words-references-item",
+      "_note": "Boundary: a terse but genuine item-specific explanation just over the 10-word floor, referencing A/B/AND. Preconditions PASS; it is the judge's call. Guards against the preconditions over-rejecting a short, on-item answer.",
+      "transcript": "For A AND B the output is true only when both",
+      "durationMs": 6000,
+      "maxDurationSec": 15,
+      "kcVocabulary": ["AND", "output", "true"],
+      "itemTokens": ["A", "B", "AND"],
+      "prosody": { "filledPauses": 0, "midUtteranceSilences": 0, "restarts": 0 },
+      "expectPreconditionPass": true,
+      "expectJudgePass": true
+    },
+    {
+      "id": "adversarial-judge-fail-llm-pasted-off-by-one",
+      "_note": "Anti-LLM-paste: a polished, fluent answer that references THIS item (passes all preconditions) but the REASONING is subtly wrong — it states AND is true when EITHER input is true (that is OR). Content correctness is non-negotiable; the judge must catch wrong reasoning under fluent delivery. (brief: 'Succeed only while the UI is doing the reasoning for them')",
+      "transcript": "For A AND B I worked through the truth table and the output is true whenever either A or B is true so I marked three of the four rows true",
+      "durationMs": 12000,
+      "maxDurationSec": 15,
+      "kcVocabulary": ["AND", "gate", "output", "truth table", "row", "true"],
+      "itemTokens": ["A", "B", "AND"],
+      "prosody": { "filledPauses": 0, "midUtteranceSilences": 0, "restarts": 0 },
+      "expectPreconditionPass": true,
+      "expectJudgePass": false
+    },
+    {
+      "id": "adversarial-judge-fail-reads-answer-aloud-no-reasoning",
+      "_note": "Anti-recitation: the learner reads the answer column aloud verbatim with NO causal reasoning about WHY each row is what it is. References the item (preconditions pass) but demonstrates no understanding — the explain-back exists to catch exactly this. Judge must fail it.",
+      "transcript": "For A AND B the output column is false false false true reading top to bottom that is what I put down on the table",
+      "durationMs": 11000,
+      "maxDurationSec": 15,
+      "kcVocabulary": ["AND", "output", "true", "false", "table"],
+      "itemTokens": ["A", "B", "AND"],
+      "prosody": { "filledPauses": 0, "midUtteranceSilences": 0, "restarts": 0 },
+      "expectPreconditionPass": true,
+      "expectJudgePass": false
+    },
+    {
+      "id": "adversarial-judge-pass-disfluent-but-real-reasoning",
+      "_note": "False-REJECT guard (the symmetric risk): genuine first-person reasoning delivered with heavy disfluency (filled pauses, a restart) — real thinking, not reading. Preconditions pass and the judge must PASS it, so the disfluency signal never punishes an authentic halting explanation. (brief: distinguish thinking from reciting)",
+      "transcript": "okay so for A AND B um I started with the row where both are true that one is true and then the other three I worked out are false because you need both",
+      "durationMs": 13000,
+      "maxDurationSec": 15,
+      "kcVocabulary": ["AND", "gate", "output", "row", "true", "false"],
+      "itemTokens": ["A", "B", "AND"],
+      "prosody": { "filledPauses": 2, "midUtteranceSilences": 1, "restarts": 1 },
+      "expectPreconditionPass": true,
+      "expectJudgePass": true
     }
   ]
 }

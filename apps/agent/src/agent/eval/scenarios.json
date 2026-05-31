@@ -1,5 +1,5 @@
 {
-  "note": "Labelled inner-agent eval scenarios (ADR-010 / F-05 criterion 8). Each scenario fixes an inbound event + learner snapshot and the expected tactical move family. The CI gate (≥95%) runs these through the real OpenAI provider when OPENAI_API_KEY is set; without a key the runner is skipped (see eval.test.ts). The heuristic provider is also asserted against the deterministic subset so the data stays honest offline.",
+  "note": "Labelled inner-agent eval scenarios (ADR-010 / F-05 criterion 8). Each scenario fixes an inbound event + learner snapshot and the expected tactical move family. The CI gate (≥95%) runs these through the real OpenAI provider when OPENAI_API_KEY is set; without a key the runner is skipped (see eval.test.ts). The heuristic provider is also asserted against the deterministic subset so the data stays honest offline. The `adversarial-*` scenarios target the brief's false-positive-mastery failure modes (over-scaffolding/hint-abuse, repeated guessing, scaffold-removal refusal, avoidance/off-topic deflection) — they assert the agent does NOT advance, reward, or hand a crutch to a learner exhibiting shallow success.",
   "scenarios": [
     {
       "id": "submit-correct-advances",
@@ -186,6 +186,53 @@
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
       "expectMove": "answer_question",
       "expectTopic": "on_topic"
+    },
+    {
+      "id": "adversarial-hint-abuse-ladder-exhausted-no-crutch",
+      "note": "Over-scaffolding defense: a learner who has already drained all three hint levels on this item asks for a fourth. The agent must NOT hand another crutch — the ladder is exhausted (no_action), not silently re-served. (brief: 'Depend on hints or scaffolds')",
+      "event": { "kind": "request_hint", "itemId": "l1-and" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 3, "ruleGatePassed": false },
+      "hintsByItem": { "l1-and": 3 },
+      "expectMove": "no_action"
+    },
+    {
+      "id": "adversarial-hint-abuse-last-rung-still-l3-not-advance",
+      "note": "Over-scaffolding, mid-ladder: two hints already served on this item, a third request gets the LAST rung (L3) — never an advance/next item. Asking for help is not progress; the agent stays on remediation, not promotion.",
+      "event": { "kind": "request_hint", "itemId": "l1-and" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 2, "ruleGatePassed": false },
+      "hintsByItem": { "l1-and": 2 },
+      "expectMove": "propose_hint"
+    },
+    {
+      "id": "adversarial-repeated-guessing-drops-to-simpler",
+      "note": "Guessing defense: the learner already missed THIS item once and submits another wrong answer (cycling guesses). A repeated miss must drop to a SIMPLER item, never re-present the same one as if it were a fresh attempt — a guesser cannot grind the same item to a lucky pass. (brief: 'Guess correctly by luck')",
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A OR B", "correct": false },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "priorMissesByItem": { "l1-and": 1 },
+      "expectMove": "simpler_item"
+    },
+    {
+      "id": "adversarial-no-hint-during-transfer-probe",
+      "note": "Scaffold-removal defense: during a transfer probe (scaffolds removed) the learner requests a hint. The agent must REFUSE — no crutch during the transfer measurement, even if a stray affordance fired the request. A hint here would void the 'can they transfer without support?' signal. (brief: 'apply the skill ... with less scaffolding')",
+      "event": { "kind": "request_hint", "itemId": "l1-and" },
+      "learnerState": { "consecutiveCorrect": 3, "hintsUsed": 0, "ruleGatePassed": true },
+      "inTransferProbe": true,
+      "expectMove": "no_action"
+    },
+    {
+      "id": "adversarial-avoidance-offtopic-deflected",
+      "note": "Avoidance defense: a learner steering the tutor off-task to dodge the work. The agent classifies it off_topic and deflects back to the lesson rather than chasing the tangent. (brief: 'Click through without engaging' / avoidance)",
+      "event": { "kind": "learner_question", "question": "this is boring, can we just talk about video games instead?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "off_topic"
+    },
+    {
+      "id": "adversarial-correct-but-not-rulegate-does-not-master",
+      "note": "Pattern-match defense: a single correct submit with the rule-gate NOT yet passed must keep practicing — it must NEVER jump to a transfer probe or mastery. One right answer is not mastery; the gate, not a lucky hit, is the truth-maker. (brief: 'mistake pattern-matching for mastery')",
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B", "correct": true },
+      "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
     }
   ]
 }

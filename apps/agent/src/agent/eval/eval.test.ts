@@ -24,6 +24,14 @@ interface Scenario {
   event: Record<string, unknown>;
   learnerState: { consecutiveCorrect: number; hintsUsed: number; ruleGatePassed: boolean };
   transferCandidates?: AgentInput['transferCandidates'];
+  /** Adversarial-driving inputs (server-derived in production; set here to stage the
+   *  false-positive-mastery defenses). `hintsByItem` drives the hint-ladder level so
+   *  a hint-abuse scenario reaches the exhausted (`no_action`) rung; `priorMissesByItem`
+   *  forces the repeated-miss → `simpler_item` drop (a guesser cycling wrong answers);
+   *  `inTransferProbe` stages the scaffold-removal moment where hints are refused. */
+  hintsByItem?: Record<string, number>;
+  priorMissesByItem?: Record<string, number>;
+  inTransferProbe?: boolean;
   expectMove?: string;
   expectMoveOneOf?: string[];
   expectTopic?: 'on_topic' | 'off_topic';
@@ -54,6 +62,10 @@ function inputFor(s: Scenario): AgentInput {
     learnerState: { bktByKc: {}, explainBackPassed: false, topicGuardrailClean: true, ...s.learnerState },
     recentHistory: [],
     transferCandidates: s.transferCandidates,
+    // Adversarial-driving inputs (server-derived in production; staged here).
+    hintsByItem: s.hintsByItem,
+    priorMissesByItem: s.priorMissesByItem,
+    inTransferProbe: s.inTransferProbe,
     // Mirror the scenario's `correct` into the server-derived flag the heuristic
     // reads (production recomputes it server-side).
     currentSubmitCorrect: event.kind === 'submit' ? event.correct : undefined,
