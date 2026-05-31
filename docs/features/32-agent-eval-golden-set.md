@@ -81,3 +81,47 @@ The brief's false-positive-mastery / anti-gaming defense (the agent must not be 
 **Invariants:** no provider secret in any MR-reachable job (`agent_live_eval` `when:never` on MR + `liveIt` self-skips — belt-and-suspenders); offline golden 100%-gates MRs in the keyless `agent_test`; live banks protected-main only; single correctness source (var-capped `@polymath/booleans`, over-cap = `reject_over_var_cap` never enumerated); meta-check guards vacuous green; `evals/` NOT in the Docker image; fold in don't reshape (existing banks + runners unchanged).
 
 ## Implementation notes (filled in by the building agent)
+
+### What was built
+
+**Fixtures (evals/golden/):**
+- `README.md` — fixture format spec, add-a-case recipes (golden + live), CI policy table, ownership.
+- `move.json` — 12 fixtures: 1 `expectFail` meta-check (wrong move on session_start), 7 adversarial cases (forged-correct, guess-streak, hint-abuse, no-probe-without-rulegate, no-hint-during-probe, off-topic deflect, early-probe blocked), 4 pedagogical-soundness cases.
+- `generation.json` — 10 fixtures: 1 meta-check, 5 valid cases, 4 reject cases (wrong_key ×2, unparseable ×2, over_var_cap ×1). The 10-variable boundary case is `reject_wrong_key` (not `valid`) because providing 1024-row truth tables in JSON is impractical; the var-cap acceptance is exercised by the parser + var-count check, which the test confirms passes the cap check.
+- `prompt.json` — 8 fixtures: 1 meta-check, 3 prompt-present cases (TruthTablePractice, CircuitBuilder, PseudocodeChallenge), 1 TransferProbe prompt-present, 2 prompt-absent cases, 1 empty-string case (empty = absent).
+- `spoken.json` — 11 fixtures: 1 meta-check, 4 on-topic, 3 off-topic, 3 live-grounded cases (2 passing, 1 failing wrong-reasoning).
+
+**Test (apps/agent/src/agent/eval/golden.test.ts):**
+- 4 offline oracles: move (heuristic), generation validity (var-capped booleans), prompt presence (schema check), topic classification (BOOLEAN_TERMS regex).
+- Meta-check tests for all 4 oracles: each asserts the `expectFail:true` fixture is REJECTED by the oracle.
+- 3 meta-checks on bank integrity: non-empty, unique IDs, ≥1 `expectFail:true` per bank.
+- 3 `liveIt` gates: move ≥95% (OpenAI), generation appropriateness ≥95% (offline validity as proxy), spoken-groundedness ≥90% (OpenAISpokenGroundednessJudge).
+
+**Judge (apps/agent/src/agent/judges/spokenGroundedness.ts):**
+- `OpenAISpokenGroundednessJudge`: sibling of `OpenAIExplainBackJudge`. Structured output via `withStructuredOutput(GroundednessSchema)`. Conjoins `overall && factuallyAccurate` server-side (same conjoin-server-side pattern as the explain-back judge). Key-gated (throws on missing key). `makeSpokenGroundednessJudge` factory.
+- `buildGroundednessPrompt` exported for offline tests.
+
+**CI (.gitlab-ci.yml):**
+- `agent_live_eval` job: protected-main auto (`allow_failure: true` per D13 since the live gate has never run) + `when: never` on MR + manual fallback. Runs `golden.test.ts` AND `eval.test.ts` WITH `OPENAI_API_KEY`. Added to `deploy.needs` (non-blocking while `allow_failure: true`).
+- `eval.test.ts` header updated → ADR-017 + buried-finding documentation.
+
+### Resolved decisions
+
+1. **Buried live-gate finding confirmed:** The inner-agent `liveIt` in `eval.test.ts` has always self-skipped because `agent_test` receives NO `OPENAI_API_KEY` (verified in `.gitlab-ci.yml`). `agent_live_eval` is the first CI job where it fires live.
+
+2. **`allow_failure: true` on first deploy (D13 recommendation):** Added as suggested — provider may have drifted and would red main on first run. Remove after the first green run.
+
+3. **Generation-appropriateness live gate (D13):** Uses the offline validity oracle (var-capped booleans) as the appropriateness proxy for the initial seed fixtures. F-29 expands the bank with live-generated items and can replace/augment this with a real appropriateness judge call.
+
+4. **Single correctness source (invariant):** `golden.test.ts`'s generation validity oracle imports from `@polymath/booleans` directly (same `parse`/`variables`/`truthTable` functions that `layer2.ts` uses) — no forked correctness logic.
+
+5. **`evals/` NOT in Docker image (invariant):** No `Dockerfile` change. Confirmed `apps/agent/Dockerfile` does not COPY `evals/`. CI/test-only.
+
+6. **`judges/` directory location:** Placed in `apps/agent/src/agent/judges/` alongside the provider clients. The directory is new but lives inside the already-COPYed `apps/agent` tree (not that `evals/` is copied — but judges are runtime, not eval-only, so they need to be in the image for future server wiring of the spoken-groundedness judge).
+
+### Downstream inheritance
+
+- F-29: append generation fixtures to `evals/golden/generation.json` using the format in the README. The validity oracle in `golden.test.ts` runs them automatically.
+- F-30: append spoken fixtures to `evals/golden/spoken.json` (add `expectTopic` + optionally `expectGrounded`). The topic-classification oracle runs offline automatically; the groundedness judge runs live in `agent_live_eval`.
+- Future features: the `expectFail:true` meta-check pattern + non-empty/unique-id bank assertions guard any future bank expansion against vacuous green.
+- Remove `allow_failure: true` from `agent_live_eval` once the first live run on `main` is green; at that point `deploy.needs: - agent_live_eval` becomes a hard gate.
