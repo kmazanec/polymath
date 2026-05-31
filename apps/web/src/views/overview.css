@@ -1,0 +1,148 @@
+/*
+ * Lesson overview (`/learn`) — the calm bridge between landing and lesson.
+ * On-brand per docs/BRAND.md, token-driven (tokens.css). No spectrum gradient here.
+ */
+
+.overview {
+  position: relative;
+  min-height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.overview::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(48rem 32rem at 8% -10%, rgba(74, 75, 182, 0.12), transparent 60%),
+    radial-gradient(42rem 32rem at 110% 8%, rgba(23, 226, 234, 0.10), transparent 55%);
+}
+.overview > * { position: relative; z-index: 1; }
+
+.overview__top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1.3rem clamp(1.25rem, 5vw, 3rem);
+}
+.overview__brand { display: flex; align-items: center; gap: 0.55rem; text-decoration: none; }
+.overview__brand-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.8rem; height: 1.8rem; border-radius: 8px;
+  background: var(--gradient-primary); color: #fff; font-size: 0.9rem; box-shadow: var(--shadow-sm);
+}
+.overview__brand-name {
+  font-family: var(--font-display); font-weight: 700; font-size: 1.1rem;
+  letter-spacing: var(--tracking-display); color: var(--color-ink);
+}
+.overview__back {
+  font-family: var(--font-display); font-weight: 600; font-size: 0.9rem;
+  color: var(--color-text-muted); text-decoration: none;
+  transition: color var(--dur-hover) ease;
+}
+.overview__back:hover { color: var(--color-accent); }
+
+.overview__main {
+  flex: 1; width: 100%; max-width: 60rem; margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2.5rem) clamp(1.25rem, 5vw, 3rem) 4rem;
+  display: flex; flex-direction: column; gap: clamp(1.75rem, 3.5vw, 2.75rem);
+}
+
+/* hero */
+.overview__hero { animation: ov-rise 0.45s var(--ease-spring) both; }
+.overview__eyebrow {
+  font-family: var(--font-mono); font-size: 0.76rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--color-accent); margin: 0 0 0.8rem;
+}
+.overview__title {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: clamp(2.1rem, 5vw, 3.2rem); line-height: 1.02;
+  letter-spacing: -0.045em; color: var(--color-ink); margin: 0 0 1rem;
+}
+.overview__lede {
+  font-size: clamp(1rem, 1.5vw, 1.12rem); line-height: 1.6;
+  color: var(--color-text); max-width: 42rem; margin: 0 0 1.75rem;
+}
+.overview__cta-row { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+.overview__begin {
+  display: inline-flex; align-items: center; gap: 0.55rem;
+  font-family: var(--font-display); font-weight: 600; font-size: 1.05rem;
+  color: #fff; border: none; cursor: pointer;
+  padding: 0.85rem 1.7rem; border-radius: var(--radius-pill);
+  background: var(--gradient-primary);
+  box-shadow: 0 10px 28px rgba(74, 75, 182, 0.36);
+  transition: transform var(--dur-hover) var(--ease-spring), box-shadow var(--dur-hover) ease;
+}
+.overview__begin:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(74, 75, 182, 0.44); }
+.overview__begin-arrow { transition: transform var(--dur-hover) var(--ease-spring); }
+.overview__begin:hover .overview__begin-arrow { transform: translateX(4px); }
+.overview__cta-note { font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-text-muted); }
+
+/* reps row */
+.overview__reps {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.9rem; align-items: stretch;
+  position: relative;
+}
+@media (max-width: 720px) { .overview__reps { grid-template-columns: 1fr; } }
+.rep-card {
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-sm);
+  padding: 1.25rem 1.3rem;
+}
+.rep-card__glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.4rem; height: 2.4rem; border-radius: 11px; margin-bottom: 0.75rem;
+  background: var(--color-signal-tint); color: var(--color-accent);
+  font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700;
+}
+.rep-card__label {
+  font-family: var(--font-display); font-weight: 600; font-size: 1.05rem;
+  margin: 0 0 0.35rem; color: var(--color-ink);
+}
+.rep-card__blurb { margin: 0; color: var(--color-text-muted); line-height: 1.5; font-size: 0.9rem; }
+.overview__reps-link { display: none; } /* decorative hook reserved; hidden for now */
+
+/* two-column panels */
+.overview__cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; align-items: start;
+}
+@media (max-width: 720px) { .overview__cols { grid-template-columns: 1fr; } }
+.overview__panel {
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-sm); padding: 1.5rem 1.6rem;
+}
+.overview__panel--gate {
+  background: var(--color-ink-deep, #20205f); color: #f1f5ff; border: none;
+  box-shadow: var(--shadow-card);
+}
+.overview__panel-title {
+  font-family: var(--font-display); font-weight: 600; font-size: 1.15rem;
+  margin: 0 0 1rem; color: var(--color-ink);
+}
+.overview__panel--gate .overview__panel-title { color: #fff; }
+
+.overview__outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+.overview__outcomes li { display: flex; gap: 0.65rem; line-height: 1.45; color: var(--color-text); }
+.overview__tick {
+  flex: 0 0 auto; color: var(--color-pass); font-weight: 700;
+  width: 1.4rem; height: 1.4rem; border-radius: 50%; background: var(--color-signal-tint);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem;
+}
+
+.overview__gate-lead { margin: 0 0 0.9rem; color: #d3d9ff; line-height: 1.5; font-size: 0.94rem; }
+.overview__gate-list { margin: 0 0 0.9rem; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.6rem; }
+.overview__gate-list li {
+  position: relative; padding-left: 1.4rem; line-height: 1.45; color: #eaeeff; font-size: 0.94rem;
+}
+.overview__gate-list li::before {
+  content: ''; position: absolute; left: 0; top: 0.5rem;
+  width: 0.55rem; height: 0.55rem; border-radius: 2px;
+  background: var(--color-cyan, #17e2ea);
+}
+.overview__gate-list strong { color: #fff; font-weight: 700; }
+.overview__gate-foot { margin: 0; font-size: 0.86rem; color: #b9c1f0; font-style: italic; }
+
+@keyframes ov-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .overview__hero { animation: none; } }

@@ -2,6 +2,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { App } from './App.js';
+import { Landing } from './views/Landing.js';
+import { Overview } from './views/Overview.js';
 import { SessionReport } from './views/SessionReport.js';
 import { MetricsDashboard } from './MetricsDashboard.js';
 import { TutorHandoff } from './views/TutorHandoff.js';
@@ -11,7 +13,13 @@ import { TeacherReport } from './views/TeacherReport.js';
 import './styles/global.css';
 
 const router = createBrowserRouter([
-  { path: '/', element: <App /> },
+  // The entry flow: a marketing Landing (`/`) → per-lesson Overview (`/learn`) → the
+  // live lesson shell (`/lesson`). The session + WebSocket are created ONLY when the
+  // lesson shell mounts (App's mount effect), so Landing/Overview are pure static
+  // surfaces and no session row is minted until the learner clicks Begin.
+  { path: '/', element: <Landing /> },
+  { path: '/learn', element: <Overview /> },
+  { path: '/lesson', element: <App /> },
   // I5 — operator views.
   { path: '/session/:id/report', element: <SessionReport /> },
   { path: '/metrics', element: <MetricsDashboard /> },
