@@ -208,6 +208,25 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     kind: z.literal('exit_playground'),
     sessionId: SessionId,
   }),
+  // I7/F-27 (ADR-015, D1): the learner's "Got it — continue" advance of the opening
+  // intro sequence. APPEND-ONLY new event kind (NOT a re-emitted `session_start` and
+  // NOT an `Action` variant): the server's `openingMove` derives the next intro stage
+  // from the session's mount history, so the advance is a distinct, deterministic
+  // signal. Both the heuristic and OpenAI providers branch on it (menu-lockstep).
+  z.object({
+    kind: z.literal('intro_advance'),
+    sessionId: SessionId,
+  }),
+  // I7/F-30 (ADR-016, D10): a spoken-turn TRIGGER only — it carries NO transcript /
+  // question field. The answered text is the SERVER-captured utterance
+  // (`latestLearnerUtteranceFor(boundSessionId)`), never a client-sent string —
+  // reusing `learner_question` is unsafe precisely because its required `question`
+  // string would be the client-trusted path. Empty server capture → honest no-op
+  // (`ack`), never an answer to a client string.
+  z.object({
+    kind: z.literal('spoken_turn'),
+    sessionId: SessionId,
+  }),
 ]);
 export type ClientEvent = z.infer<typeof ClientEvent>;
 

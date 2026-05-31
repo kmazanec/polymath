@@ -52,6 +52,11 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     expression: z.string(),
     claimedTruthTable: ClaimedTruthTable,
     visibleReps: z.array(Rep),
+    // I7/F-27 (ADR-015): the grounding instruction/question shown with the item.
+    // Append-only optional on the wire (existing senders still validate); the F-27
+    // surface treats a prompt-less item as a visible error (prompt-on-every-challenge),
+    // and F-29's generation supplies it. No payload reshaped.
+    prompt: z.string().max(2000).optional(),
   }),
   z.object({
     kind: z.literal('CircuitBuilder'),
@@ -59,12 +64,14 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     claimedTruthTable: ClaimedTruthTable,
     allowedGates: z.array(Gate),
     visibleReps: z.array(Rep),
+    prompt: z.string().max(2000).optional(),
   }),
   z.object({
     kind: z.literal('PseudocodeChallenge'),
     targetExpression: z.string(),
     claimedTruthTable: ClaimedTruthTable,
     visibleReps: z.array(Rep),
+    prompt: z.string().max(2000).optional(),
   }),
   z.object({
     kind: z.literal('WorkedExample'),
@@ -83,6 +90,10 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     hiddenReps: z.array(Rep),
     targetRep: Rep,
     itemId: z.string(),
+    // I7/F-27: a transfer probe is an item-bearing surface too, so it carries the
+    // same append-only optional grounding prompt. The transfer bank stays
+    // hand-curated/read-only (F-29 never generates a probe).
+    prompt: z.string().max(2000).optional(),
   }),
   z.object({
     kind: z.literal('ExplainBackPrompt'),

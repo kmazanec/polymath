@@ -108,6 +108,27 @@ describe('ComponentSpec', () => {
     expect(() => ComponentSpec.parse({ kind: 'Nope' })).toThrow();
   });
 
+  it('I7/F-27: accepts an append-only optional prompt on the four item-bearing kinds', () => {
+    // The grounding prompt is optional on the wire (existing senders without it still
+    // validate) and required at the F-27 surface boundary. Round-trips with it present
+    // on each item kind; the value is bounded to 2000 chars like every learner string.
+    const withPrompt: ComponentSpec[] = [
+      { ...componentSamples.TruthTablePractice, prompt: 'Fill the output column for A AND B.' },
+      { ...componentSamples.CircuitBuilder, prompt: 'Build a circuit equal to A AND B.' },
+      { ...componentSamples.PseudocodeChallenge, prompt: 'Write code returning NOT A.' },
+      { ...componentSamples.TransferProbe, prompt: 'Now show this in pseudocode.' },
+    ];
+    for (const spec of withPrompt) {
+      expect(ComponentSpec.parse(spec)).toEqual(spec);
+    }
+    // Still valid without it (append-only optional).
+    expect(ComponentSpec.parse(componentSamples.TruthTablePractice)).not.toHaveProperty('prompt');
+    // Rejects an over-long prompt at the contract boundary.
+    expect(() =>
+      ComponentSpec.parse({ ...componentSamples.TruthTablePractice, prompt: 'x'.repeat(2001) }),
+    ).toThrow();
+  });
+
   it('rejects a missing required field', () => {
     expect(() => ComponentSpec.parse({ kind: 'LessonIntro', lessonId: 1 })).toThrow();
   });
@@ -141,6 +162,27 @@ describe('Action', () => {
     expect(new Set(actionSamples.map((a) => a.type))).toEqual(
       new Set(['mount', 'transition', 'answer_question', 'no_action']),
     );
+  });
+
+  it('I7/F-30: answer_question carries an append-only optional spoken flag', () => {
+    const spoken = Action.parse({
+      type: 'answer_question',
+      question: 'q',
+      answer: 'a',
+      topicClassification: 'on_topic',
+      rationale: 'r',
+      spoken: true,
+    });
+    expect(spoken).toMatchObject({ type: 'answer_question', spoken: true });
+    // Absent → fail-safe default (the surface renders a typed bubble).
+    const typed = Action.parse({
+      type: 'answer_question',
+      question: 'q',
+      answer: 'a',
+      topicClassification: 'on_topic',
+      rationale: 'r',
+    });
+    expect(typed).not.toHaveProperty('spoken');
   });
 
   it('validates a mounted component recursively', () => {
@@ -179,12 +221,34 @@ describe('wire protocol', () => {
     { kind: 'session_end', sessionId: SID },
     { kind: 'ui_mount', sessionId: SID, componentKind: 'TruthTablePractice', phase: 'practicing' },
     { kind: 'intelligibility_response', sessionId: SID, mountedKind: 'HintCard', answer: 'yes' },
+    { kind: 'intro_advance', sessionId: SID },
+    { kind: 'spoken_turn', sessionId: SID },
   ];
 
   it('round-trips every client event', () => {
     for (const ev of clientEvents) {
       expect(ClientEvent.parse(ev)).toEqual(ev);
     }
+  });
+
+  it('I7/F-27: intro_advance is a {sessionId}-only advance trigger', () => {
+    const ev = ClientEvent.parse({ kind: 'intro_advance', sessionId: SID });
+    expect(ev).toEqual({ kind: 'intro_advance', sessionId: SID });
+  });
+
+  it('I7/F-30: spoken_turn is a TRIGGER only — no client-trusted transcript/question survives', () => {
+    // The integrity boundary: the answered text is the server-captured utterance, so the
+    // wire kind carries nothing else. Junk fields a client tacks on are Zod-stripped, so
+    // no client string can ever reach the answer path through this frame.
+    const parsed = ClientEvent.parse({
+      kind: 'spoken_turn',
+      sessionId: SID,
+      transcript: 'a polished transcript the client forged',
+      question: 'what the client wants answered',
+    });
+    expect(parsed).toEqual({ kind: 'spoken_turn', sessionId: SID });
+    expect(parsed).not.toHaveProperty('transcript');
+    expect(parsed).not.toHaveProperty('question');
   });
 
   it('transfer_submitted carries an optional responseTimeMs (F-21 metric-4 data source)', () => {

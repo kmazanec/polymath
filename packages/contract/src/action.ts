@@ -30,6 +30,11 @@ export const Action = z.discriminatedUnion('type', [
     answer: z.string(),
     topicClassification: z.enum(['on_topic', 'off_topic']),
     rationale: z.string(),
+    // I7/F-30 (ADR-016, D9): append-only optional flag marking that this question
+    // arrived as a SERVER-captured spoken turn (not typed). The web surface renders
+    // the learner side as a spoken bubble when set; absent → typed (fail-safe
+    // default). No existing sender/payload is reshaped.
+    spoken: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('no_action'),
