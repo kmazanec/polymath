@@ -59,6 +59,14 @@ const MASTERY: ComponentSpec = {
   nextLessonId: 2,
 };
 
+const TT_PRACTICE_WITH_PROMPT: ComponentSpec = {
+  kind: 'TruthTablePractice',
+  expression: 'A AND B',
+  claimedTruthTable: [0, 0, 0, 1],
+  visibleReps: ['truth_table'],
+  prompt: 'Fill in the truth table for A AND B.',
+};
+
 describe('a11y axe audit (jsdom surfaces)', () => {
   it('LessonIntro has no serious/critical violations', async () => {
     const { container } = render(renderComponent(LESSON_INTRO));
@@ -89,6 +97,41 @@ describe('a11y axe audit (jsdom surfaces)', () => {
     const { container, getByRole } = render(<AboutSessionData />);
     await expectNoSeriousViolations(container);
     getByRole('button', { name: /about this session/i }).click();
+    await expectNoSeriousViolations(container);
+  });
+
+  // F-27 a11y extensions (AC#8):
+  it('TranscriptLog (empty) has no serious/critical violations', async () => {
+    const { TranscriptLog } = await import('./components/TranscriptLog.js');
+    const { container } = render(<TranscriptLog turns={[]} />);
+    await expectNoSeriousViolations(container);
+  });
+
+  it('TranscriptLog (with verdict turn) has no serious/critical violations', async () => {
+    const { TranscriptLog } = await import('./components/TranscriptLog.js');
+    const turn: import('./surfaceState.js').Turn = {
+      kind: 'verdict',
+      correct: true,
+      expression: 'A AND B',
+    };
+    const { container } = render(<TranscriptLog turns={[turn]} />);
+    await expectNoSeriousViolations(container);
+  });
+
+  it('TruthTablePractice with prompt has no serious/critical violations', async () => {
+    const { container } = render(renderComponent(TT_PRACTICE_WITH_PROMPT));
+    await expectNoSeriousViolations(container);
+  });
+
+  it('IntroExplanation with continue button has no serious/critical violations', async () => {
+    const { IntroExplanation } = await import('./components/IntroExplanation.js');
+    const spec = {
+      kind: 'IntroExplanation' as const,
+      topic: 'AND gate',
+      body: 'AND outputs 1 only when both inputs are 1.',
+      visibleReps: ['truth_table' as const],
+    };
+    const { container } = render(<IntroExplanation spec={spec} onAdvanceIntro={() => undefined} />);
     await expectNoSeriousViolations(container);
   });
 });

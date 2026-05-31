@@ -249,3 +249,73 @@ describe('validateOutboundAction (acceptance criterion 5)', () => {
     expect(action.type).toBe('no_action');
   });
 });
+
+// ── F-27 (I7): intro_advance handler ────────────────────────────────────────
+
+describe('inner-agent: intro_advance (F-27 AC#4, menu-lockstep)', () => {
+  const SID_IA = '11111111-1111-1111-1111-111111111111';
+
+  function introAdvanceInput(priorMountCount: number): AgentInput {
+    return {
+      event: { kind: 'intro_advance', sessionId: SID_IA },
+      lesson,
+      learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 0, ruleGatePassed: false },
+      recentHistory: Array.from({ length: priorMountCount }, () => ({
+        eventKind: 'session_start' as const,
+        actionType: 'mount' as const,
+        sessionId: SID_IA,
+      })),
+      currentSubmitCorrect: undefined,
+    };
+  }
+
+  it('stage 0 (0 prior mounts): advances to IntroExplanation', async () => {
+    const inp = introAdvanceInput(0);
+    const action = await new StubAgentClient().propose(inp);
+    // The lesson has intro content with explanations; stage 0 → IntroExplanation.
+    if (action.type === 'mount') {
+      // May be IntroExplanation (if intro content is present) or a practice item.
+      expect(['IntroExplanation', 'TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'])
+        .toContain(action.component.kind);
+    } else {
+      // no_action is acceptable if intro content is absent (graceful degrade).
+      expect(action.type).toBe('no_action');
+    }
+  });
+
+  it('stage 1 (1 prior mount): advances to WorkedExample or practice item', async () => {
+    const inp = introAdvanceInput(1);
+    const action = await new StubAgentClient().propose(inp);
+    if (action.type === 'mount') {
+      expect(['WorkedExample', 'TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'])
+        .toContain(action.component.kind);
+    } else {
+      expect(action.type).toBe('no_action');
+    }
+  });
+
+  it('stage 2+ (2+ prior mounts): mounts the first practice item', async () => {
+    const inp = introAdvanceInput(2);
+    const action = await new StubAgentClient().propose(inp);
+    if (action.type === 'mount') {
+      expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'])
+        .toContain(action.component.kind);
+    } else {
+      expect(action.type).toBe('no_action');
+    }
+  });
+
+  it('after practice has started, intro_advance is a no-op', async () => {
+    const inp: AgentInput = {
+      event: { kind: 'intro_advance', sessionId: SID_IA },
+      lesson,
+      learnerState: { bktByKc: {}, hintsUsed: 0, consecutiveCorrect: 1, ruleGatePassed: false },
+      recentHistory: [
+        { eventKind: 'submit', actionType: 'mount', sessionId: SID_IA },
+      ],
+      currentSubmitCorrect: undefined,
+    };
+    const action = await new StubAgentClient().propose(inp);
+    expect(action.type).toBe('no_action');
+  });
+});

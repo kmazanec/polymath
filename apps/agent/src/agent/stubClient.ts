@@ -1,57 +1,11 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { AgentInput, MoveProvider } from './client.js';
 import type { ProposedItem, TacticalMove } from './menu.js';
 import type { Rep } from '@polymath/contract';
 import { FlowAgentClient } from './flowClient.js';
 import { generateL1, generateL2, generateL3Canned, L4_DEMORGAN_HINT } from '../hints/templates.js';
 import { detectHalfwayMisconception, loadMisconceptions } from '../hints/misconceptions.js';
-
-/**
- * The shape of the `intro` block that batch A adds to `lessons/<id>/content.json`.
- * This field is stripped by Zod when `LessonContent.parse()` runs (Zod's default
- * unknown-key behaviour), so we read it from the raw JSON here rather than waiting
- * for the contract type to be updated — that is another team's concern. All access
- * is guarded: if the field is absent or malformed the code falls back gracefully.
- */
-interface LessonIntroBlock {
-  lessonIntro?: { title: string; body: string };
-  explanations?: Array<{ topic: string; body: string; visibleReps: string[] }>;
-  workedExample?: {
-    expression: string;
-    steps: Array<{ label: string; detail: string }>;
-    visibleReps: string[];
-  };
-}
-
-/** Repo-root `lessons/` directory — same resolution as the loader. */
-const lessonsRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../../../lessons',
-);
-
-/**
- * Read the raw `lessons/<lessonId>/content.json` and extract the `intro` block,
- * bypassing the Zod parse (which strips the field because `LessonContent` does
- * not declare it yet). Returns `null` on any failure — missing file, bad JSON,
- * absent/malformed `intro` — so the caller always degrades gracefully.
- *
- * This is intentionally a narrow, fail-soft read. It does NOT re-validate or
- * re-parse the full content; that is the loader's job. The only field read is
- * `intro`, and every sub-field access below is optional-chained.
- */
-function readLessonIntro(lessonId: number): LessonIntroBlock | null {
-  try {
-    const file = path.join(lessonsRoot, String(lessonId), 'content.json');
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
-    const intro = raw['intro'];
-    if (!intro || typeof intro !== 'object' || Array.isArray(intro)) return null;
-    return intro as LessonIntroBlock;
-  } catch {
-    return null;
-  }
-}
+// F-27 (menu-lockstep): shared opening-move logic, used for both session_start and intro_advance.
+import { openingMove, defaultItemPrompt } from './introAdvance.js';
 
 /**
  * A deterministic, key-free `MoveProvider` (no LLM). It implements a small
@@ -74,6 +28,25 @@ function readLessonIntro(lessonId: number): LessonIntroBlock | null {
 export class HeuristicMoveProvider implements MoveProvider {
   proposeMove(input: AgentInput): Promise<TacticalMove> {
     const ev = input.event;
+
+    // I7/F-27 (D1, menu-lockstep): "Got it — continue" from the web client advances
+    // the deterministic opening intro sequence one stage.  The current stage is
+    // derived from the mount count in recentHistory — idempotent on a reconnect,
+    // and exactly the same logic as session_start's openingMove.  An intro_advance
+    // on a session that has already started practice is a no-op.
+    if (ev.kind === 'intro_advance') {
+      const alreadyStarted = input.recentHistory.some(
+        (t) => t.eventKind === 'submit' || t.eventKind === 'request_hint' || t.eventKind === 'transfer_submitted',
+      );
+      if (alreadyStarted) {
+        return Promise.resolve({
+          move: 'no_action',
+          reason: 'wait_for_learner',
+          rationale: 'intro_advance received after practice has started — ignoring (heuristic provider)',
+        });
+      }
+      return Promise.resolve(openingMove(input));
+    }
 
     if (ev.kind === 'session_start') {
       // Idempotent: if the learner has already been practicing (any submit, hint,
@@ -189,6 +162,7 @@ export class HeuristicMoveProvider implements MoveProvider {
             targetExpression: easiest.targetExpression,
             claimedTruthTable: easiest.truthTable,
             visibleReps: ['truth_table'],
+            prompt: defaultItemPrompt(easiest.targetExpression, 'truth_table'),
           },
           rationale: 'transfer probe failed — remediating with a simpler item (heuristic provider)',
         });
@@ -330,106 +304,9 @@ function proposeMasteryOrWait(input: AgentInput): TacticalMove {
   };
 }
 
-/**
- * The deterministic opening move on a fresh session (no prior submits/hints).
- *
- * Implements Sweller's worked-examples-first principle: novices should see
- * instruction before practice, not be dropped cold into an exercise. The sequence
- * is driven by the count of prior `mount` actions already in `recentHistory`
- * (which survive a reconnect mid-intro — idempotency is preserved because the
- * stage is derived from what has already been shown, not from hidden state):
- *
- *   Stage 0 (0 prior mounts) → IntroExplanation (first KC explanation)
- *   Stage 1 (1 prior mount)  → WorkedExample
- *   Stage 2 (2+ prior mounts)→ first practice item (today's behaviour)
- *
- * If `intro` content is absent from the lesson's raw content.json (the field is
- * stripped by Zod's parse and is read separately; it may also be missing from
- * older lesson files), the function falls through to `firstLessonItem` — exactly
- * today's behaviour. Nothing crashes; the intro sequence is additive.
- */
-function openingMove(input: AgentInput): TacticalMove {
-  // Count mounts already recorded in history for this intro sequence. We only
-  // count mounts before any submit — alreadyStarted already gates the caller —
-  // so this count is purely intro-stage mounts.
-  const priorMounts = input.recentHistory.filter((t) => t.actionType === 'mount').length;
-
-  // Attempt to read the intro block from the raw JSON (bypasses Zod's strip).
-  const intro = readLessonIntro(input.lesson.content.lessonId);
-
-  if (intro) {
-    // Stage 0: mount the first IntroExplanation (most fundamental KC, authored first).
-    if (priorMounts === 0) {
-      const firstExplanation = intro.explanations?.[0];
-      if (firstExplanation) {
-        // Validate visibleReps to Rep[] (the raw JSON has string[]; filter to known values).
-        const visibleReps = toRepArray(firstExplanation.visibleReps);
-        return {
-          move: 'intro_explanation',
-          topic: firstExplanation.topic,
-          body: firstExplanation.body,
-          visibleReps,
-          rationale: `intro stage 0 — mounting IntroExplanation for KC "${firstExplanation.topic}" before practice (heuristic provider)`,
-        };
-      }
-    }
-
-    // Stage 1: mount the WorkedExample so learners see a solved trace before
-    // attempting the first item themselves (Sweller: completion problems → practice).
-    if (priorMounts === 1) {
-      const we = intro.workedExample;
-      if (we) {
-        const visibleReps = toRepArray(we.visibleReps, ['truth_table']);
-        return {
-          move: 'worked_example',
-          expression: we.expression,
-          steps: we.steps,
-          visibleReps,
-          rationale: `intro stage 1 — mounting WorkedExample for "${we.expression}" before practice (heuristic provider)`,
-        };
-      }
-    }
-    // Stage 2+ or missing explanations/workedExample — fall through to first item.
-  }
-
-  // Fallback: today's behaviour — mount the first practice item directly.
-  // Also reached when intro content is absent entirely (graceful degrade).
-  const first = firstLessonItem(input);
-  if (first) return first;
-  return {
-    move: 'no_action',
-    reason: 'wait_for_learner',
-    rationale: 'lesson has no items to start (heuristic provider)',
-  };
-}
-
-/**
- * Coerce a raw `string[]` from the JSON into a typed `Rep[]`, filtering out any
- * value that is not a valid rep kind. A default is used when the result is empty
- * (ensures we always mount something visible even if the JSON is stale/wrong).
- */
-function toRepArray(raw: string[] | undefined, fallback: Rep[] = ['truth_table']): Rep[] {
-  const VALID_REPS: ReadonlySet<string> = new Set(['truth_table', 'circuit', 'pseudocode']);
-  const filtered = (raw ?? []).filter((r): r is Rep => VALID_REPS.has(r));
-  return filtered.length > 0 ? filtered : fallback;
-}
-
-/** Mount the lesson's first item to start the practice loop. */
-function firstLessonItem(input: AgentInput): TacticalMove | null {
-  const first = input.lesson.content.items[0];
-  if (!first) return null;
-  return {
-    move: 'next_practice_item',
-    tier: first.difficultyTier,
-    rationale: `starting the lesson at "${first.itemId}" (heuristic provider)`,
-    item: {
-      rep: 'truth_table',
-      targetExpression: first.targetExpression,
-      claimedTruthTable: first.truthTable,
-      visibleReps: ['truth_table'],
-    },
-  };
-}
+// NOTE: openingMove is now in ./introAdvance.ts (F-27 extraction for menu-lockstep:
+// both HeuristicMoveProvider and OpenAIMoveProvider use the same opening-move logic
+// for session_start and intro_advance).
 
 /** Lesson 3 (NAND universality) constrains the circuit workspace to NAND only —
  *  the universality proof is "build any function from NAND alone", so the palette
@@ -463,6 +340,8 @@ function currentItem(input: AgentInput): ProposedItem | null {
     claimedTruthTable: item.truthTable,
     visibleReps: [rep],
     allowedGates: circuitAllowedGates(input, rep),
+    // F-27 AC#7: backfill prompt so rephrase/simpler moves never trip PromptMissing.
+    prompt: defaultItemPrompt(item.targetExpression, rep),
   };
 }
 
@@ -517,6 +396,7 @@ function simplerVariant(current: ProposedItem, input: AgentInput): ProposedItem 
     claimedTruthTable: simpler.truthTable,
     visibleReps: current.visibleReps,
     allowedGates: circuitAllowedGates(input, current.rep),
+    prompt: defaultItemPrompt(simpler.targetExpression, current.rep),
   };
 }
 
@@ -544,6 +424,8 @@ function pickLessonItem(input: AgentInput): TacticalMove | null {
       claimedTruthTable: next.truthTable,
       visibleReps: [rep],
       allowedGates: circuitAllowedGates(input, rep),
+      // F-27 AC#7: backfill prompt so the surface boundary never shows PromptMissing.
+      prompt: defaultItemPrompt(next.targetExpression, rep),
     },
   };
 }

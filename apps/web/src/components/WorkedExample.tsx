@@ -19,7 +19,17 @@ type WorkedExampleSpec = Extract<ComponentSpec, { kind: 'WorkedExample' }>;
  * load-bearing — they let a learner say "step 3 confused me" and are the correct
  * semantic for a sequence with a defined order and a last item).
  */
-export function WorkedExample({ spec }: { spec: WorkedExampleSpec }): ReactElement {
+/**
+ * F-27 (AC#4): When `onAdvanceIntro` is provided, renders a "Got it — continue"
+ * button that sends `intro_advance` to advance past the worked example.
+ */
+export function WorkedExample({
+  spec,
+  onAdvanceIntro,
+}: {
+  spec: WorkedExampleSpec;
+  onAdvanceIntro?: () => void;
+}): ReactElement {
   return (
     <section
       className="worked-example"
@@ -40,6 +50,15 @@ export function WorkedExample({ spec }: { spec: WorkedExampleSpec }): ReactEleme
           </li>
         ))}
       </ol>
+      {onAdvanceIntro && (
+        <button
+          type="button"
+          className="intro-continue-btn"
+          onClick={onAdvanceIntro}
+        >
+          Got it — continue
+        </button>
+      )}
     </section>
   );
 }

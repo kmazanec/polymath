@@ -43,6 +43,9 @@ const TT_PRACTICE: ComponentSpec = {
   expression: 'A AND B',
   claimedTruthTable: [0, 0, 0, 1],
   visibleReps: ['truth_table'],
+  // F-27 AC#7: prompt is required; without it the registry renders a PromptMissing
+  // error element instead of the truth table.
+  prompt: 'Fill in the truth table for A AND B.',
 };
 
 const RECALL: ComponentSpec = {
@@ -79,7 +82,7 @@ afterEach(() => {
 });
 
 describe('App cross-lesson recall wiring (F-14 AC#3, findings #1/#2)', () => {
-  it('mounts a recall in its own slot WITHOUT clobbering the practice workspace', async () => {
+  it('mounts a recall in the transcript WITHOUT clobbering the practice workspace', async () => {
     const { container, findByRole } = render(<App />);
     // The socket opens synchronously in connect(); wait for the session fetch.
     await waitFor(() => expect(capturedHandlers).not.toBeNull());
@@ -90,28 +93,36 @@ describe('App cross-lesson recall wiring (F-14 AC#3, findings #1/#2)', () => {
 
     // Agent then mounts a cross-lesson recall callout.
     pushAction(RECALL);
-    await findByRole('note');
 
-    // The recall is in its OWN side slot — the practice workspace SURVIVES.
-    expect(container.querySelector('.recall-slot')).not.toBeNull();
+    // F-27: the recall is now in the TRANSCRIPT (append-only side turn), not a
+    // separate `.recall-slot`.  The practice workspace SURVIVES.
+    await waitFor(() => {
+      const transcript = container.querySelector('[aria-label="Lesson log"]');
+      expect(transcript?.textContent).toContain('NOT flips');
+    });
     expect(container.querySelector('table')).not.toBeNull();
     expect(container.querySelector('[data-kc="NOT"]')).not.toBeNull();
   });
 
-  it('dismisses the recall on "got it, continue" and resumes the practice flow (AC#3)', async () => {
-    const { container, findByRole, getByRole } = render(<App />);
+  it('recall appears in the transcript and workspace stays intact (AC#3)', async () => {
+    // F-27 note: in the transcript model the recall is read-only history — there is
+    // no "dismiss" button on the transcript turn.  The workspace keeps the in-progress
+    // item alive; the recall is recorded for reference.  The old `.recall-slot` dismiss
+    // flow is superseded by the append-only transcript model.
+    const { container, findByRole } = render(<App />);
     await waitFor(() => expect(capturedHandlers).not.toBeNull());
 
     pushAction(TT_PRACTICE);
     await findByRole('table');
     pushAction(RECALL);
-    await findByRole('note');
 
-    // The dismiss is WIRED (not a no-op): clicking it removes the callout.
-    fireEvent.click(getByRole('button', { name: /got it/i }));
+    // Transcript receives the recall.
+    await waitFor(() => {
+      const transcript = container.querySelector('[aria-label="Lesson log"]');
+      expect(transcript?.textContent).toContain('NOT flips');
+    });
 
-    await waitFor(() => expect(container.querySelector('.recall-slot')).toBeNull());
-    // The practice item is still mounted — the flow resumes where it was.
+    // Practice item is still in the workspace (AC#3: resumes at the same item).
     expect(container.querySelector('table')).not.toBeNull();
   });
 });

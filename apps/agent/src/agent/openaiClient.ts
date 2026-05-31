@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AgentInput, MoveProvider } from './client.js';
 import { F26_MENU, type ProposedItem, type TacticalMove } from './menu.js';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompt.js';
+import { openingMove } from './introAdvance.js';
 
 /**
  * The OpenAI `MoveProvider` (ADR-006). Uses LangChain structured output against a
@@ -151,6 +152,23 @@ export class OpenAIMoveProvider implements MoveProvider {
   }
 
   async proposeMove(input: AgentInput, validationError?: string): Promise<TacticalMove> {
+    // I7/F-27 (D1, menu-lockstep): `intro_advance` advances the deterministic opening
+    // sequence — the same logic as session_start.openingMove.  The LLM is not involved
+    // in intro navigation; this is a heuristic short-circuit.
+    if (input.event.kind === 'intro_advance') {
+      const alreadyStarted = input.recentHistory.some(
+        (t) => t.eventKind === 'submit' || t.eventKind === 'request_hint' || t.eventKind === 'transfer_submitted',
+      );
+      if (alreadyStarted) {
+        return {
+          move: 'no_action',
+          reason: 'wait_for_learner',
+          rationale: 'intro_advance received after practice has started — ignoring (OpenAI provider)',
+        };
+      }
+      return openingMove(input);
+    }
+
     const model = needsStrongModel(input) ? this.strong : this.fast;
     const structured = model.withStructuredOutput(MoveSchema, { name: 'tactical_move' });
     const correction = validationError

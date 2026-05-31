@@ -25,6 +25,13 @@ export interface ProposedItem {
   visibleReps: Rep[];
   /** Gates the circuit builder may use (consumed only by the circuit rep). */
   allowedGates?: Gate[];
+  /**
+   * I7/F-27 (ADR-015): the grounding instruction shown with the item at the
+   * surface boundary. Optional here (the heuristic backfills it; F-29's
+   * generation always supplies it). Lockstep: this field MUST stay in sync
+   * with `openaiClient.ts`'s `ItemSchema.prompt` and `itemSpec`'s use below.
+   */
+  prompt?: string;
 }
 
 export type TacticalMove =
@@ -104,8 +111,13 @@ const DEFAULT_GATES: Gate[] = ['AND', 'OR', 'NOT'];
 
 /** Build the item-generating `ComponentSpec` for a proposed item. The three
  *  item-generating variants differ in their expression field name and (circuit
- *  only) `allowedGates`. */
+ *  only) `allowedGates`. F-27: passes through `item.prompt` to the spec so the
+ *  surface boundary can enforce prompt-on-every-challenge (AC#7). */
 function itemSpec(item: ProposedItem): ComponentSpec {
+  // F-27 AC#7 / ADR-015: prompt-on-every-challenge at the generation path.
+  // If the ProposedItem has a prompt, include it; otherwise omit (the surface
+  // will render a visible PromptMissing error — see registry.tsx AC#7).
+  const promptField = item.prompt ? { prompt: item.prompt } : {};
   switch (item.rep) {
     case 'truth_table':
       return {
@@ -113,6 +125,7 @@ function itemSpec(item: ProposedItem): ComponentSpec {
         expression: item.targetExpression,
         claimedTruthTable: item.claimedTruthTable,
         visibleReps: item.visibleReps,
+        ...promptField,
       };
     case 'circuit':
       return {
@@ -121,6 +134,7 @@ function itemSpec(item: ProposedItem): ComponentSpec {
         claimedTruthTable: item.claimedTruthTable,
         allowedGates: item.allowedGates ?? DEFAULT_GATES,
         visibleReps: item.visibleReps,
+        ...promptField,
       };
     case 'pseudocode':
       return {
@@ -128,6 +142,7 @@ function itemSpec(item: ProposedItem): ComponentSpec {
         targetExpression: item.targetExpression,
         claimedTruthTable: item.claimedTruthTable,
         visibleReps: item.visibleReps,
+        ...promptField,
       };
   }
 }

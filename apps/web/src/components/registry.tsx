@@ -77,6 +77,13 @@ export interface RenderOptions {
   /** ADR-013 stretch playground: the "Try the Playground" affordance on the final
    *  lesson's `MasteryCelebration`. Absent → the button is not rendered. */
   onTryPlayground?: () => void;
+  /**
+   * F-27 (AC#4): "Got it — continue" handler for intro/worked-example cards.
+   * Sends `intro_advance` to the agent (deterministic opening-sequence advance).
+   * Absent → the button is not rendered (the transcript view of a completed intro
+   * turn is read-only and has no advance affordance).
+   */
+  onAdvanceIntro?: () => void;
 }
 
 /** A safe no-op explain-back seam for when no real voice client is wired (tests,
@@ -95,16 +102,42 @@ function Tbd({ kind }: { kind: string }): ReactElement {
   );
 }
 
+/**
+ * F-27 AC#7: A prompt-less item-bearing spec is treated as an error, never
+ * shown bare.  This renders a visible `role="alert"` placeholder.
+ * - Fail visible, not a thrown render, not a bare component.
+ * - This is the surface-boundary half of ADR-015's prompt-on-every-challenge
+ *   rule; the generation half (ensuring prompts always arrive) is F-29.
+ */
+function PromptMissing({ kind }: { kind: string }): ReactElement {
+  return (
+    <div role="alert" data-prompt-missing={kind} className="prompt-missing-error">
+      <strong>Configuration error:</strong> this {kind} item has no grounding prompt. Contact support.
+    </div>
+  );
+}
+
 export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): ReactElement {
   const { onSubmit } = opts;
   switch (spec.kind) {
     case 'LessonIntro':
       return <LessonIntro spec={spec} />;
+    case 'IntroExplanation':
+      // F-27 AC#4: render the "Got it — continue" control when onAdvanceIntro is provided.
+      // In the transcript (read-only), onAdvanceIntro is absent → no continue button.
+      return <IntroExplanation spec={spec} onAdvanceIntro={opts.onAdvanceIntro} />;
+    case 'WorkedExample':
+      return <WorkedExample spec={spec} onAdvanceIntro={opts.onAdvanceIntro} />;
     case 'CircuitBuilder':
+      // F-27 AC#7: prompt-less item → visible error, never bare.
+      if (!spec.prompt) return <PromptMissing kind={spec.kind} />;
       return <CircuitBuilder spec={spec} onSubmit={onSubmit} hiddenReps={opts.hiddenReps} />;
     case 'PseudocodeChallenge':
+      if (!spec.prompt) return <PromptMissing kind={spec.kind} />;
       return <PseudocodeChallenge spec={spec} onSubmit={onSubmit} />;
     case 'TruthTablePractice':
+      // F-27 AC#7: prompt-less item → visible error, never bare.
+      if (!spec.prompt) return <PromptMissing kind={spec.kind} />;
       // TruthTable's event carries `cells: number[]` (and a redundant `kind`);
       // normalize to the shared RepSubmitPayload (cells are 0/1 by construction).
       return (
@@ -124,6 +157,8 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
     case 'AgentAnswer':
       return <AgentAnswer spec={spec} />;
     case 'TransferProbe':
+      // F-27 AC#7: prompt-less transfer probe → visible error.
+      if (!spec.prompt) return <PromptMissing kind={spec.kind} />;
       return <TransferProbe spec={spec} onSubmit={onSubmit} />;
     case 'HintCard':
       return <HintCard spec={spec} />;
@@ -157,10 +192,6 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
           scaffold={opts.playgroundScaffold}
         />
       );
-    case 'IntroExplanation':
-      return <IntroExplanation spec={spec} />;
-    case 'WorkedExample':
-      return <WorkedExample spec={spec} />;
     case 'ConfidenceCheck':
       return <Tbd kind={spec.kind} />;
     default: {

@@ -1,6 +1,7 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { useMachine } from '@xstate/react';
 import { lessonMachine, type LessonEvent } from '@polymath/statechart';
+import type { PhaseName } from '@polymath/contract';
 import type { ComponentSpec, Rep, ServerMessage } from '@polymath/contract';
 import { AgentSocket } from './ws/client.js';
 import { adaptAction } from './ws/actionAdapter.js';
@@ -10,6 +11,7 @@ import type {
   PlaygroundSubmitPayload,
   PlaygroundRequestScaffoldPayload,
 } from './components/PlaygroundCanvas.js';
+import { TranscriptLog } from './components/TranscriptLog.js';
 import { transferRepRefusal } from './copy/refusals.js';
 import { introForLesson, LESSON_2_INTRO } from './lessonIntroContent.js';
 import { AskTutorButton } from './voice/AskTutorButton.js';
@@ -22,6 +24,13 @@ import {
   type IntelligibilityAnswer,
 } from './components/IntelligibilityCheck.js';
 import { HandoffButton } from './components/HandoffButton.js';
+import {
+  type SurfaceState,
+  type Turn,
+  applyMount,
+  appendVerdict,
+  appendSpokenTurn,
+} from './surfaceState.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
 
@@ -69,19 +78,40 @@ function mountKey(spec: ComponentSpec): string {
     case 'TransferProbe':
       return `probe:${spec.itemId}`;
     case 'ExplainBackPrompt':
-      // Keyed by item + prompt body so a retry re-mount (same item, new stock copy)
-      // remounts fresh — a new countdown + recording window, not a stale instance.
       return `explain:${spec.targetItemId}:${spec.promptBody}`;
     default:
       return spec.kind;
   }
 }
 
-/** Map the lesson sub-statechart's current state value to the contract PhaseName
- *  the motion wrapper expects. The spine's state ids ARE the PhaseNames. */
-function currentPhase(value: unknown): 'introducing' | 'practicing' | 'transferring' {
-  if (value === 'practicing' || value === 'transferring') return value;
+/**
+ * F-27 (D7): Widen the phase collapse from 3 narrow → full PhaseName, so the
+ * reserved left-rail slot (F-31) and the orientation banner can show all 7
+ * phases.  The spine's state ids ARE the PhaseNames.
+ */
+function currentPhase(value: unknown): PhaseName {
+  const VALID: ReadonlySet<string> = new Set([
+    'introducing', 'practicing', 'transferring',
+    'hint', 'assessed', 'mastered', 'remediating',
+  ]);
+  if (typeof value === 'string' && VALID.has(value)) return value as PhaseName;
   return 'introducing';
+}
+
+/**
+ * F-27 (AC#5): learner-facing orientation banner text per phase.
+ * During `transferring` it makes clear hints are withheld.
+ */
+function orientationText(phase: PhaseName): string {
+  switch (phase) {
+    case 'introducing': return 'Learning new concepts';
+    case 'practicing':  return 'Practicing — hints are available';
+    case 'hint':        return 'Receiving a hint';
+    case 'transferring': return 'Assessment — no hints in this section';
+    case 'assessed':    return 'Assessment complete';
+    case 'mastered':    return 'Lesson mastered!';
+    case 'remediating': return 'Extra practice';
+  }
 }
 
 /** The imperative bridge between App (which owns the socket + its message closure)
@@ -93,23 +123,15 @@ function currentPhase(value: unknown): 'introducing' | 'practicing' | 'transferr
  *  refusal context) and gate the Hint button. */
 interface LessonBridge {
   send: ((event: LessonEvent) => void) | null;
-  setPhase: (phase: 'introducing' | 'practicing' | 'transferring') => void;
+  setPhase: (phase: PhaseName) => void;
 }
 
-/** One lesson's worth of UI: the XState spine + the mounted workspace. App renders
- *  this keyed on the current lessonId, so advancing L1→L2 UNMOUNTS the L1 instance
- *  (whose spine has reached a `final`/`assessed` dead end carrying `lessonId:1`) and
- *  RE-MOUNTS a fresh one with `input.lessonId:2` — the real macro transition the
- *  plan specifies (the locked spine cannot be re-entered from a `final` state, so a
- *  session-level re-instantiation, not a parent machine, is the mechanism). The
- *  fresh spine starts in `introducing` for L2; the server's deterministic L2 mount
- *  then drives it to `practicing`. */
+/** One lesson's worth of UI: the XState spine + the mounted workspace.
+ *  F-27: receives the transcript `turns` + `appendTurn` seam for F-30. */
 function LessonSession({
   lessonId,
   bridge,
-  mounted,
-  hint,
-  answer,
+  surface,
   conn,
   onSubmit,
   explainBackDeps,
@@ -117,29 +139,24 @@ function LessonSession({
   onContinue,
   onRequestHint,
   onTryPlayground,
+  onAdvanceIntro,
 }: {
   lessonId: number;
   bridge: LessonBridge;
-  mounted: ComponentSpec;
-  hint: ComponentSpec | null;
-  answer: ComponentSpec | null;
+  surface: SurfaceState;
   conn: ConnState;
   onSubmit: (payload: RepSubmitPayload) => void;
   explainBackDeps: import('./components/registry.js').RenderOptions['explainBackDeps'];
   onExplainBackEnd: (payload: { targetItemId: string; transcript: string; durationMs: number }) => void;
   onContinue: (nextLessonId: number) => void;
   onRequestHint: () => void;
-  /** ADR-013 stretch: enter the free-build playground from the final lesson's
-   *  MasteryCelebration (a celebration with no `nextLessonId`). */
   onTryPlayground: () => void;
+  /** F-27: sends `intro_advance` to deterministically advance the opening sequence. */
+  onAdvanceIntro: () => void;
 }): ReactElement {
   const [snapshot, send] = useMachine(lessonMachine, { input: { lessonId } });
   const phase = currentPhase(snapshot.value);
 
-  // Register this spine's dispatcher with App's WS closure, and lift the phase up so
-  // App can mirror it into the transfer-refusal ref and gate the Hint button. The
-  // register/unregister is keyed on the actor identity so an L1→L2 re-mount swaps the
-  // live target cleanly.
   useEffect(() => {
     bridge.send = send;
     return () => {
@@ -150,31 +167,52 @@ function LessonSession({
     bridge.setPhase(phase);
   }, [bridge, phase]);
 
+  const mounted = surface.mounted;
+  const transcript = surface.transcript;
+
   return (
     <>
-      {/* Key the workspace by the mounted item's identity so the agent mounting a
-          *new* item of the same kind remounts a fresh component — without the key,
-          React reuses the instance and the prior item's submitted/cells state (and
-          its disabled submit button) would bleed into the new item, blocking it. */}
-      <AnimateOrNot phase={phase}>
-        <div key={mountKey(mounted)}>
-          {renderComponent(mounted, {
-            onSubmit,
-            explainBackDeps,
-            onExplainBackEnd,
-            onContinue,
-            // ADR-013: offer the playground ONLY on a terminal MasteryCelebration (no
-            // next lesson) — the final-lesson capstone door, separate from the advance.
-            ...(mounted.kind === 'MasteryCelebration' && mounted.nextLessonId === undefined
-              ? { onTryPlayground }
-              : {}),
-          })}
+      {/* F-27 (AC#5): orientation banner — tells the learner what mode they're in. */}
+      <div className="orientation-banner" data-phase={phase} data-testid="orientation-banner">
+        <span className="orientation-banner__text">{orientationText(phase)}</span>
+      </div>
+
+      {/* F-27 layout: two-column grid (workspace | transcript).
+          Left column: the anchored workspace (never scrolls away).
+          Right column: the append-only transcript log.
+          Reserved left-rail slot for F-31 (FlowSkeleton). */}
+      <div className="lesson-layout">
+        {/* LEFT RAIL RESERVED for F-31 FlowSkeleton */}
+        <div className="lesson-layout__rail" aria-hidden="true" />
+
+        {/* ANCHORED WORKSPACE — pinned; re-anchors only on new active item. */}
+        <div className="lesson-layout__workspace" data-testid="workspace">
+          <AnimateOrNot phase={phase}>
+            <div key={mountKey(mounted)}>
+              {renderComponent(mounted, {
+                onSubmit,
+                explainBackDeps,
+                onExplainBackEnd,
+                onContinue,
+                // F-27 AC#4: pass onAdvanceIntro only to intro/worked-example
+                // specs so the "Got it — continue" control appears in the workspace.
+                // In the transcript (read-only), onAdvanceIntro is omitted.
+                ...(mounted.kind === 'IntroExplanation' || mounted.kind === 'WorkedExample'
+                  ? { onAdvanceIntro }
+                  : {}),
+                ...(mounted.kind === 'MasteryCelebration' && mounted.nextLessonId === undefined
+                  ? { onTryPlayground }
+                  : {}),
+              })}
+            </div>
+          </AnimateOrNot>
         </div>
-      </AnimateOrNot>
 
-      {hint && <aside className="hint-slot">{renderComponent(hint)}</aside>}
-
-      {answer && <div className="agent-answer-slot">{renderComponent(answer)}</div>}
+        {/* TRANSCRIPT — append-only ordered log. */}
+        <div className="lesson-layout__transcript">
+          <TranscriptLog turns={transcript} />
+        </div>
+      </div>
 
       {(phase === 'practicing' || phase === 'transferring') && (
         <button
@@ -193,68 +231,47 @@ function LessonSession({
 }
 
 export function App(): ReactElement {
-  /** The lesson the spine is currently bound to. Bumping it (on an L1→L2 advance)
-   *  re-instantiates `LessonSession` — a fresh spine in `introducing` for L2 — which
-   *  is the macro transition (AC#2). The INITIAL value comes from F-13's `?lesson=2`
-   *  dev seam (`lessonFromUrl()`), so a `?lesson=2` run starts bound to L2; defaults
-   *  to L1. It parameterises the spine input, the `session_start` frame, and the
-   *  intro. */
   const [lessonId, setLessonId] = useState(lessonFromUrl);
-  const [phase, setPhase] = useState<'introducing' | 'practicing' | 'transferring'>('introducing');
-  /** The imperative bridge to the active spine (see `LessonBridge`). A stable ref so
-   *  App's WS closure dispatches to whichever `LessonSession` is currently mounted. */
+  const [phase, setPhase] = useState<PhaseName>('introducing');
   const bridgeRef = useRef<LessonBridge>({ send: null, setPhase });
   const [conn, setConn] = useState<ConnState>('connecting');
   const [sessionId, setSessionId] = useState<string | null>(null);
-  /** The component the agent has mounted (the inner loop's output). Starts on the
-   *  lesson intro until the first agent `mount` arrives. */
-  const [mounted, setMounted] = useState<ComponentSpec>(introForLesson(lessonId));
-  /** The agent's most recent answer to a learner question (ADR-003 Q&A). */
-  const [answer, setAnswer] = useState<ComponentSpec | null>(null);
-  /** The current hint, shown in a side slot — NOT in the main workspace, so the
-   *  practice item the learner is solving stays mounted and answerable. */
-  const [hint, setHint] = useState<ComponentSpec | null>(null);
-  /** F-14: the current cross-lesson recall callout, shown in a side slot (like the
-   *  hint) — NOT in the main workspace. The recall is a short, dismissible callout;
-   *  the practice item the learner is mid-solving MUST survive it (a workspace
-   *  replacement would destroy the in-progress item with no restore path). Dismissing
-   *  it simply clears this slot and resumes the practice flow at the same item (AC#3). */
-  const [recall, setRecall] = useState<ComponentSpec | null>(null);
-  /** The intelligibility-sampling prompt: the kind of the just-mounted component the
-   *  learner is asked to rate, or null when not sampling. Set on ~1-in-3 workspace
-   *  mounts; cleared (and the beacon sent) when the learner answers (ADR-011 metric 2). */
-  const [intelligibilityFor, setIntelligibilityFor] = useState<string | null>(null);
-  /** ADR-013 stretch: once the learner enters the free-build playground (from the
-   *  final lesson's MasteryCelebration), the App swaps the directed-practice
-   *  LessonSession for the PlaygroundCanvas. Exiting clears this (the server's
-   *  exit_playground reply re-mounts a session-end MasteryCelebration). */
+
+  /**
+   * F-27: Replace the separate `mounted` / `hint` / `answer` / `recall` slots
+   * with a unified `SurfaceState` (anchored workspace + append-only transcript).
+   * The `applyMount` policy function routes each incoming spec to either a
+   * workspace re-anchor or a side transcript turn.
+   */
+  const [surface, setSurface] = useState<SurfaceState>({
+    mounted: introForLesson(lessonId),
+    transcript: [],
+  });
+
+  /** ADR-013 stretch: the playground canvas. */
   const [playground, setPlayground] = useState<ComponentSpec | null>(null);
-  /** The id of the item currently mounted, echoed on submit. */
+
+  // Keep the legacy `answer` slot alive for the playground scaffold path only —
+  // the transcript model renders answers for the lesson session, but the
+  // playground replaces LessonSession and needs a separate answer slot.
+  const [playgroundAnswer, setPlaygroundAnswer] = useState<ComponentSpec | null>(null);
+
+  /** The intelligibility sampling prompt. */
+  const [intelligibilityFor, setIntelligibilityFor] = useState<string | null>(null);
+
+  /** The id of the item currently mounted (for submit naming). */
   const currentItemId = useRef<string>('l1-and');
-  /** When the current item was mounted (for the submit's response-time report). */
   const itemMountedAt = useRef<number>(Date.now());
   const socketRef = useRef<AgentSocket | null>(null);
   const [question, setQuestion] = useState('');
-  /** The active transfer probe's id + held-out reps, tracked in refs so the WS
-   *  message closure reads the current value (not a stale capture). Set when a
-   *  TransferProbe mounts; cleared when the phase leaves `transferring`. */
   const currentProbeItemId = useRef<string | null>(null);
   const activeHiddenReps = useRef<Rep[]>([]);
-  /** The current phase, mirrored into a ref for the WS closure (the adapter needs
-   *  it to enforce the transfer-probe hidden-rep refusal). */
   const phaseRef = useRef<string>('introducing');
 
-  /** Analytics consent gate (AC#2/#7). `null` = undecided (the modal is showing);
-   *  `true`/`false` = the learner's explicit choice. PostHog stays uninitialized — a
-   *  complete no-op — until this is `true` AND the build carries both PostHog env vars,
-   *  so analytics + session replay are OFF by default and ON only for an opted-in
-   *  subject. */
   const [analyticsConsent, setAnalyticsConsent] = useState<boolean | null>(null);
 
   const onAcceptAnalytics = useCallback((): void => {
     setAnalyticsConsent(true);
-    // Init is fail-closed: a partial/absent VITE_POSTHOG_* config makes this a no-op
-    // even with consent (no key/host inlined into the bundle → analytics simply off).
     void initPostHog({
       key: import.meta.env.VITE_POSTHOG_KEY ?? '',
       host: import.meta.env.VITE_POSTHOG_HOST ?? '',
@@ -263,15 +280,11 @@ export function App(): ReactElement {
   }, []);
 
   const onDeclineAnalytics = useCallback((): void => {
-    setAnalyticsConsent(false); // PostHog never initialized — stays a no-op for the session
+    setAnalyticsConsent(false);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    // Dev seam: forward `?lesson=N` on the WS upgrade so the server's dev seam can
-    // honor a lesson > 1 binding (it stays inert unless POLYMATH_ENABLE_TEST_SEAMS is
-    // set and NODE_ENV!=='production'). Omitted for the default L1 run. L3 (NAND)
-    // reuses the same seam, so the query is generalised over any lesson > 1.
     const lessonQuery = lessonId > 1 ? `?lesson=${String(lessonId)}` : '';
     const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/agent${lessonQuery}`;
 
@@ -281,19 +294,13 @@ export function App(): ReactElement {
         if (cancelled) return;
         setSessionId(body.sessionId);
         const socket = new AgentSocket(wsUrl, {
-          // Send session_start once the socket is OPEN — sending it synchronously
-          // after connect() would be dropped (the socket is still CONNECTING). On
-          // a reconnect this re-announces the session, which is harmless.
           onOpen: () => {
             setConn('open');
             socket.send({ kind: 'session_start', sessionId: body.sessionId, lessonId });
           },
           onClose: () => setConn('closed'),
           onMessage: (msg: ServerMessage) => {
-            // ADR-013 (MR !10 review): mount the playground ONLY after the server's
-            // earned-it gate accepts `enter_playground` (its ack) — never optimistically.
-            // The server fails the gate closed for an unmastered/non-terminal session, so
-            // an optimistic mount would show the capstone UI even when the wire refused it.
+            // ADR-013: mount playground ONLY on the server's earned-it ack.
             if (msg.kind === 'ack' && msg.event === 'enter_playground') {
               setPlayground({
                 kind: 'PlaygroundCanvas',
@@ -301,8 +308,6 @@ export function App(): ReactElement {
               });
               return;
             }
-            // A refused playground entry (or any playground frame) leaves the canvas
-            // unmounted / rolls it back — the learner stays in the lesson view.
             if (msg.kind === 'error') {
               setPlayground(null);
               return;
@@ -312,54 +317,51 @@ export function App(): ReactElement {
               phase: phaseRef.current,
               hiddenReps: activeHiddenReps.current,
             });
-            // A mount refused by the transfer-probe guard is simply dropped — the
-            // held-out rep is never revealed (ADR-005 refusal #2).
             if (r.refused) return;
-            // Dispatch lesson events to the CURRENTLY mounted spine via the bridge.
-            // After an L1→L2 advance this is the freshly re-instantiated L2 spine —
-            // App keeps one stable WS closure across the re-instantiation.
             if (r.lessonEvents) for (const e of r.lessonEvents) bridgeRef.current.send?.(e);
             if (r.mount) {
-              // A HintCard renders in the side hint slot, leaving the practice item
-              // mounted (the learner keeps solving). A CrossLessonRecall is likewise a
-              // non-destructive side callout — it must NOT clobber the in-progress
-              // practice item (the spec's "short callout the learner dismisses before
-              // continuing", not a workspace replacement). Everything else is the main
-              // workspace.
-              if (r.mount.kind === 'HintCard') {
-                setHint(r.mount);
-              } else if (r.mount.kind === 'CrossLessonRecall') {
-                setRecall(r.mount);
-              } else {
-                setMounted(r.mount);
-                setHint(null); // a new workspace clears any stale hint
-                // ADR-013: a server mount (e.g. the session-end MasteryCelebration the
-                // exit_playground reflex returns) leaves the playground — back to the
-                // directed-practice view rendering this celebration.
+              setSurface((prev) => {
+                const next = applyMount(prev, r.mount!);
+                // Track probe state when a TransferProbe re-anchors.
+                if (r.mount!.kind === 'TransferProbe') {
+                  currentProbeItemId.current = r.mount!.itemId;
+                  activeHiddenReps.current = r.mount!.hiddenReps;
+                }
+                return next;
+              });
+              // A new workspace mount clears the playground.
+              if (r.mount.kind !== 'HintCard' &&
+                  r.mount.kind !== 'AgentAnswer' &&
+                  r.mount.kind !== 'CrossLessonRecall') {
                 setPlayground(null);
-                if (r.mount.kind === 'TransferProbe') {
-                  currentProbeItemId.current = r.mount.itemId;
-                  activeHiddenReps.current = r.mount.hiddenReps;
-                }
-                // Intelligibility sampling (ADR-011 metric 2): on ~1-in-3 workspace
-                // mounts, ask the learner whether the change made sense. NEVER during a
-                // transfer probe — the probe measures unaided transfer and an extra
-                // prompt would perturb it. The answer emits an `intelligibility_response`
-                // beacon the agent persists for the metric.
-                if (r.mount.kind !== 'TransferProbe' && shouldSampleIntelligibility()) {
-                  setIntelligibilityFor(r.mount.kind);
-                } else {
-                  setIntelligibilityFor(null);
-                }
+              }
+              // Intelligibility sampling (non-probe mounts only).
+              if (r.mount.kind !== 'TransferProbe' &&
+                  r.mount.kind !== 'HintCard' &&
+                  r.mount.kind !== 'AgentAnswer' &&
+                  r.mount.kind !== 'CrossLessonRecall' &&
+                  shouldSampleIntelligibility()) {
+                setIntelligibilityFor(r.mount.kind);
+              } else if (r.mount.kind !== 'HintCard' &&
+                         r.mount.kind !== 'AgentAnswer' &&
+                         r.mount.kind !== 'CrossLessonRecall') {
+                setIntelligibilityFor(null);
               }
             }
             if (r.answer) {
-              setAnswer({
+              const answerSpec: ComponentSpec = {
                 kind: 'AgentAnswer',
                 question: r.answer.question,
                 answer: r.answer.answer,
                 topicClassification: r.answer.topicClassification,
-              });
+              };
+              // For lesson sessions, route through applyMount (transcript side turn).
+              if (!playground) {
+                setSurface((prev) => applyMount(prev, answerSpec));
+              } else {
+                // For the playground, update the separate playground answer slot.
+                setPlaygroundAnswer(answerSpec);
+              }
             }
           },
         });
@@ -372,59 +374,41 @@ export function App(): ReactElement {
       cancelled = true;
       socketRef.current?.close();
     };
-    // The socket lives for App's lifetime and routes lesson events to whichever
-    // `LessonSession` is mounted (via the stable `bridgeRef`), so it has no reactive
-    // deps — re-instantiating the L2 spine must NOT tear down the session socket
-    // (that would mint/re-announce and break F-14's cross-lesson recall).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When a new item is mounted, remember its id so a submit can name it, and stamp
-  // the mount time so a submit can report how long the learner took (the rule
-  // gate's response-time band, ADR-011).
+  // Track current item id + mount time for submit reporting.
   useEffect(() => {
+    const mounted = surface.mounted;
     if (mounted.kind === 'TruthTablePractice') currentItemId.current = mounted.expression;
     else if (mounted.kind === 'CircuitBuilder' || mounted.kind === 'PseudocodeChallenge') {
       currentItemId.current = mounted.targetExpression;
     }
     itemMountedAt.current = Date.now();
-  }, [mounted]);
+  }, [surface.mounted]);
 
-  // Associate analytics events with the session group (ADR-006: group key = sessionId)
-  // once both are known. A no-op when PostHog is inactive (declined/unconfigured).
   useEffect(() => {
     if (analyticsConsent === true && sessionId) groupBySession(sessionId);
   }, [analyticsConsent, sessionId]);
 
-  // UI-MOUNT TELEMETRY (AC#3, AC#6). Fire once per mounted workspace component:
-  //  - the `ui_mount` WS beacon (the AGENT-SIDE churn source the observability endpoint
-  //    folds — works with ZERO external keys, the headline counter-metric), and
-  //  - the PostHog `mount` event (the redundant product-analytics view; a clean no-op
-  //    when analytics are off).
-  // Keyed on the stable `mountKey` so it fires on a genuinely new item, not a re-render.
-  // Side slots (hint/recall/answer) have their own events; this tracks the workspace.
+  // UI-mount telemetry.
   const lastBeaconedMount = useRef<string>('');
   useEffect(() => {
     if (!sessionId) return;
-    const key = mountKey(mounted);
+    const key = mountKey(surface.mounted);
     if (key === lastBeaconedMount.current) return;
     lastBeaconedMount.current = key;
     socketRef.current?.send({
       kind: 'ui_mount',
       sessionId,
-      componentKind: mounted.kind,
+      componentKind: surface.mounted.kind,
       phase: phaseRef.current,
     });
-    capture('mount', { componentKind: mounted.kind, phase: phaseRef.current });
-    // The mastery celebration is the `mastery_declared` analytics signal (AC: mastery
-    // transition). It mounts as the workspace component on the gate-clearing turn.
-    if (mounted.kind === 'MasteryCelebration') {
-      capture('mastery_declared', { lessonId });
-    }
-  }, [mounted, sessionId, lessonId]);
+    capture('mount', { componentKind: surface.mounted.kind, phase: phaseRef.current });
+    if (surface.mounted.kind === 'MasteryCelebration') capture('mastery_declared', { lessonId });
+  }, [surface.mounted, sessionId, lessonId]);
 
-  // TRANSFER-PROBE entry/exit analytics. The probe is the `transferring` phase; emit
-  // exactly on the boundary crossing (a no-op when analytics are off).
+  // Transfer-probe entry/exit analytics.
   const prevPhase = useRef<string>('introducing');
   useEffect(() => {
     const was = prevPhase.current;
@@ -437,19 +421,26 @@ export function App(): ReactElement {
   const onSubmit = useCallback(
     (payload: RepSubmitPayload): void => {
       if (!sessionId) return;
-      // During a transfer probe, the learner's submission is a `transfer_submitted`
-      // event (validated server-side against the held-out bank item), not a regular
-      // practice `submit`.
+      const mounted = surface.mounted;
+
+      // F-27 AC#3: append a verdict turn BEFORE sending the WS frame.
+      // The verdict is from the client's <5ms correctness compute (existing behaviour).
+      const expression =
+        mounted.kind === 'TruthTablePractice'
+          ? mounted.expression
+          : mounted.kind === 'CircuitBuilder' || mounted.kind === 'PseudocodeChallenge'
+          ? mounted.targetExpression
+          : mounted.kind === 'TransferProbe'
+          ? mounted.expression
+          : '';
+      setSurface((prev) => appendVerdict(prev, payload.correct, expression));
+
       if (mounted.kind === 'TransferProbe' && currentProbeItemId.current) {
         socketRef.current?.send({
           kind: 'transfer_submitted',
           sessionId,
           itemId: currentProbeItemId.current,
           submission: payload.submission,
-          // Mirror the practice `submit` timing so counter-metric 4 (dependency check)
-          // can fold transfer time-to-correct against practice time-to-correct. The
-          // mount-time stamp (itemMountedAt) is refreshed on every mount, including the
-          // TransferProbe mount, so this is a valid time-to-submit for the probe item.
           responseTimeMs: Date.now() - itemMountedAt.current,
         });
         return;
@@ -464,24 +455,22 @@ export function App(): ReactElement {
         responseTimeMs: Date.now() - itemMountedAt.current,
       });
     },
-    [sessionId, mounted.kind],
+    [sessionId, surface.mounted],
   );
 
   const onAskQuestion = useCallback((): void => {
     const q = question.trim();
     if (!sessionId || q.length === 0) return;
-    // ADR-005 refusal #2: during a transfer probe, a request to bring back a
-    // held-out rep is refused by the interface itself — even before asking the
-    // agent. The learner sees the warm stock refusal, not the hidden rep.
     if (phaseRef.current === 'transferring' && activeHiddenReps.current.length > 0) {
       const asked = wantsHiddenRep(q, activeHiddenReps.current);
       if (asked) {
-        setAnswer({
+        const refusalSpec: ComponentSpec = {
           kind: 'AgentAnswer',
           question: q,
           answer: transferRepRefusal(asked),
           topicClassification: 'on_topic',
-        });
+        };
+        setSurface((prev) => applyMount(prev, refusalSpec));
         setQuestion('');
         return;
       }
@@ -490,16 +479,13 @@ export function App(): ReactElement {
     setQuestion('');
   }, [question, sessionId]);
 
-  // F-14 AC#3: dismissing the recall callout clears the side slot and resumes the
-  // practice flow at the SAME in-progress item — which is still mounted in the main
-  // workspace because the recall never replaced it. The recall is server-throttled to
-  // ≤1 per session per KC, so there is nothing to re-request; clearing the slot is the
-  // resume. (Argument is the recall's `currentItemId`, unused here but kept so the
-  // callback matches `RenderOptions.onCrossLessonRecallDismiss` and a future flow that
-  // needs to re-request an item can use it.)
-  const onCrossLessonRecallDismiss = useCallback((_currentItemId: string): void => {
-    setRecall(null);
-  }, []);
+  // F-27 AC#4: send `intro_advance` (not `session_start`) to deterministically
+  // advance the opening sequence.  Both providers branch on this event kind
+  // (menu-lockstep per the build plan).
+  const onAdvanceIntro = useCallback((): void => {
+    if (!sessionId) return;
+    socketRef.current?.send({ kind: 'intro_advance', sessionId });
+  }, [sessionId]);
 
   const onRequestHint = useCallback((): void => {
     if (!sessionId) return;
@@ -508,13 +494,9 @@ export function App(): ReactElement {
       sessionId,
       itemId: currentItemId.current,
     });
-    capture('hint_request', { itemId: currentItemId.current }); // no-op when analytics off
+    capture('hint_request', { itemId: currentItemId.current });
   }, [sessionId]);
 
-  // ADR-011 metric 2: the learner's yes/no/skip answer to the intelligibility prompt is
-  // emitted as an `intelligibility_response` beacon (the agent persists it under
-  // `events.app IS NULL` for the intelligibility counter-metric). Clearing the slot
-  // dismisses the prompt either way.
   const onIntelligibilityAnswer = useCallback(
     (answer: IntelligibilityAnswer): void => {
       const mountedKind = intelligibilityFor;
@@ -525,12 +507,6 @@ export function App(): ReactElement {
     [sessionId, intelligibilityFor],
   );
 
-  // F-11: when the explain-back window closes, dispatch the completion signal to
-  // the server (the deterministic reflex's input). Per the approved design the
-  // learner's transcript + prosody arrive SERVER-SIDE via the F-10 WebRTC bridge;
-  // the client sends the bare completion signal + measured durationMs (the server
-  // CLAMPS the window regardless, AC#9). An empty transcript here means "no
-  // client-side capture" — the server-side bridge/preconditions decide, fail closed.
   const onExplainBackEnd = useCallback(
     (payload: { targetItemId: string; transcript: string; durationMs: number }): void => {
       if (!sessionId) return;
@@ -545,48 +521,17 @@ export function App(): ReactElement {
     [sessionId],
   );
 
-  // F-15: the "continue to Lesson 2" handler. The macro L1→L2 transition has two
-  // halves that must BOTH fire:
-  //  (1) SERVER reflex — send a single `advance_lesson` event on the SAME session
-  //      (never minting a new one — that would silently zero F-14's cross-lesson
-  //      recall); the server re-derives L1 mastery (the earned-it guard) and
-  //      DETERMINISTICALLY mounts L2's first item (~<500ms). That L2 mount arrives as
-  //      the next `action` over this socket and re-fills the workspace. `socketRef`
-  //      stays in App so this routes to the active socket without a stale closure.
-  //  (2) CLIENT re-instantiation (AC#2) — bump `lessonId`, which re-keys
-  //      `LessonSession` so React unmounts the L1 spine (now at a `final`/dead-end
-  //      state carrying `lessonId:1`) and re-mounts a FRESH spine with
-  //      `input.lessonId:2`, starting in `introducing`. The locked spine has no edge
-  //      back out of `mastered`, so a re-instantiation — not a parent machine — is the
-  //      mechanism (the statechart re-instantiation-parity test proves the L2 actor
-  //      walks introducing→practicing→mastered identically). Without (2) the spine is
-  //      stuck where L1 left it and AC#2 ("transitions to lesson_2.introducing") is
-  //      false on the client.
-  // The durable lesson-arc record lives server-side in `sessions.lessonProgress`.
-  //
-  // NOTE (convergence with F-13/F-14): the server-side lesson binding lives in
-  // server.ts (handleAdvanceLessonTurn).
   const onContinue = useCallback(
     (nextLessonId: number): void => {
       if (!sessionId) return;
       socketRef.current?.send({ kind: 'advance_lesson', sessionId, toLessonId: nextLessonId });
-      capture('lesson_transition', { toLessonId: nextLessonId }); // no-op when analytics off
-      // Reset the mounted workspace + side slots to a clean intro for the new lesson
-      // (the server's L2 first-item mount lands next), then re-instantiate the spine.
-      setMounted(LESSON_2_INTRO);
-      setHint(null);
-      setAnswer(null);
+      capture('lesson_transition', { toLessonId: nextLessonId });
+      setSurface({ mounted: LESSON_2_INTRO, transcript: [] });
       setLessonId(nextLessonId);
     },
     [sessionId],
   );
 
-  // ADR-013 stretch: the "Try the Playground" affordance on the final lesson's
-  // MasteryCelebration. Send `enter_playground`; the server re-derives mastery + the
-  // terminal-lesson check as the earned-it guard and acks on a pass. The canvas mounts
-  // only on that ack (in the message handler above) — NOT optimistically (MR !10
-  // review), so a refused entry never flashes the capstone UI. A forged/unmastered
-  // session gets an error and no canvas.
   const onTryPlayground = useCallback((): void => {
     if (!sessionId) return;
     socketRef.current?.send({ kind: 'enter_playground', sessionId });
@@ -618,18 +563,20 @@ export function App(): ReactElement {
     [sessionId],
   );
 
-  // ADR-013 AC#6: Finish exits the playground. The server's exit_playground reflex
-  // replies with a session-end MasteryCelebration (an `action` over this socket),
-  // which the message closure mounts (clearing `playground`).
   const onExitPlayground = useCallback((): void => {
     if (!sessionId) return;
     socketRef.current?.send({ kind: 'exit_playground', sessionId });
   }, [sessionId]);
 
-  // F-11: the TTS seam for the explain-back prompt (the ~3s read). Best-effort via
-  // the Web Speech API; wrapped so an unavailable/throwing synth (iOS Safari quirk)
-  // degrades silently — the recording window still opens. The WebRTC-bridge capture
-  // is server-side; the client recorder yields '' (the server is the truth-maker).
+  // F-27: appendTurn seam — exported for F-30 spoken turns (F-30 calls this to
+  // append a spokenTurn without needing to re-architect App again).
+  const appendTurn = useCallback((turn: Turn): void => {
+    setSurface((prev) => ({ ...prev, transcript: [...prev.transcript, turn] }));
+  }, []);
+  // (appendTurn is exposed on the window in dev for F-30 integration; in
+  // production it's only wired by the VoiceBridge.)
+  void appendTurn; // prevent unused warning — F-30 wires this
+
   const explainBackDeps = useRef<import('./components/registry.js').RenderOptions['explainBackDeps']>({
     speak: (text: string) => {
       try {
@@ -641,12 +588,9 @@ export function App(): ReactElement {
         // iOS-Safari / unavailable synth — degrade silently.
       }
     },
-    startRecording: () => () => '', // server-side bridge captures the transcript
+    startRecording: () => () => '',
   }).current;
 
-  // Mirror the phase into a ref for the WS closure, and clear the active probe's
-  // held-out reps once we leave the transferring phase (nothing hidden otherwise).
-  // `phase` is lifted from the active `LessonSession` spine via `setPhase`.
   useEffect(() => {
     phaseRef.current = phase;
     if (phase !== 'transferring') {
@@ -657,40 +601,24 @@ export function App(): ReactElement {
 
   return (
     <main>
-      {/* Fix #3: Add a visually-hidden h1 so the page has a level-1 heading (axe 2.4.6). */}
       <h1 className="visually-hidden">Polymath — Boolean logic lesson</h1>
       <header className="app-shell-top">
         <div className="app-logo"><span className="app-logo__mark" aria-hidden="true">◑</span> Polymath</div>
         <div className="app-shell-progress">
+          {/* Legacy phase-chip retained for existing tests that query data-phase */}
           <span className="phase-chip" data-phase={phase}>{phase}</span>
         </div>
       </header>
-      {/* Analytics opt-in (AC#2/#7): shown once at session start while consent is
-          undecided. PostHog is never initialized until the learner clicks Accept, so
-          analytics + session replay are OFF by default; declining leaves them off for
-          the session. The modal blocks nothing else — the lesson renders behind it. */}
       {analyticsConsent === null && (
         <ConsentModal onAccept={onAcceptAnalytics} onDecline={onDeclineAnalytics} />
       )}
-      {/* Key the lesson session by the current `lessonId` so an L1→L2 advance
-          unmounts the L1 spine (a `final`/dead-end state) and re-mounts a FRESH spine
-          for L2 in `introducing` — the macro transition (AC#2). The session owns the
-          XState spine + the mounted workspace; App owns the socket + per-lesson UI
-          state and routes lesson events down via the stable `bridgeRef`. */}
       {playground ? (
-        // ADR-013 stretch: the free-build playground replaces the directed-practice
-        // session view. Exiting (Finish) sends exit_playground; the server replies with
-        // a session-end MasteryCelebration `action` which the closure mounts (clearing
-        // `playground` and restoring the session view to render the celebration).
         <div key="playground">
           {renderComponent(playground, {
             onPlaygroundSubmit,
             onPlaygroundRequestScaffold,
             onExitPlayground,
-            // AC#5: thread the agent's scaffold answer into the canvas so a requested
-            // hint is actually shown (the playground view replaces LessonSession, which
-            // is what normally renders `answer`). Only an AgentAnswer carries scaffold text.
-            playgroundScaffold: answer?.kind === 'AgentAnswer' ? answer.answer : null,
+            playgroundScaffold: playgroundAnswer?.kind === 'AgentAnswer' ? playgroundAnswer.answer : null,
           })}
         </div>
       ) : (
@@ -698,9 +626,7 @@ export function App(): ReactElement {
           key={lessonId}
           lessonId={lessonId}
           bridge={bridgeRef.current}
-          mounted={mounted}
-          hint={hint}
-          answer={answer}
+          surface={surface}
           conn={conn}
           onSubmit={onSubmit}
           explainBackDeps={explainBackDeps}
@@ -708,24 +634,10 @@ export function App(): ReactElement {
           onContinue={onContinue}
           onRequestHint={onRequestHint}
           onTryPlayground={onTryPlayground}
+          onAdvanceIntro={onAdvanceIntro}
         />
       )}
 
-      {/* F-14: the cross-lesson recall callout, in its own App-level side slot —
-          BESIDE the keyed `LessonSession`, not inside it — so the in-progress practice
-          item (the session's main workspace) survives, AND the callout survives the
-          L1→L2 re-instantiation (it is owned by App, which keeps one session socket for
-          its lifetime). Dismissing it clears the slot and resumes the practice flow at
-          that same item (AC#3). */}
-      {recall && (
-        <aside className="recall-slot">
-          {renderComponent(recall, { onCrossLessonRecallDismiss })}
-        </aside>
-      )}
-
-      {/* Fix #1: The ask form, AskTutorButton, and HandoffButton are grouped into a
-          single subordinate help-zone with a top divider (styled by .lesson-support in
-          global.css), visually separating them from the main practice workspace. */}
       <div className="lesson-support">
         <form
           className="ask-agent"
@@ -748,34 +660,19 @@ export function App(): ReactElement {
           </button>
         </form>
 
-        {/* The spoken counterpart to the text question form: the mic permission is
-            requested only when this is clicked, never at session start. Mounts once
-            the session id exists (the token endpoint is session-scoped). */}
         {sessionId && <AskTutorButton sessionId={sessionId} />}
 
-        {/* ADR-012 stretch: the persistent "ready to hand off to a tutor" affordance.
-            Visible from any phase; pure client navigation to the handoff artifact (no
-            wire event). Renders nothing until the session id exists. */}
         <HandoffButton sessionId={sessionId} />
       </div>
 
-      {/* ADR-011 metric 2: the intelligibility sampling prompt, in its own side slot so
-          it never replaces the workspace. Shown on ~1-in-3 non-probe mounts; answering
-          (or skipping) clears it and emits the beacon. */}
       {intelligibilityFor && (
         <IntelligibilityCheck mountedKind={intelligibilityFor} onAnswer={onIntelligibilityAnswer} />
       )}
 
-      {/* Fix #2: Hide the debug connection text visually while keeping it accessible to
-          screen readers via aria-live. The .app-conn-status class in global.css applies
-          visually-hidden so "Agent: open/closed" does not appear in the rendered UI. */}
       <p className="app-conn-status" aria-live="polite" data-conn={conn} data-phase={phase}>
         Connection: {conn}
       </p>
 
-      {/* The route-independent privacy/accessibility affordance (ADR-012). Mounted
-          in App's <main> so it survives every route + the L1->L2 re-instantiation;
-          lift to a shared layout when the routes converge. */}
       <footer className="app-footer">
         <AboutSessionData />
       </footer>

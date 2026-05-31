@@ -41,6 +41,8 @@ describe('renderComponent', () => {
       expression: 'A AND B',
       claimedTruthTable: [0, 0, 0, 1],
       visibleReps: ['truth_table'],
+      // F-27 AC#7: prompt required — without it the registry renders PromptMissing.
+      prompt: 'Fill in the truth table for A AND B.',
     };
     const { container, queryByRole } = render(renderComponent(spec));
     expect(queryByRole('note')).toBeNull();
@@ -54,6 +56,7 @@ describe('renderComponent', () => {
       claimedTruthTable: [0, 0, 0, 1],
       allowedGates: ['AND', 'OR', 'NOT'],
       visibleReps: ['circuit'],
+      prompt: 'Build A AND B using the circuit editor.',
     };
     const { container, queryByRole } = render(renderComponent(spec));
     // The real component renders a palette, not the TBD note.
@@ -67,6 +70,7 @@ describe('renderComponent', () => {
       targetExpression: 'A AND B',
       claimedTruthTable: [0, 0, 0, 1],
       visibleReps: ['pseudocode'],
+      prompt: 'Write pseudocode for A AND B.',
     };
     const { container, queryByRole } = render(renderComponent(spec));
     expect(queryByRole('note')).toBeNull();
@@ -137,6 +141,8 @@ describe('renderComponent', () => {
       expression: 'NOT A',
       claimedTruthTable: [1, 0],
       visibleReps: ['truth_table'],
+      // F-27 AC#7: prompt required.
+      prompt: 'Fill in the truth table for NOT A.',
     };
     const { getByRole } = render(
       renderComponent(spec, { onSubmit: (p) => calls.push({ submission: p.submission, correct: p.correct }) }),
@@ -153,5 +159,60 @@ describe('renderComponent', () => {
     expect(queryByRole('note')?.getAttribute('data-tbd')).toBeNull();
     expect(container.querySelector('.hint-card')).not.toBeNull();
     expect(container.querySelector('.hint-card--level-1')).not.toBeNull();
+  });
+
+  // F-27 AC#7: prompt-on-every-challenge enforcement.
+  describe('renderComponent AC#7 — prompt-less items render PromptMissing', () => {
+    it('TruthTablePractice without prompt renders role="alert" error, not the table', () => {
+      const spec: ComponentSpec = {
+        kind: 'TruthTablePractice',
+        expression: 'A AND B',
+        claimedTruthTable: [0, 0, 0, 1],
+        visibleReps: ['truth_table'],
+        // No prompt — intentionally omitted to test AC#7.
+      };
+      const { container, getByRole } = render(renderComponent(spec));
+      expect(getByRole('alert')).not.toBeNull();
+      expect(container.querySelector('.truth-table')).toBeNull();
+      expect(container.querySelector('[data-prompt-missing="TruthTablePractice"]')).not.toBeNull();
+    });
+
+    it('CircuitBuilder without prompt renders role="alert" error', () => {
+      const spec: ComponentSpec = {
+        kind: 'CircuitBuilder',
+        targetExpression: 'A AND B',
+        claimedTruthTable: [0, 0, 0, 1],
+        allowedGates: ['AND', 'OR', 'NOT'],
+        visibleReps: ['circuit'],
+      };
+      const { container, getByRole } = render(renderComponent(spec));
+      expect(getByRole('alert')).not.toBeNull();
+      expect(container.querySelector('.circuit-builder')).toBeNull();
+    });
+
+    it('PseudocodeChallenge without prompt renders role="alert" error', () => {
+      const spec: ComponentSpec = {
+        kind: 'PseudocodeChallenge',
+        targetExpression: 'A AND B',
+        claimedTruthTable: [0, 0, 0, 1],
+        visibleReps: ['pseudocode'],
+      };
+      const { container, getByRole } = render(renderComponent(spec));
+      expect(getByRole('alert')).not.toBeNull();
+      expect(container.querySelector('[data-testid="source-input"]')).toBeNull();
+    });
+
+    it('TruthTablePractice WITH prompt renders the truth table normally', () => {
+      const spec: ComponentSpec = {
+        kind: 'TruthTablePractice',
+        expression: 'A AND B',
+        claimedTruthTable: [0, 0, 0, 1],
+        visibleReps: ['truth_table'],
+        prompt: 'Fill in the truth table for A AND B.',
+      };
+      const { container, queryByRole } = render(renderComponent(spec));
+      expect(queryByRole('alert')).toBeNull();
+      expect(container.querySelector('.truth-table')).not.toBeNull();
+    });
   });
 });
