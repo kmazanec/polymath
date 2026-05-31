@@ -84,3 +84,33 @@ Brief: *"the agent should be generating the content that drives the multi-modal 
 **Invariants:** Layer-2 byte-for-byte unchanged; var-cap on the new `computeItemKey` site; engine owns key (model's asserted key always discarded, every provider); transfer bank hand-curated/read-only; lockstep `ProposedItem.prompt`↔`ItemSchema.prompt`↔`itemSpec`/`compileMove` (NO new `TacticalMove`); no provider key in MR jobs; keyless behavior-preserving; `packages/booleans` untouched (helpers in `apps/agent`).
 
 ## Implementation notes (filled in by the building agent)
+
+### Resolved decisions
+
+**D11 (reuse item path):** Confirmed. No new `TacticalMove` — generation flows through `next_practice_item` / `simpler_item` / `rephrase` with the engine overwriting `claimedTruthTable`. `F26_MENU` untouched.
+
+**D12 (content-derived alphabet):** Confirmed. `allowedOperatorAlphabet(lessonId)` reads `lessons/<id>/content.json` for all lessons 1..currentLessonId, parses each `targetExpression` via the booleans AST, and collects the operator set. Cached per lesson boundary. No new `LessonContent` field.
+
+**Layer-2 unchanged, overwrite proven:** `validateLayer2` is BYTE-FOR-BYTE UNCHANGED. The engine overwrites `item.claimedTruthTable` in `applyEngineKey()` BEFORE `compileMove` — so Layer-2 always sees the computed key. The adversarial test asserts the OVERWRITE (the mounted spec carries the engine key), not a Layer-2 rejection.
+
+**Prompt backfill strategy:** `syntheticPrompt(expression)` generates `"Fill in the truth table for: <expr>"` for all keyless-path items until F-27 backfills the authored prompts into `content.json`. The prompt field is optional on the wire but required by the rails check.
+
+**`toProposedItem` helper in openaiClient.ts:** Added to handle `prompt: null → undefined` (Zod schema uses `nullable` for OpenAI strict mode; `ProposedItem.prompt` is optional/undefined).
+
+### What downstream features inherit
+
+- `key.ts::computeItemKey(expression)` — var-capped truth table computation for the agent side.
+- `rails.ts::checkGeneratedItem(candidate, input)` — single authority on generation validity.
+- `rails.ts::allowedOperatorAlphabet(lessonId)` — can be injected into the LLM system prompt dynamically.
+- `applyEngineKey()` in `graph.ts` — wraps every item-bearing move. A new item-bearing `TacticalMove` kind requires adding a case to `itemOf()` and the switch in `applyEngineKey()`.
+- `ProposedItem.prompt?` — the authoritative grounding instruction carrier.
+
+### F-32 integration
+
+`generation.golden.test.ts` contains 18 deterministic generation-validity cases for F-32 to fold into `evals/golden/generation.json`.
+
+### Known limitations
+
+- `syntheticPrompt` is minimal. F-27's backfill will provide richer authored prompts for the keyless path.
+- `lessonMaxVars` uses the current lesson only (not union of prior lessons) — conservative and correct.
+- Live LLM generation quality (≥95%) is gated in F-32's `agent_live_eval` job.
