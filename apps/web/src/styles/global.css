@@ -800,6 +800,18 @@ button:disabled,
 .intro-continue-btn:hover { background: #4f46e5; }
 .intro-continue-btn:focus-visible { outline: 2px solid var(--color-accent, #6366f1); outline-offset: 2px; }
 
+/* Item grounding prompt (AC#7 / F-27) — rendered above rep components */
+.item-prompt {
+  font-size: .9375rem;
+  font-weight: 600;
+  color: var(--color-ink, #1b1f3a);
+  margin: 0 0 var(--space-2, .5rem);
+  padding: .5rem .75rem;
+  background: var(--color-surface, #fff);
+  border-radius: .5rem;
+  border-left: 3px solid var(--color-accent, #6366f1);
+}
+
 /* Prompt missing error (AC#7) */
 .prompt-missing-error {
   background: #fef2f2;

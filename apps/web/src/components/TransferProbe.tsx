@@ -35,7 +35,12 @@ export function TransferProbe({
   const visibleReps: Rep[] = [spec.targetRep];
 
   return (
-    <section className="transfer-probe" aria-label="Transfer check">
+    <section className="transfer-probe" aria-label="Transfer check"
+             aria-describedby={spec.prompt ? 'tp-prompt' : undefined}>
+      {/* F-27 AC#7: grounding prompt for the probe. */}
+      {spec.prompt && (
+        <p id="tp-prompt" className="item-prompt">{spec.prompt}</p>
+      )}
       <p className="transfer-probe__banner">
         Transfer check — show me you can do this without scaffolds.
       </p>

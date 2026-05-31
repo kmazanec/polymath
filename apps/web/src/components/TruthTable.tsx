@@ -138,7 +138,13 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
   // Render
   // -----------------------------------------------------------------------
   return (
-    <section className="truth-table" aria-label={`Truth table for ${spec.expression}`}>
+    <section className="truth-table" aria-label={`Truth table for ${spec.expression}`}
+             aria-describedby={spec.prompt ? 'tt-prompt' : undefined}>
+      {/* F-27 AC#7: grounding prompt, shown above the table (aria-describedby links the
+          workspace to this instruction). */}
+      {spec.prompt && (
+        <p id="tt-prompt" className="item-prompt">{spec.prompt}</p>
+      )}
       <table role="table">
         <thead>
           <tr role="row">

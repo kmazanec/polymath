@@ -190,7 +190,12 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
         className="circuit-builder"
         data-verdict={verdict ?? undefined}
         aria-label={`Build a circuit for ${spec.targetExpression}`}
+        aria-describedby={spec.prompt ? 'cb-prompt' : undefined}
       >
+        {/* F-27 AC#7: grounding prompt */}
+        {spec.prompt && (
+          <p id="cb-prompt" className="item-prompt">{spec.prompt}</p>
+        )}
         <div className="circuit-palette" role="toolbar" aria-label="Gate palette">
           {spec.allowedGates
             .filter(

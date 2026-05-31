@@ -27,6 +27,8 @@ services:
       target: dev
     environment:
       NODE_ENV: development
+      # F-27 live-drive: allow the alternate :8082 host port in addition to the defaults
+      ALLOWED_WS_ORIGINS: "http://localhost:5173,http://localhost:8080,http://localhost:8082"
     volumes:
       - ./apps/agent/src:/app/apps/agent/src
       - ./packages:/app/packages

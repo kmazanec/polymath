@@ -174,8 +174,13 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
     <section
       role="region"
       aria-labelledby={EDITOR_LABEL_ID}
+      aria-describedby={spec.prompt ? 'pc-prompt' : undefined}
       style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
     >
+      {/* F-27 AC#7: grounding prompt */}
+      {spec.prompt && (
+        <p id="pc-prompt" className="item-prompt">{spec.prompt}</p>
+      )}
       <h2 id={EDITOR_LABEL_ID} style={{ fontSize: '1rem', margin: 0 }}>
         Write a Boolean expression equivalent to:{' '}
         <code className="pseudo-target">{spec.targetExpression}</code>
