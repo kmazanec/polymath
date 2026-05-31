@@ -1,12 +1,13 @@
 import { Annotation, StateGraph } from '@langchain/langgraph';
 import { type Action, noAction } from '@polymath/contract';
 import type { AgentInput, MoveProvider } from './client.js';
-import { compileMove } from './menu.js';
+import { compileMove, type ProposedItem, type TacticalMove } from './menu.js';
 import { validateLayer2 } from './layer2.js';
 import { loadFallbackBank, pickFallbackItem } from '../fallback_bank/index.js';
 import type { DeliberationContext, DeliberationMemory } from './deliberation.js';
 import { emptyMemory } from './deliberation.js';
 import { assess, decide } from './deliberationNodes.js';
+import { checkGeneratedItem } from './rails.js';
 
 /**
  * The inner-agent flow as a LangGraph `StateGraph` (ADR-007 / ADR-014 / F-28):
@@ -71,12 +72,95 @@ function preferredRep(input: AgentInput): 'truth_table' | 'circuit' | 'pseudocod
   return 'truth_table';
 }
 
-/** Run the model with at most one Layer-2-driven retry, then the fallback bank,
- *  then `no_action`. Returns a validated, compiled wire Action — never malformed.
+/** Extract the `ProposedItem` from an item-bearing move, or null for non-item moves. */
+function itemOf(move: TacticalMove): ProposedItem | null {
+  switch (move.move) {
+    case 'next_practice_item':
+    case 'simpler_item':
+    case 'rephrase':
+      return move.item;
+    case 'alt_representation':
+      return move.item;
+    default:
+      return null;
+  }
+}
+
+/**
+ * F-29: Engine-owns-key overwrite gate.
  *
- *  F-29 SEAM: when F-29 plugs in, it replaces the `provider.proposeMove` call for
- *  `intent === 'practice'` with a validator-gated generated item. The rest of this
- *  function (retry, fallback, no_action) remains unchanged. */
+ * Applied to EVERY item-bearing move from EVERY provider (idempotent for authored
+ * items that already carry the correct key; defensive for generated items whose
+ * key the model asserts). Returns:
+ *  - `{ok: true, move}` with `item.claimedTruthTable` overwritten by the engine key.
+ *  - `{ok: false, detail}` when the item fails the generation rails (over-cap,
+ *    unparseable, out-of-alphabet, prompt-less, over-lesson-max-vars).
+ *
+ * INVARIANT: Layer-2 stays BYTE-FOR-BYTE UNCHANGED (layer2.ts is not modified).
+ * Because the engine overwrites the key BEFORE compileMove, Layer-2 always sees
+ * the correct table — so a "wrong-key" adversarial test asserts the OVERWRITE
+ * (the mounted spec carries the computed key), not a Layer-2 rejection.
+ *
+ * NOTE: TransferProbe is not item-bearing in the menu (it has its own move kind
+ * `propose_transfer_probe`), so it is NOT processed here. Transfer bank stays
+ * hand-curated and read-only — generation never produces a probe.
+ */
+function applyEngineKey(
+  move: TacticalMove,
+  input: AgentInput,
+): { ok: true; move: TacticalMove } | { ok: false; detail: string } {
+  const item = itemOf(move);
+  if (!item) {
+    // Not an item-bearing move — nothing to overwrite
+    return { ok: true, move };
+  }
+
+  // Run rails check: validates alphabet, prompt presence, var-cap, lesson-max-vars.
+  // On success: returns the engine-computed key.
+  const validity = checkGeneratedItem(
+    { expression: item.targetExpression, prompt: item.prompt },
+    input,
+  );
+
+  if (!validity.ok) {
+    return { ok: false, detail: validity.detail };
+  }
+
+  // Overwrite the model's asserted claimedTruthTable with the engine-computed key.
+  const engineItem: ProposedItem = { ...item, claimedTruthTable: validity.table };
+
+  // Reattach the overwritten item to the move. The move shape is discriminated by
+  // `move.move`; we need to update `item` (or in the alt_representation case, the
+  // original item that gets re-repped in compileMove).
+  let engineMove: TacticalMove;
+  switch (move.move) {
+    case 'next_practice_item':
+      engineMove = { ...move, item: engineItem };
+      break;
+    case 'simpler_item':
+      engineMove = { ...move, item: engineItem };
+      break;
+    case 'rephrase':
+      engineMove = { ...move, item: engineItem };
+      break;
+    case 'alt_representation':
+      engineMove = { ...move, item: engineItem };
+      break;
+    default:
+      // Non-item move — unreachable given the itemOf check above
+      engineMove = move;
+  }
+
+  return { ok: true, move: engineMove };
+}
+
+/** Run the model with at most one generation-rails-driven retry, then the fallback
+ *  bank, then `no_action`. Returns a validated, compiled wire Action — never malformed.
+ *
+ *  F-29: the engine-owns-key overwrite is applied here, between `proposeMove` and
+ *  `compileMove`, for EVERY item-bearing move from EVERY provider. The rails check
+ *  (alphabet, prompt, var-cap, lesson-max-vars) rejects invalid items and drives the
+ *  retry. Layer-2 (validateLayer2) stays BYTE-FOR-BYTE UNCHANGED. */
 export async function proposeAction(
   provider: MoveProvider,
   input: AgentInput,
@@ -87,8 +171,17 @@ export async function proposeAction(
   for (let attempt = 0; attempt < 2; attempt++) {
     let action: Action;
     try {
-      const move = await provider.proposeMove(input, lastDetail, deliberation);
-      action = compileMove(move);
+      const rawMove = await provider.proposeMove(input, lastDetail, deliberation);
+
+      // F-29: Engine-owns-key gate — validate rails + overwrite claimedTruthTable.
+      // Applied to ALL item-bearing moves from ALL providers.
+      const gated = applyEngineKey(rawMove, input);
+      if (!gated.ok) {
+        lastDetail = `generation rails rejected: ${gated.detail}`;
+        continue;
+      }
+
+      action = compileMove(gated.move);
     } catch (err) {
       lastDetail = `provider error: ${err instanceof Error ? err.message : String(err)}`;
       continue;
