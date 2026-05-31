@@ -89,7 +89,9 @@ main {
 .cross-lesson-recall,
 .circuit-builder,
 .truth-table {
-  padding: var(--space-3, 1rem);
+  /* The workspace card is where the learner works — give it real breathing room from
+   * the rounded edge rather than the tight 1rem it had (audit M-7). */
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   background: var(--color-surface);
@@ -146,33 +148,88 @@ main {
   color: var(--color-accent, #1d4ed8);
 }
 
-.cross-lesson-recall__dismiss,
+/* --------------------------------------------------------------------------
+ * The Button primitive — ONE button family for the whole app.
+ *
+ * Before this, ~9 different button styles existed (and four controls rendered as
+ * raw browser-default gray buttons). Every interactive control now opts into `.btn`
+ * + a variant, so a padding/shadow/contrast change lands once. (design-audit R1.)
+ *
+ *   .btn            base: pill shape, display font, 44px tap target, focus, hover lift
+ *   .btn--primary   filled accent — the ONE primary action on a surface
+ *   .btn--ghost     transparent + accent outline — secondary / escape actions
+ *   .btn--block     full-width (use sparingly; a full-width filled button reads as primary)
+ *
+ * Legacy class names (.truth-table-submit, .hint-button, .ask-tutor__button, …) are
+ * aliased onto the primitive below so existing markup keeps working; new markup should
+ * use `.btn .btn--primary` / `.btn .btn--ghost` directly.
+ * ------------------------------------------------------------------------ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+  font-family: var(--font-display); font-weight: 600; font-size: 0.95rem;
+  min-height: 2.75rem;            /* 44px — WCAG 2.5.5 tap target */
+  padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: transform var(--dur-hover) var(--ease-spring),
+              background var(--dur-hover) ease, box-shadow var(--dur-hover) ease;
+}
+.btn--primary {
+  background: var(--color-accent); color: var(--color-on-accent);
+  box-shadow: var(--shadow-button);
+}
+.btn--primary:not(:disabled):hover {
+  transform: translateY(-2px); background: var(--color-accent-hover);
+}
+.btn--ghost {
+  background: transparent; color: var(--color-accent);
+  box-shadow: inset 0 0 0 1.5px var(--color-border);
+}
+.btn--ghost:not(:disabled):hover {
+  transform: translateY(-2px); box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+.btn--block { width: 100%; }
+
+/* Legacy aliases → the primitive. The primary actions are filled; Hint is now a
+ * GHOST secondary (it was a full-width filled bar that dominated Submit — inverted
+ * hierarchy, design-audit H1). */
 .continue-to-next-lesson,
 .try-the-playground,
-.hint-button,
 .truth-table-submit,
 .ask-agent button {
-  font-family: var(--font-display); font-weight: 600; font-size: 0.92rem;
-  padding: 0.62rem 1.3rem; border: none; border-radius: var(--radius-pill);
-  background: var(--color-accent); color: var(--color-on-accent); cursor: pointer;
-  box-shadow: 0 6px 18px rgba(74,75,182,0.30);
-  transition: transform var(--dur-hover) var(--ease-spring), background var(--dur-hover) ease;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+  font-family: var(--font-display); font-weight: 600; font-size: 0.95rem;
+  min-height: 2.75rem; padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
+  cursor: pointer; white-space: nowrap;
+  background: var(--color-accent); color: var(--color-on-accent);
+  box-shadow: var(--shadow-button);
+  transition: transform var(--dur-hover) var(--ease-spring),
+              background var(--dur-hover) ease, box-shadow var(--dur-hover) ease;
 }
-
-/* Every pill button in the base group above gets the same lift on hover. (The
- * .mastery-celebration .try-the-playground/.continue-to-next-lesson buttons override
- * background later with a fixed light chip, so this background change is superseded
- * there — but the translateY lift still applies, keeping them consistent.) */
-.cross-lesson-recall__dismiss:hover,
-.continue-to-next-lesson:hover,
-.try-the-playground:hover,
-.hint-button:hover,
-.truth-table-submit:hover,
-.ask-agent button:hover {
+.continue-to-next-lesson:not(:disabled):hover,
+.try-the-playground:not(:disabled):hover,
+.truth-table-submit:not(:disabled):hover,
+.ask-agent button:not(:disabled):hover {
   transform: translateY(-2px); background: var(--color-accent-hover);
 }
 
-button:disabled {
+/* Hint + dismiss are SECONDARY — ghost style, compact, never a full-width filled bar. */
+.hint-button,
+.cross-lesson-recall__dismiss {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+  font-family: var(--font-display); font-weight: 600; font-size: 0.92rem;
+  min-height: 2.75rem; padding: 0.55rem 1.3rem; border: none; border-radius: var(--radius-pill);
+  cursor: pointer; white-space: nowrap; align-self: flex-start;
+  background: transparent; color: var(--color-accent);
+  box-shadow: inset 0 0 0 1.5px var(--color-border);
+  transition: transform var(--dur-hover) var(--ease-spring), box-shadow var(--dur-hover) ease;
+}
+.hint-button:not(:disabled):hover,
+.cross-lesson-recall__dismiss:not(:disabled):hover {
+  transform: translateY(-2px); box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+
+button:disabled,
+.btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -213,12 +270,21 @@ button:disabled {
 .status-fail::before {
   content: '\2717\00a0'; /* ✗ */
 }
+/* Once a verdict is set the cell is disabled — but a verdict cell must stay legible, so
+ * it opts OUT of the global disabled-opacity dim (which washed the verdict to ~invisible,
+ * audit H-3). The background tint makes the verdict readable on its own; the inset ring +
+ * the cell's 0/1 digit keep it from being colour-only. */
 .verdict-correct.truth-table-output-cell {
-  box-shadow: inset 0 0 0 2px var(--color-pass, #1d6fb8);
+  box-shadow: inset 0 0 0 3px var(--color-pass, #1d6fb8);
+  background: var(--color-signal-tint);
+  color: var(--color-pass);
 }
 .verdict-incorrect.truth-table-output-cell {
-  box-shadow: inset 0 0 0 2px var(--color-fail, #c2570a);
+  box-shadow: inset 0 0 0 3px var(--color-fail, #c2570a);
+  background: color-mix(in srgb, var(--color-fail) 12%, var(--color-surface));
+  color: var(--color-fail);
 }
+.truth-table-output-cell[data-verdict]:disabled { opacity: 1; }
 
 /* --------------------------------------------------------------------------
  * Reduced-motion: the AnimateOrNot wrapper carries `data-animate`. When the user
@@ -254,7 +320,8 @@ button:disabled {
  * focus-trapped modal). Token-driven so the modal inherits the AA contrast palette.
  * ------------------------------------------------------------------------ */
 .app-footer {
-  margin-top: var(--space-4, 1.5rem);
+  /* No margin-top: <main>'s flex `gap` already spaces it from the previous sibling;
+   * adding margin-top double-spaced the footer (audit L-3). */
   padding-top: var(--space-3, 1rem);
   border-top: 1px solid var(--color-border, #c8cdd6);
 }
@@ -304,13 +371,16 @@ button:disabled {
   margin-bottom: var(--space-2, 0.5rem);
 }
 .about-session-dialog__close {
-  font: inherit;
+  font-family: var(--font-display); font-weight: 600;
   margin-top: var(--space-3, 1rem);
-  padding: var(--space-2, 0.5rem) var(--space-3, 1rem);
-  border: 1px solid var(--color-accent, #1d4ed8);
-  border-radius: var(--radius-1, 0.25rem);
-  background: var(--color-accent, #1d4ed8);
-  color: #ffffff;
+  min-height: 2.75rem;
+  padding: var(--space-2, 0.5rem) var(--space-4, 1.5rem);
+  border: none;
+  /* Match every other button in the shell — was a square --radius-1 odd-one-out (audit M-5). */
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow: var(--shadow-button);
   cursor: pointer;
 }
 
@@ -347,9 +417,12 @@ button:disabled {
   border-radius: 50%; font-family: var(--font-mono); font-weight: 600; }
 .tt-bit--on { background: var(--color-signal-tint); color: var(--color-pass); box-shadow: inset 0 0 0 1.5px var(--color-signal); }
 .tt-bit--off { background: var(--color-low-tint); color: var(--color-text-muted); box-shadow: inset 0 0 0 1.5px var(--color-border); }
-.truth-table-output-cell { width: 2.4rem; height: 2.4rem; border-radius: var(--radius-pill); border: none;
-  font-family: var(--font-mono); font-weight: 700; cursor: pointer; background: var(--color-surface);
-  color: var(--color-text-muted); box-shadow: inset 0 0 0 1.5px var(--color-border);
+/* The output column is the answer target — it must look distinct from the read-only
+ * input bit-chips (audit H-4 / BRAND.md "output column tinted"). Faint lavender fill +
+ * an ACCENT ring (not the muted border) says "this one is yours to set". 44px tap target. */
+.truth-table-output-cell { width: 2.75rem; height: 2.75rem; border-radius: var(--radius-pill); border: none;
+  font-family: var(--font-mono); font-weight: 700; cursor: pointer; background: var(--color-lavender);
+  color: var(--color-text); box-shadow: inset 0 0 0 2px var(--color-accent);
   transition: transform var(--dur-hover) var(--ease-spring); }
 .truth-table-output-cell:hover { transform: translateY(-1px); }
 /* The pressed (signal-green) look is the PRACTICE state; once a verdict is set on
@@ -364,26 +437,37 @@ button:disabled {
   padding: 0.1rem 0.5rem; border-radius: var(--radius-md); font-weight: 600; }
 
 /* Lesson shell header (Task 7). */
-.app-shell-top { display: flex; align-items: center; gap: 1rem; padding: 0.9rem 0; margin-bottom: 0.5rem;
+.app-shell-top { display: flex; align-items: center; gap: 1rem; padding: 0.9rem var(--space-5); margin-bottom: 0.5rem;
   border-bottom: 1px solid var(--color-border); }
 .app-logo { display: flex; align-items: center; gap: 0.55rem; font-family: var(--font-display); font-weight: 700; color: var(--color-ink); }
-.app-logo__mark { width: 1.6rem; height: 1.6rem; border-radius: 8px; background: var(--gradient-primary);
+.app-logo__mark { width: 1.85rem; height: 1.85rem; border-radius: 8px; background: var(--gradient-primary);
   display: flex; align-items: center; justify-content: center; color: #fff; box-shadow: var(--shadow-sm); }
 .app-shell-progress { margin-left: auto; }
-.phase-chip { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
-  font-weight: 600; padding: 0.2rem 0.6rem; border-radius: var(--radius-pill);
-  background: var(--color-signal-tint); color: var(--color-pass); }
+/* The phase chip is CHROME, not a correctness signal — keep it neutral so the semantic
+ * green (true/correct) keeps its single meaning. (audit M-1.) Slightly larger for legibility. */
+.phase-chip { font-family: var(--font-mono); font-size: var(--font-size-xs); letter-spacing: 0.08em; text-transform: uppercase;
+  font-weight: 600; padding: 0.25rem 0.65rem; border-radius: var(--radius-pill);
+  background: var(--color-surface-muted); color: var(--color-text-muted); }
+
+/* Group the support affordances (Hint, Ask, Voice, Handoff) below the workspace so they
+ * read as a subordinate "help zone", not peers of the practice card. (audit M-2 / H1.) */
+.lesson-support { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-2);
+  padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
 
 /* Ask-the-tutor (voice) affordance. The button mirrors the pill style; the
  * unavailable variant is an honest, explicitly-disabled control with a one-line
  * explanation so a learner never clicks a dead-looking button (the degraded-state
  * fix — voice 503 when LiveKit isn't configured). */
 .ask-tutor { display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start; }
+/* .ask-tutor__button reuses the primary-button shape (declared in the alias group
+ * above is not possible since it carries an unavailable variant) — share the shape here
+ * but keep the unavailable override. */
 .ask-tutor__button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
   font-family: var(--font-display); font-weight: 600; font-size: 0.92rem;
-  padding: 0.62rem 1.3rem; border: none; border-radius: var(--radius-pill);
+  min-height: 2.75rem; padding: 0.6rem 1.4rem; border: none; border-radius: var(--radius-pill);
   background: var(--color-accent); color: var(--color-on-accent); cursor: pointer;
-  box-shadow: 0 6px 18px rgba(74,75,182,0.30);
+  box-shadow: var(--shadow-button);
   transition: transform var(--dur-hover) var(--ease-spring), background var(--dur-hover) ease;
 }
 .ask-tutor__button:not(:disabled):hover { transform: translateY(-2px); background: var(--color-accent-hover); }
@@ -391,7 +475,45 @@ button:disabled {
   background: var(--color-surface-muted); color: var(--color-text-muted);
   box-shadow: inset 0 0 0 1px var(--color-border);
 }
-.ask-tutor__note { font-size: 0.82rem; color: var(--color-text-muted); max-width: 30rem; line-height: 1.4; }
+.ask-tutor__note { font-size: var(--font-size-sm); color: var(--color-text-muted); max-width: 30rem; line-height: 1.4; }
+
+/* --------------------------------------------------------------------------
+ * Consent modal (analytics opt-in, shown at session start). Was styled entirely
+ * via inline `style` props with raw default buttons; now token-driven, mirroring
+ * the about-session modal, with a real focus order and 44px buttons. (audit H3/H4.)
+ * ------------------------------------------------------------------------ */
+.consent-modal-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center; padding: var(--space-3);
+  background: var(--color-backdrop);
+}
+.consent-modal {
+  background: var(--color-surface); color: var(--color-text);
+  border: 1px solid var(--color-border); border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card); padding: var(--space-5);
+  max-width: 32rem; max-height: 90vh; overflow: auto;
+}
+.consent-modal__title { margin: 0 0 var(--space-3); font-size: 1.25rem; }
+.consent-modal__body { margin: 0 0 var(--space-4); color: var(--color-text-muted); line-height: 1.55; }
+.consent-modal__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+
+/* The persistent "ready to hand off to a tutor" affordance. Was a raw default <a>
+ * (browser blue #0000ee — 1.96:1 on the dark bg, a WCAG fail). Now a ghost-link styled
+ * with the accent token, AA in both themes. (audit H1 / H-1.) */
+.handoff-button {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-family: var(--font-body); font-size: var(--font-size-sm); font-weight: 600;
+  color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px;
+  background: none; border: 0; padding: var(--space-1) 0; cursor: pointer;
+}
+.handoff-button:hover { color: var(--color-accent-hover); }
+
+/* The connection-status line is announced to screen readers (aria-live) but must not
+ * render as visible "Agent: open" debug text on the production surface. (audit H2/M3.) */
+.app-conn-status {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* Mastery moment — the ONE place the signature spectrum gradient is used (Task 7).
    White text sits on a DARK ink substrate; the gradient is laid over it at <1 opacity

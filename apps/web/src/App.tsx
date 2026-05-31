@@ -657,6 +657,8 @@ export function App(): ReactElement {
 
   return (
     <main>
+      {/* Fix #3: Add a visually-hidden h1 so the page has a level-1 heading (axe 2.4.6). */}
+      <h1 className="visually-hidden">Polymath — Boolean logic lesson</h1>
       <header className="app-shell-top">
         <div className="app-logo"><span className="app-logo__mark" aria-hidden="true">◑</span> Polymath</div>
         <div className="app-shell-progress">
@@ -721,26 +723,41 @@ export function App(): ReactElement {
         </aside>
       )}
 
-      <form
-        className="ask-agent"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onAskQuestion();
-        }}
-      >
-        <label htmlFor="ask-agent-input">Ask the tutor a question</label>
-        <input
-          id="ask-agent-input"
-          type="text"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          disabled={conn !== 'open'}
-          placeholder="e.g. what does an AND gate do?"
-        />
-        <button type="submit" disabled={conn !== 'open' || question.trim().length === 0}>
-          Ask
-        </button>
-      </form>
+      {/* Fix #1: The ask form, AskTutorButton, and HandoffButton are grouped into a
+          single subordinate help-zone with a top divider (styled by .lesson-support in
+          global.css), visually separating them from the main practice workspace. */}
+      <div className="lesson-support">
+        <form
+          className="ask-agent"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onAskQuestion();
+          }}
+        >
+          <label htmlFor="ask-agent-input">Ask the tutor a question</label>
+          <input
+            id="ask-agent-input"
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            disabled={conn !== 'open'}
+            placeholder="e.g. what does an AND gate do?"
+          />
+          <button type="submit" disabled={conn !== 'open' || question.trim().length === 0}>
+            Ask
+          </button>
+        </form>
+
+        {/* The spoken counterpart to the text question form: the mic permission is
+            requested only when this is clicked, never at session start. Mounts once
+            the session id exists (the token endpoint is session-scoped). */}
+        {sessionId && <AskTutorButton sessionId={sessionId} />}
+
+        {/* ADR-012 stretch: the persistent "ready to hand off to a tutor" affordance.
+            Visible from any phase; pure client navigation to the handoff artifact (no
+            wire event). Renders nothing until the session id exists. */}
+        <HandoffButton sessionId={sessionId} />
+      </div>
 
       {/* ADR-011 metric 2: the intelligibility sampling prompt, in its own side slot so
           it never replaces the workspace. Shown on ~1-in-3 non-probe mounts; answering
@@ -749,18 +766,11 @@ export function App(): ReactElement {
         <IntelligibilityCheck mountedKind={intelligibilityFor} onAnswer={onIntelligibilityAnswer} />
       )}
 
-      {/* The spoken counterpart to the text question form: the mic permission is
-          requested only when this is clicked, never at session start. Mounts once
-          the session id exists (the token endpoint is session-scoped). */}
-      {sessionId && <AskTutorButton sessionId={sessionId} />}
-
-      {/* ADR-012 stretch: the persistent "ready to hand off to a tutor" affordance.
-          Visible from any phase; pure client navigation to the handoff artifact (no
-          wire event). Renders nothing until the session id exists. */}
-      <HandoffButton sessionId={sessionId} />
-
-      <p aria-live="polite" data-conn={conn} data-phase={phase}>
-        Agent: {conn}
+      {/* Fix #2: Hide the debug connection text visually while keeping it accessible to
+          screen readers via aria-live. The .app-conn-status class in global.css applies
+          visually-hidden so "Agent: open/closed" does not appear in the rendered UI. */}
+      <p className="app-conn-status" aria-live="polite" data-conn={conn} data-phase={phase}>
+        Connection: {conn}
       </p>
 
       {/* The route-independent privacy/accessibility affordance (ADR-012). Mounted

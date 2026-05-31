@@ -1,15 +1,19 @@
 import { type ReactElement } from 'react';
 import { Link } from 'react-router-dom';
 import './landing.css';
+import { InteractiveHero } from './landing/InteractiveHero.js';
 
 /**
  * The Polymath landing page — the apex marketing surface at `/`.
  *
  * On-brand per docs/BRAND.md: deep indigo-navy ink, cyan accent, Poppins display
  * over Karla body, big rounded cards, soft indigo shadows, springy reveals. The
- * pedagogical thesis is told *visually* by the three-modality hero trio (a truth
- * table, an ANSI gate, and a line of pseudocode showing the SAME idea). The
- * signature spectrum gradient is deliberately NOT used here — it is reserved for
+ * pedagogical thesis is told *visually* by the interactive hero: a live A AND B
+ * preview where toggling the inputs lights up the truth table row, the gate wires,
+ * and the pseudocode comment simultaneously in signal-green — "one idea, three forms"
+ * felt before a word is read.
+ *
+ * The signature spectrum gradient is deliberately NOT used here — it is reserved for
  * the mastery-celebration moment (BRAND.md "the one wow flourish").
  *
  * Pure static brand surface: no session, no WebSocket. The lesson session only
@@ -55,7 +59,8 @@ export function Landing(): ReactElement {
             </div>
           </div>
 
-          <ModalityTrio />
+          {/* The interactive hero replaces the old static ModalityTrio */}
+          <InteractiveHero />
         </section>
 
         <section className="landing__pillars" aria-label="How mastery is earned">
@@ -95,89 +100,6 @@ export function Landing(): ReactElement {
         <span>Polymath — a multimodal mastery interface for Boolean logic.</span>
       </footer>
     </div>
-  );
-}
-
-/** The hero's centerpiece: the same function (A AND B) shown in all three
- *  representations side by side, statically, so the "one idea, three forms" thesis
- *  is legible before the learner reads a word. The active row/cell/token share the
- *  one signal-green accent so they read as a single concept in three skins. */
-function ModalityTrio(): ReactElement {
-  // A AND B — MSB-first rows (BRAND.md / @polymath/booleans convention).
-  const rows: Array<{ a: 0 | 1; b: 0 | 1; out: 0 | 1 }> = [
-    { a: 0, b: 0, out: 0 },
-    { a: 0, b: 1, out: 0 },
-    { a: 1, b: 0, out: 0 },
-    { a: 1, b: 1, out: 1 },
-  ];
-  return (
-    <div className="trio" aria-hidden="true">
-      <div className="trio__card trio__card--table" style={{ animationDelay: '0.05s' }}>
-        <span className="trio__tag">truth table</span>
-        <table className="trio__tt">
-          <thead>
-            <tr><th>A</th><th>B</th><th>A·B</th></tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className={r.out ? 'trio__tt-row--hi' : undefined}>
-                <td><Bit on={r.a} /></td>
-                <td><Bit on={r.b} /></td>
-                <td><Bit on={r.out} out /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="trio__card trio__card--gate" style={{ animationDelay: '0.18s' }}>
-        <span className="trio__tag">circuit</span>
-        <AndGate />
-      </div>
-
-      <div className="trio__card trio__card--code" style={{ animationDelay: '0.31s' }}>
-        <span className="trio__tag">pseudocode</span>
-        <pre className="trio__code">
-          <code>
-            <span className="tok-kw">out</span> = a{' '}
-            <span className="tok-op">AND</span> b
-          </code>
-        </pre>
-        <div className="trio__code-verdict">
-          <span className="trio__check" aria-hidden="true">✓</span> true when both are on
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Bit({ on, out = false }: { on: 0 | 1; out?: boolean }): ReactElement {
-  return (
-    <span className={`trio__bit ${on ? 'trio__bit--on' : 'trio__bit--off'} ${out && on ? 'trio__bit--signal' : ''}`}>
-      {on}
-    </span>
-  );
-}
-
-/** A canonical ANSI AND gate (D-shape: flat back, semicircular front) with two live
- *  input wires and an output wire glowing the signal green — the brand's gate
- *  language (BRAND.md §"Logic gates"). SVG so it scales crisply in the hero. */
-function AndGate(): ReactElement {
-  return (
-    <svg className="trio__svg" viewBox="0 0 160 96" role="img" aria-label="AND gate">
-      {/* input wires */}
-      <line x1="6" y1="32" x2="48" y2="32" className="trio__wire trio__wire--hi" />
-      <line x1="6" y1="64" x2="48" y2="64" className="trio__wire trio__wire--hi" />
-      {/* AND D-shape */}
-      <path
-        d="M48 18 H86 a30 30 0 0 1 0 60 H48 Z"
-        className="trio__gatebody"
-      />
-      {/* output wire — HIGH */}
-      <line x1="116" y1="48" x2="154" y2="48" className="trio__wire trio__wire--signal" />
-      <circle cx="154" cy="48" r="4.5" className="trio__node--signal" />
-      <text x="64" y="53" className="trio__gatelabel">&amp;</text>
-    </svg>
   );
 }
 

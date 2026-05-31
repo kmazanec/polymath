@@ -111,14 +111,14 @@
   border-radius: var(--radius-card); box-shadow: var(--shadow-sm); padding: 1.5rem 1.6rem;
 }
 .overview__panel--gate {
-  background: var(--color-ink-deep, #20205f); color: #f1f5ff; border: none;
+  background: var(--color-ink-deep); color: var(--color-text-on-ink); border: none;
   box-shadow: var(--shadow-card);
 }
 .overview__panel-title {
   font-family: var(--font-display); font-weight: 600; font-size: 1.15rem;
   margin: 0 0 1rem; color: var(--color-ink);
 }
-.overview__panel--gate .overview__panel-title { color: #fff; }
+.overview__panel--gate .overview__panel-title { color: var(--color-text-on-ink); }
 
 .overview__outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
 .overview__outcomes li { display: flex; gap: 0.65rem; line-height: 1.45; color: var(--color-text); }
@@ -128,18 +128,18 @@
   display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem;
 }
 
-.overview__gate-lead { margin: 0 0 0.9rem; color: #d3d9ff; line-height: 1.5; font-size: 0.94rem; }
+.overview__gate-lead { margin: 0 0 0.9rem; color: var(--color-text-on-ink-muted); line-height: 1.5; font-size: 0.94rem; }
 .overview__gate-list { margin: 0 0 0.9rem; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.6rem; }
 .overview__gate-list li {
-  position: relative; padding-left: 1.4rem; line-height: 1.45; color: #eaeeff; font-size: 0.94rem;
+  position: relative; padding-left: 1.4rem; line-height: 1.45; color: var(--color-text-on-ink); font-size: 0.94rem;
 }
 .overview__gate-list li::before {
   content: ''; position: absolute; left: 0; top: 0.5rem;
   width: 0.55rem; height: 0.55rem; border-radius: 2px;
-  background: var(--color-cyan, #17e2ea);
+  background: var(--color-cyan);
 }
-.overview__gate-list strong { color: #fff; font-weight: 700; }
-.overview__gate-foot { margin: 0; font-size: 0.86rem; color: #b9c1f0; font-style: italic; }
+.overview__gate-list strong { color: var(--color-text-on-ink); font-weight: 700; }
+.overview__gate-foot { margin: 0; font-size: 0.86rem; color: var(--color-text-on-ink-muted); font-style: italic; }
 
 @keyframes ov-rise {
   from { opacity: 0; transform: translateY(14px); }

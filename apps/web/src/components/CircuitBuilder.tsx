@@ -226,10 +226,12 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
         </div>
 
         <div className="circuit-controls">
-          <button type="button" onClick={runPulse} data-action="test-it">
+          {/* "Test it" / "Next gate" is a secondary preview action — ghost style. */}
+          <button type="button" className="btn btn--ghost" onClick={runPulse} data-action="test-it">
             {reduced ? 'Next gate →' : 'Test it'}
           </button>
-          <button type="button" onClick={submit} data-action="submit">
+          {/* Submit is the primary completion action — filled accent pill. */}
+          <button type="button" className="btn btn--primary" onClick={submit} data-action="submit">
             Submit
           </button>
         </div>

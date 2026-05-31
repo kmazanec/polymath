@@ -166,11 +166,15 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
     });
   }
 
+  // NOTE: The layout class `pseudocode-challenge` and heading class
+  // `pseudocode-challenge__label` want a home in global.css (which the orchestrator
+  // owns). Until those rules land, inline-token styles are used here with rem values
+  // instead of raw px.
   return (
     <section
       role="region"
       aria-labelledby={EDITOR_LABEL_ID}
-      style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}
+      style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
     >
       <h2 id={EDITOR_LABEL_ID} style={{ fontSize: '1rem', margin: 0 }}>
         Write a Boolean expression equivalent to:{' '}
@@ -208,7 +212,7 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
         </p>
       )}
 
-      <button type="button" onClick={handleSubmit}>
+      <button type="button" className="btn btn--primary" onClick={handleSubmit}>
         Submit
       </button>
     </section>

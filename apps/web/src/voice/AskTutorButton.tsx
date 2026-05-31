@@ -17,10 +17,12 @@ type VoiceState = VoiceClient['state'];
  *  fail-closed default if the probe errors. */
 type Availability = 'unknown' | 'available' | 'unavailable';
 
+/** Text-only labels for the button (no emoji — the emoji is injected as a
+ *  separate aria-hidden span so screen readers don't announce "microphone"). */
 function labelFor(state: VoiceState): string {
   switch (state) {
     case 'idle':
-      return '🎤 Ask the tutor';
+      return 'Ask the tutor';
     case 'requesting-permission':
       return 'Connecting…';
     case 'connecting':
@@ -127,8 +129,15 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: A
   if (availability === 'unavailable') {
     return (
       <div className="ask-tutor ask-tutor--unavailable">
-        <button type="button" className="ask-tutor__button" disabled aria-disabled="true">
-          🎤 Voice tutor unavailable
+        {/* aria-label makes the announced name unambiguous without the emoji glyph. */}
+        <button
+          type="button"
+          className="ask-tutor__button"
+          disabled
+          aria-disabled="true"
+          aria-label="Voice tutor unavailable"
+        >
+          <span aria-hidden="true">🎤</span> Voice tutor unavailable
         </button>
         <span className="ask-tutor__note">
           Voice isn&rsquo;t set up on this deployment — use the text box above to ask the tutor.
@@ -147,7 +156,11 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: A
         data-voice-state={voiceState}
         aria-label={voiceState === 'connected' ? 'End voice session with tutor' : 'Start voice session with tutor'}
       >
-        {availability === 'unknown' ? 'Checking voice…' : labelFor(voiceState)}
+        {/* The microphone emoji is decorative — aria-hidden keeps it out of the
+            accessible name (the aria-label above is the announced text). */}
+        {availability === 'unknown' ? 'Checking voice…' : (
+          <><span aria-hidden="true">🎤</span> {labelFor(voiceState)}</>
+        )}
       </button>
     </div>
   );

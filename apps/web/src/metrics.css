@@ -15,6 +15,7 @@
   margin: 0 auto;
   padding: var(--space-4, 1.5rem);
   color: var(--color-text, #14181f);
+  font-family: var(--font-body);
 }
 
 .metrics-dashboard__intro {

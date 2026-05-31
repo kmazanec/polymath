@@ -1,0 +1,414 @@
+/*
+ * InteractiveHero — "Poke it once, all three light up"
+ *
+ * Self-contained stylesheet for the landing hero widget. Consumes design tokens
+ * from tokens.css (no fallback literals needed — tokens are now defined).
+ * No `--gradient-spectrum` anywhere; signal green is the single accent.
+ *
+ * Accessibility notes:
+ *  - The A/B toggle buttons have min 44px height + generous padding (WCAG 2.5.5).
+ *  - :focus-visible ring is global; this file does not override it.
+ *  - prefers-reduced-motion: @keyframes are suppressed; state-driven className
+ *    changes (green vs. muted) still apply instantly — the semantic meaning is
+ *    never lost, only the animated transition is removed.
+ */
+
+/* ── Outer container ────────────────────────────────────────────────────────── */
+.ihero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);          /* 2rem */
+  align-items: stretch;
+  animation: rise 0.55s var(--ease-spring) both;
+  animation-delay: 0.12s;
+}
+
+/* ── Input toggles ─────────────────────────────────────────────────────────── */
+.ihero__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);          /* 1rem */
+  flex-wrap: wrap;
+}
+
+.ihero__toggle {
+  /* Pill toggle that mirrors the real lesson input toggles */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.75rem;          /* 44px WCAG tap target */
+  padding: 0.55rem 1.1rem;
+  border-radius: var(--radius-pill);
+  border: none;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease,
+    transform var(--dur-hover) var(--ease-spring);
+  user-select: none;
+}
+
+.ihero__toggle--off {
+  background: var(--color-low-tint);
+  color: var(--color-text-muted);
+  box-shadow: inset 0 0 0 1.5px var(--color-low);
+}
+
+.ihero__toggle--on {
+  background: var(--color-signal-tint);
+  color: var(--color-pass);
+  box-shadow:
+    inset 0 0 0 1.5px var(--color-signal),
+    0 0 0 3px var(--color-signal-glow);
+}
+
+.ihero__toggle:hover {
+  transform: translateY(-2px);
+}
+
+.ihero__toggle--off:hover {
+  box-shadow: inset 0 0 0 1.5px var(--color-text-muted);
+}
+
+.ihero__toggle--on:hover {
+  box-shadow:
+    inset 0 0 0 1.5px var(--color-signal),
+    0 0 0 5px var(--color-signal-glow);
+}
+
+.ihero__toggle-label {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+}
+
+.ihero__toggle-bit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.88rem;
+  background: var(--color-low-tint);
+  color: var(--color-text-muted);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+  transition: background var(--dur-hover) ease, color var(--dur-hover) ease, box-shadow var(--dur-hover) ease;
+}
+
+.ihero__toggle-bit--on {
+  background: var(--color-signal);
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--color-signal-glow);
+}
+
+.ihero__hint {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);   /* 0.72rem */
+  color: var(--color-text-muted);
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+/* ── Three panels ──────────────────────────────────────────────────────────── */
+.ihero__panels {
+  display: grid;
+  gap: var(--space-3);           /* 1rem */
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    'table gate'
+    'table code';
+}
+
+/* Stack on narrow viewports (≤860px handled in landing.css hero breakpoint,
+   but the panels themselves reflow at ≤640px) */
+@media (max-width: 640px) {
+  .ihero__panels {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'table'
+      'gate'
+      'code';
+  }
+}
+
+.ihero__card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);       /* 1.5rem */
+  box-shadow: var(--shadow-card);
+  padding: 1rem 1.15rem;
+  transition: box-shadow var(--dur-hover) ease;
+}
+
+.ihero__card--table { grid-area: table; }
+.ihero__card--gate  { grid-area: gate;  display: flex; flex-direction: column; }
+.ihero__card--code  { grid-area: code; }
+
+.ihero__tag {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);        /* 0.72rem */
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 0.65rem;
+}
+
+/* ── Truth table ───────────────────────────────────────────────────────────── */
+.ihero__tt {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 0.28rem;
+}
+
+.ihero__tt th {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  text-align: center;
+  padding-bottom: 0.2rem;
+}
+
+.ihero__tt-th--out { color: var(--color-pass); }
+
+.ihero__tt td {
+  text-align: center;
+  padding: 0.1rem;
+  /* Smooth row highlight transition */
+  transition: background var(--dur-hover) ease;
+}
+
+/* Active row pill */
+.ihero__tt-row--active td {
+  background: var(--color-signal-tint);
+}
+
+.ihero__tt-row--active td:first-child {
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+}
+
+.ihero__tt-row--active td:last-child {
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+}
+
+/* Bit chip */
+.ihero__bit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 50%;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--font-size-sm);  /* 0.85rem */
+  transition: background var(--dur-hover) ease, color var(--dur-hover) ease, box-shadow var(--dur-hover) ease;
+}
+
+/* Default / low / inactive */
+.ihero__bit--off {
+  background: var(--color-low-tint);
+  color: var(--color-text-muted);
+  box-shadow: inset 0 0 0 1.5px var(--color-border);
+}
+
+/* Input HIGH on the active row — slightly accented but not signal-green
+   (only the OUTPUT bit gets full signal green; inputs are helpers) */
+.ihero__bit--input-hi {
+  background: var(--color-low-tint);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1.5px var(--color-low);
+}
+
+/* Output HIGH — the full signal green treatment */
+.ihero__bit--signal {
+  background: var(--color-signal-tint);
+  color: var(--color-pass);
+  box-shadow: inset 0 0 0 1.5px var(--color-signal);
+}
+
+/* ── Circuit (SVG) ─────────────────────────────────────────────────────────── */
+.ihero__svg {
+  width: 100%;
+  height: auto;
+  margin-top: auto;   /* push down in flex column so tag sits at top */
+  flex: 1;
+  overflow: visible;
+}
+
+/* Wires */
+.ihero__wire {
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke var(--dur-hover) ease, filter var(--dur-hover) ease;
+}
+
+.ihero__wire--hi {
+  stroke: var(--color-signal);
+  filter: drop-shadow(0 0 4px var(--color-signal-glow));
+}
+
+.ihero__wire--lo {
+  stroke: var(--color-low);
+}
+
+/* Gate body */
+.ihero__gatebody {
+  fill: var(--color-surface-muted);
+  stroke: var(--color-ink);
+  stroke-width: 2;
+  transition: fill var(--dur-hover) ease, stroke var(--dur-hover) ease;
+}
+
+/* Gate body glows when output is HIGH — subtle fill lift + border becomes signal */
+.ihero__gatebody--hi {
+  fill: var(--color-signal-tint);
+  stroke: var(--color-signal);
+  animation: gate-pulse 0.6s var(--ease-spring) both;
+}
+
+@keyframes gate-pulse {
+  0%   { filter: drop-shadow(0 0 0px var(--color-signal-glow)); }
+  40%  { filter: drop-shadow(0 0 8px var(--color-signal-glow)); }
+  100% { filter: drop-shadow(0 0 3px var(--color-signal-glow)); }
+}
+
+/* Gate label (&) */
+.ihero__gatelabel {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.15rem;
+  fill: var(--color-ink);
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+
+/* Wire labels (A / B) */
+.ihero__wirelabel {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.8rem;
+  fill: var(--color-text-muted);
+  dominant-baseline: auto;
+  text-anchor: start;
+}
+
+/* Output node */
+.ihero__node {
+  transition: fill var(--dur-hover) ease, filter var(--dur-hover) ease;
+}
+
+.ihero__node--hi {
+  fill: var(--color-signal);
+  filter: drop-shadow(0 0 5px var(--color-signal-glow));
+}
+
+.ihero__node--lo {
+  fill: var(--color-low);
+}
+
+/* ── Pseudocode ────────────────────────────────────────────────────────────── */
+.ihero__code {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  overflow-x: auto;
+}
+
+.ihero__code code {
+  font-family: var(--font-mono);
+  font-size: 0.93rem;
+  color: var(--color-text);
+  white-space: pre;
+}
+
+.ihero__tok-kw {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.ihero__tok-op {
+  color: var(--color-pass);
+  font-weight: 700;
+}
+
+.ihero__tok-comment {
+  color: var(--color-text-muted);
+  transition: color var(--dur-hover) ease;
+}
+
+/* When output is HIGH, the comment flashes to signal-green */
+.ihero__tok-comment--hi {
+  color: var(--color-pass);
+  animation: comment-flash 0.45s var(--ease-spring) both;
+}
+
+@keyframes comment-flash {
+  0%   { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+.ihero__code-sub {
+  margin: 0.5rem 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  line-height: 1.4;
+  transition: color var(--dur-hover) ease;
+}
+
+.ihero__code-check {
+  color: var(--color-pass);
+  font-weight: 700;
+}
+
+.ihero__code-cross {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+
+/* ── Reduced-motion overrides ──────────────────────────────────────────────── */
+/*
+ * State-driven class changes (green wire, green gate body, green bit, green
+ * comment) still apply instantly — the semantic signal is always visible.
+ * Only the @keyframes pulse/flash animations are suppressed.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .ihero__gatebody--hi {
+    animation: none;
+    /* Show the static end-state: subtle glow on the output HIGH gate */
+    filter: drop-shadow(0 0 3px var(--color-signal-glow));
+  }
+
+  .ihero__tok-comment--hi {
+    animation: none;
+  }
+
+  .ihero__toggle,
+  .ihero__toggle-bit,
+  .ihero__wire,
+  .ihero__gatebody,
+  .ihero__node,
+  .ihero__bit,
+  .ihero__tok-comment,
+  .ihero__tt td {
+    transition: none;
+  }
+
+  .ihero {
+    animation: none;
+  }
+}

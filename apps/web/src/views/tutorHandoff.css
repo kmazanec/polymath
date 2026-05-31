@@ -6,15 +6,15 @@
   max-width: 46rem;
   margin: 0 auto;
   padding: 3rem 1.5rem 4rem;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  color: #1a1a2e;
+  font-family: var(--font-body);
+  color: var(--color-ink);
   line-height: 1.55;
 }
 
 .handoff--status {
   text-align: center;
   padding-top: 6rem;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .handoff__actions {
@@ -30,8 +30,8 @@
   font-size: 0.9rem;
   padding: 0.5rem 1rem;
   border-radius: 0.5rem;
-  border: 1px solid #6c5ce7;
-  background: #6c5ce7;
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
   color: #fff;
   text-decoration: none;
   cursor: pointer;
@@ -39,7 +39,7 @@
 
 .handoff__share {
   background: transparent;
-  color: #6c5ce7;
+  color: var(--color-accent);
 }
 
 .handoff__eyebrow {
@@ -47,7 +47,7 @@
   letter-spacing: 0.12em;
   font-size: 0.72rem;
   font-weight: 700;
-  color: #6c5ce7;
+  color: var(--color-accent);
   margin: 0 0 0.5rem;
 }
 
@@ -65,7 +65,7 @@
 .handoff__section h2 {
   font-size: 1.05rem;
   margin: 0 0 0.6rem;
-  color: #2d2d44;
+  color: var(--color-ink);
 }
 
 .handoff__section ul,
@@ -75,13 +75,21 @@
 }
 
 .handoff__mastered li {
-  color: #1b8a5a;
+  color: var(--color-pass);
   font-weight: 600;
 }
 
+.handoff__mastered li::before {
+  content: '\2713\00a0';
+}
+
 .handoff__stuck li {
-  color: #b8860b;
+  color: var(--color-warn);
   font-weight: 600;
+}
+
+.handoff__stuck li::before {
+  content: '\007e\00a0';
 }
 
 .handoff__questions ol {
@@ -98,8 +106,8 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #6c5ce7;
-  background: #efeafe;
+  color: var(--color-accent);
+  background: var(--color-lavender);
   border-radius: 0.35rem;
   padding: 0.1rem 0.45rem;
   margin-right: 0.5rem;
@@ -113,34 +121,15 @@
 .handoff__footer {
   margin-top: 2.5rem;
   padding-top: 1.5rem;
-  border-top: 2px solid #efeafe;
+  border-top: 2px solid var(--color-lavender);
   font-size: 0.95rem;
-  color: #444;
+  color: var(--color-text);
 }
 
 .handoff__generated {
   font-size: 0.78rem;
-  color: #999;
+  color: var(--color-text-muted);
   margin-top: 0.75rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  .handoff {
-    color: #e8e8f0;
-  }
-  .handoff__intro {
-    color: #f4f4fa;
-  }
-  .handoff__section h2 {
-    color: #d6d6e6;
-  }
-  .handoff__q-kc {
-    background: #2a2348;
-  }
-  .handoff__footer {
-    border-top-color: #2a2348;
-    color: #c0c0d0;
-  }
 }
 
 /* PDF / print: strip the action chrome and force a clean, light artifact. */

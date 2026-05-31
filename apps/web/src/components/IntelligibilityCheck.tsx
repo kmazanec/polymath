@@ -34,13 +34,13 @@ export function IntelligibilityCheck({
       <span className="visually-hidden">Quick check about the latest change.</span>
       <p className="intelligibility-check__prompt">Did that change make sense?</p>
       <div className="intelligibility-check__actions">
-        <button type="button" onClick={() => onAnswer('yes')}>
+        <button type="button" className="btn btn--ghost" onClick={() => onAnswer('yes')}>
           Yes
         </button>
-        <button type="button" onClick={() => onAnswer('no')}>
+        <button type="button" className="btn btn--ghost" onClick={() => onAnswer('no')}>
           No
         </button>
-        <button type="button" onClick={() => onAnswer('skip')}>
+        <button type="button" className="btn btn--ghost" onClick={() => onAnswer('skip')}>
           Skip
         </button>
       </div>

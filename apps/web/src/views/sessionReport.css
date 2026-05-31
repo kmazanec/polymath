@@ -16,7 +16,7 @@
   padding: var(--space-4, 1.5rem);
   color: var(--color-text, #14181f);
   background: var(--color-bg, #ffffff);
-  font-family: system-ui, sans-serif;
+  font-family: var(--font-body, system-ui, sans-serif);
 }
 
 .session-report__title {

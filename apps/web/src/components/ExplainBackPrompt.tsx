@@ -119,9 +119,12 @@ export function ExplainBackPrompt({
           {Math.max(0, remaining).toString()}s
         </span>
       </div>
+      {/* btn--primary: Done is the single primary action on this surface.
+          The existing class explain-back__done is preserved because the test suite
+          queries it via document.querySelector('button.explain-back__done'). */}
       <button
         type="button"
-        className="explain-back__done"
+        className="explain-back__done btn btn--primary"
         onClick={close}
         aria-label="Done explaining"
       >

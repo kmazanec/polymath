@@ -13,8 +13,11 @@ import { type ReactElement } from 'react';
  */
 export function HandoffButton({ sessionId }: { sessionId: string | null }): ReactElement | null {
   if (!sessionId) return null;
+  // A plain navigation link — no `role="button"`: it navigates to the handoff artifact,
+  // and a faked button role is an ARIA lie (Space wouldn't activate a real <a>). The
+  // test queries it as a link to match.
   return (
-    <a className="handoff-button" role="button" href={`/handoff/${sessionId}`}>
+    <a className="handoff-button" href={`/handoff/${sessionId}`}>
       I&apos;m ready to hand off to a tutor
     </a>
   );

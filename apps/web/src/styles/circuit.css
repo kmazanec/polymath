@@ -10,14 +10,27 @@
 .circuit-palette button { display: flex; align-items: center; gap: 0.45rem; background: var(--color-surface);
   border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: 0.35rem 0.8rem 0.35rem 0.45rem;
   font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; color: var(--color-ink); cursor: pointer;
-  box-shadow: var(--shadow-sm); transition: transform var(--dur-hover) var(--ease-spring); }
+  box-shadow: var(--shadow-sm); transition: transform var(--dur-hover) var(--ease-spring);
+  min-height: 2.75rem; }
 .circuit-palette button:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
 .circuit-palette button .gate-shape { width: 26px; height: 18px; flex: 0 0 auto; }
 .circuit-canvas { border-radius: var(--radius-md); overflow: hidden;
   background: radial-gradient(circle at 1px 1px, rgba(32,35,68,0.10) 1px, transparent 0) 0 0 / 22px 22px, var(--color-surface-muted); }
 .circuit-controls { display: flex; gap: 0.6rem; }
+/* Verdict / error status lines — match the .status-pass/.status-fail pattern in
+   global.css (::before glyph + semantic color). The circuit's inline <p> elements
+   can't carry the global utility class (they already carry circuit-specific selectors),
+   so we mirror the same visual treatment here. */
 .circuit-verdict { font-family: var(--font-body); }
+.circuit-verdict[data-verdict-text]::before { margin-right: 0.35em; }
+/* Correct verdict: green check glyph via ::before, pass color. */
+.circuit-builder[data-verdict='correct'] .circuit-verdict { color: var(--color-pass); }
+.circuit-builder[data-verdict='correct'] .circuit-verdict::before { content: '✓'; }
+/* Incorrect verdict: red cross glyph via ::before, fail color. */
+.circuit-builder[data-verdict='incorrect'] .circuit-verdict { color: var(--color-fail); }
+.circuit-builder[data-verdict='incorrect'] .circuit-verdict::before { content: '✗'; }
 .circuit-error { font-family: var(--font-body); color: var(--color-fail); }
+.circuit-error::before { content: '✗'; margin-right: 0.35em; }
 /* react-flow node wrappers (the pulse lights data-active='true'). */
 .rf-node { font-family: var(--font-mono); font-weight: 600; font-size: 12px; border-radius: var(--radius-md);
   background: var(--color-surface); box-shadow: var(--shadow-sm); color: var(--color-ink); }

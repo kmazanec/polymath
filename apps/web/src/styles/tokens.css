@@ -55,6 +55,20 @@
   --color-lavender: #f4f5ff;
   --color-tint-yellow: #ffeac0;
 
+  /* Brand accents + deep ink — named in BRAND.md, previously referenced by the
+   * landing/overview stylesheets via `var(--token, literal)` with NO definition here,
+   * so they silently fell back to hard-coded hex. Defining them makes the brand palette
+   * a single source: a hue change now lands in one place. (design-audit R2.) */
+  --color-cyan: #17e2ea;
+  --color-ink-deep: #20205f;
+  /* Text colours for the fixed deep-ink surfaces (the overview gate panel, the landing
+   * curriculum strip) — these surfaces are theme-FIXED dark, so their text is fixed too
+   * and must NOT flow from the light/dark --color-text (which flips). */
+  --color-text-on-ink: #eaeeff;
+  --color-text-on-ink-muted: #b9c1f0;
+  /* Modal/overlay scrim — one token so the consent + about-session modals match. */
+  --color-backdrop: rgba(16, 18, 40, 0.55);
+
   /* Signature gradient — RESERVE for mastery */
   --gradient-spectrum: linear-gradient(100deg, #ffc32b 8%, #fb43da 38%, #d684ff 62%, #17e2ea 88%);
   --gradient-primary: linear-gradient(135deg, #4a4bb6, #5376ff);
@@ -63,7 +77,13 @@
   --font-display: 'Poppins', system-ui, -apple-system, sans-serif;
   --font-body: 'Karla', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  --tracking-display: -0.03em;
+  /* BRAND.md's production-extracted value (was -0.03em). The tighter tracking is what
+   * gives the large Poppins display its distinctive brand weight; several headline rules
+   * were hard-coding -0.045em locally to get it — now they can inherit. */
+  --tracking-display: -0.045em;
+  /* Fine-grained supporting-text sizes (was a spray of 0.7/0.72/0.8/0.82rem one-offs). */
+  --font-size-xs: 0.72rem;   /* mono utility labels: phase chip, table headers */
+  --font-size-sm: 0.85rem;   /* prose support text: notes, captions */
 
   /* Spacing + radius.
    * --radius-1/2 keep their ORIGINAL pre-redesign values — the un-redesigned report
@@ -71,13 +91,24 @@
    * tuned against these. The redesign's larger, rounder surfaces use the NEW
    * --radius-md / --radius-card instead, so the rebrand doesn't leak a 2.5x radius
    * bump into those older views (code-review finding). */
+  /* The 4-step scale was too thin (0.25/0.5/1/1.5rem) — every view freelanced 20+ raw
+   * rem gaps because the scale didn't cover real layout needs. Extended to 8 steps so
+   * component gaps and section rhythm can reference a token. --space-1..4 keep their
+   * ORIGINAL values (the un-redesigned report/metrics stylesheets are tuned to them);
+   * the new larger steps are additive. (design-audit H2.) */
   --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 1rem; --space-4: 1.5rem;
+  --space-5: 2rem; --space-6: 3rem; --space-7: 4rem; --space-8: 6rem;
   --radius-1: 0.25rem; --radius-2: 0.5rem;
-  --radius-md: 0.625rem; --radius-card: 1.25rem; --radius-pill: 9999px;
+  --radius-md: 0.75rem; --radius-card: 1.25rem; --radius-lg: 1.5rem; --radius-pill: 9999px;
 
   /* Shadow + motion */
   --shadow-card: 0 6px 24px rgba(50,54,97,0.10), 0 1px 3px rgba(50,54,97,0.06);
   --shadow-sm: 0 2px 8px rgba(50,54,97,0.06);
+  /* Button elevation — a token so dark mode can raise the alpha (a light-mode indigo
+   * shadow is nearly invisible on the dark surface, which made buttons read as disabled). */
+  --shadow-button: 0 6px 18px rgba(74,75,182,0.30);
+  /* Hover lift for interactive cards. */
+  --shadow-lift: 0 12px 32px rgba(50,54,97,0.16), 0 2px 8px rgba(50,54,97,0.08);
   --ease-spring: cubic-bezier(0.16,0.84,0.44,1);
   --dur-hover: 0.18s;
 }
@@ -111,5 +142,13 @@
     --color-focus: #8b8cf0;
     --color-lavender: #1b1f3a;
     --color-tint-yellow: #3a3320;
+
+    /* The light-mode indigo shadow (rgba(74,75,182,...)) is nearly invisible on the
+     * #0f1228 dark surface, so a filled button read as flat/disabled. Raise the alpha and
+     * tint it toward the (lighter) dark-mode accent so the button keeps visible depth. */
+    --shadow-button: 0 4px 16px rgba(139,140,240,0.45);
+    --shadow-lift: 0 12px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
+    /* --color-text-on-ink* are already light; they sit on a fixed dark surface in both
+     * themes, so no dark override is needed. --color-backdrop already reads as a dark scrim. */
   }
 }

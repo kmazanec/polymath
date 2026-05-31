@@ -92,16 +92,17 @@
 }
 .landing__eyebrow::before {
   content: ''; width: 1.6rem; height: 2px; border-radius: 2px;
-  background: var(--color-cyan, #17e2ea);
+  background: var(--color-cyan);
 }
 .landing__headline {
   font-family: var(--font-display); font-weight: 700;
-  font-size: clamp(2.6rem, 6.5vw, 4.4rem); line-height: 0.98;
-  letter-spacing: -0.045em; color: var(--color-ink); margin: 0 0 1.25rem;
+  font-size: clamp(2.6rem, 6.5vw, 4.4rem); line-height: 1.05;
+  /* letter-spacing comes from --tracking-display via global.css h1 rule */
+  color: var(--color-ink); margin: 0 0 1.25rem;
 }
 .landing__headline-accent {
   /* The accent line uses the cyan→indigo brand pair (NOT the reserved spectrum). */
-  background: linear-gradient(92deg, var(--color-accent) 0%, var(--color-cyan, #17e2ea) 120%);
+  background: linear-gradient(92deg, var(--color-accent) 0%, var(--color-cyan) 120%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .landing__sub {
@@ -125,74 +126,12 @@
 .landing__cta:hover .landing__cta-arrow { transform: translateX(4px); }
 .landing__cta-note { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text-muted); }
 
-/* ---- the three-modality trio ---- */
-.trio {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: 1fr 1fr;
-  grid-template-areas:
-    'table gate'
-    'table code';
-}
-.trio__card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg, 1.5rem);
-  box-shadow: var(--shadow-card);
-  padding: 1.1rem 1.2rem;
-  animation: rise 0.55s var(--ease-spring) both;
-}
-.trio__card--table { grid-area: table; }
-.trio__card--gate { grid-area: gate; display: flex; flex-direction: column; }
-.trio__card--code { grid-area: code; }
-.trio__tag {
-  font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.1em;
-  text-transform: uppercase; color: var(--color-text-muted);
-  display: block; margin-bottom: 0.7rem;
-}
-
-.trio__tt { width: 100%; border-collapse: separate; border-spacing: 0 0.3rem; }
-.trio__tt th {
-  font-family: var(--font-mono); font-size: 0.66rem; font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted);
-  padding-bottom: 0.2rem; text-align: center;
-}
-.trio__tt th:last-child { color: var(--color-pass); }
-.trio__tt td { text-align: center; padding: 0.12rem; }
-.trio__tt-row--hi td { background: var(--color-signal-tint); }
-.trio__tt-row--hi td:first-child { border-radius: var(--radius-pill) 0 0 var(--radius-pill); }
-.trio__tt-row--hi td:last-child { border-radius: 0 var(--radius-pill) var(--radius-pill) 0; }
-.trio__bit {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.7rem; height: 1.7rem; border-radius: 50%;
-  font-family: var(--font-mono); font-weight: 600; font-size: 0.85rem;
-}
-.trio__bit--off { background: var(--color-low-tint); color: var(--color-text-muted); box-shadow: inset 0 0 0 1.5px var(--color-border); }
-.trio__bit--on { background: var(--color-low-tint); color: var(--color-text); box-shadow: inset 0 0 0 1.5px var(--color-low); }
-.trio__bit--signal { background: var(--color-signal-tint); color: var(--color-pass); box-shadow: inset 0 0 0 1.5px var(--color-signal); }
-
-/* gate svg */
-.trio__svg { width: 100%; height: auto; margin-top: auto; }
-.trio__gatebody { fill: var(--color-surface-muted); stroke: var(--color-ink); stroke-width: 2.5; }
-.trio__gatelabel { font-family: var(--font-mono); font-weight: 700; font-size: 1.1rem; fill: var(--color-ink); }
-.trio__wire { stroke-width: 3; stroke-linecap: round; }
-.trio__wire--hi { stroke: var(--color-low); }
-.trio__wire--signal { stroke: var(--color-signal); filter: drop-shadow(0 0 4px var(--color-signal-glow)); }
-.trio__node--signal { fill: var(--color-signal); filter: drop-shadow(0 0 4px var(--color-signal-glow)); }
-
-/* code */
-.trio__code {
-  margin: 0; padding: 0.65rem 0.8rem; border-radius: var(--radius-md);
-  background: var(--color-surface-muted); overflow-x: auto;
-}
-.trio__code code { font-family: var(--font-mono); font-size: 0.92rem; color: var(--color-text); }
-.tok-kw { color: var(--color-accent); font-weight: 600; }
-.tok-op { color: var(--color-pass); font-weight: 700; }
-.trio__code-verdict {
-  margin-top: 0.6rem; font-size: 0.82rem; color: var(--color-text-muted);
-  display: flex; align-items: center; gap: 0.4rem;
-}
-.trio__check { color: var(--color-pass); font-weight: 700; }
+/* ---- three-modality hero (interactive) ---- */
+/*
+ * The hero centerpiece styles live in apps/web/src/views/landing/interactiveHero.css
+ * (imported by InteractiveHero.tsx). This file no longer contains the old static
+ * `.trio` rules — they were removed when ModalityTrio was replaced by InteractiveHero.
+ */
 
 /* ---- pillars ---- */
 .landing__pillars {
@@ -220,16 +159,16 @@
 
 /* ---- curriculum strip ---- */
 .landing__strip {
-  background: var(--color-ink-deep, #20205f);
-  border-radius: var(--radius-lg, 1.5rem);
+  background: var(--color-ink-deep);
+  border-radius: var(--radius-lg);
   padding: clamp(1.75rem, 4vw, 2.75rem);
   display: flex; flex-direction: column; gap: 1.1rem;
-  color: #f1f5ff;
+  color: var(--color-text-on-ink);
   box-shadow: var(--shadow-card);
 }
 .landing__strip-lead {
   font-family: var(--font-mono); font-size: 0.74rem; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--color-cyan, #17e2ea); margin: 0;
+  text-transform: uppercase; color: var(--color-cyan); margin: 0;
 }
 .landing__lessons {
   list-style: none; margin: 0; padding: 0;
@@ -238,7 +177,7 @@
 @media (max-width: 700px) { .landing__lessons { grid-template-columns: 1fr 1fr; } }
 .landing__lessons li {
   display: flex; align-items: center; gap: 0.6rem;
-  font-family: var(--font-display); font-weight: 500; font-size: 0.98rem; color: #f1f5ff;
+  font-family: var(--font-display); font-weight: 500; font-size: 0.98rem; color: var(--color-text-on-ink);
 }
 .landing__lesson-n {
   display: inline-flex; align-items: center; justify-content: center;
@@ -267,6 +206,13 @@
   from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: none; }
 }
+
+/*
+ * Reduced-motion: suppress the page-load rise animations on the copy column
+ * and the interactive hero widget. The interactive hero's own reduced-motion
+ * overrides (glow/pulse animations only) live in interactiveHero.css and
+ * extend this intent — state-driven class changes still apply immediately.
+ */
 @media (prefers-reduced-motion: reduce) {
-  .landing__hero-copy, .trio__card { animation: none; }
+  .landing__hero-copy { animation: none; }
 }

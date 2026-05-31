@@ -166,11 +166,14 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
                     <span className={`tt-bit ${val ? 'tt-bit--on' : 'tt-bit--off'}`}>{val ? '1' : '0'}</span>
                   </td>
                 ))}
-                {/* Output cell — interactive button */}
+                {/* Output cell — interactive button. The aria-label includes the row
+                    index and each input variable's value so screen readers announce
+                    meaningful context (axe 4.1.2 — "0, toggle button" is not enough). */}
                 <td role="cell">
                   <button
                     type="button"
                     aria-pressed={cellValue === 1}
+                    aria-label={`Row ${rowIdx + 1}, ${vars.map((v, j) => `${v}=${inputRow[j] ? '1' : '0'}`).join(', ')}: output`}
                     data-verdict={verdict ?? undefined}
                     onClick={() => handleToggle(rowIdx)}
                     disabled={submitted}
