@@ -47,6 +47,18 @@ export interface VoiceBridgeOpts {
   publishAudio: (frame: Uint8Array) => void;
   /** Injected clock for deterministic ttft measurement; defaults to Date.now. */
   now?: () => number;
+  /**
+   * F-30 (ADR-016): general-utterance fill-the-seam callback.
+   *
+   * Fired on each LEARNER transcript chunk (not tutor chunks). The production
+   * wiring calls `utteranceRegistry.setLatest(sessionId, text)` here so the
+   * server-captured utterance is available when a `spoken_turn` frame arrives.
+   *
+   * This is the "legitimate path actually fills the seam" half of the CLAUDE.md
+   * invariant: "a fail-closed input nothing fills is a gate nobody can pass."
+   * When absent (tests, or a future non-spoken session) it silently no-ops.
+   */
+  onLearnerUtterance?: (text: string) => void;
 }
 
 /** Mutable accumulator for the turn currently being assembled. */
@@ -150,6 +162,10 @@ export class VoiceBridge {
     if (t.role === 'learner') {
       this.turn.learnerText = t.text;
       if (t.final) this.turn.learnerFinalAt = t.at;
+      // F-30: fire the general-utterance callback (fill-the-seam). Called on
+      // every learner chunk so the registry always holds the latest utterance.
+      // Absent callback → silently no-ops (not all sessions need spoken Q&A).
+      this.opts.onLearnerUtterance?.(t.text);
       return;
     }
 

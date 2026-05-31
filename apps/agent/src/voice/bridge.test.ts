@@ -213,6 +213,90 @@ describe('VoiceBridge — barge-in (no DB needed)', () => {
   });
 });
 
+// ── F-30: onLearnerUtterance callback (fill-the-seam guard) ──────────────────
+// These tests verify the half of F-30 CLAUDE.md warns about:
+//   "a fail-closed input nothing fills is a gate nobody can pass"
+// The VoiceBridge must fire onLearnerUtterance on each learner transcript chunk
+// and MUST NOT fire it on tutor chunks. Absent the callback, it silently no-ops.
+describe('VoiceBridge — F-30 onLearnerUtterance callback (no DB needed)', () => {
+  beforeEach(() => resetCacheRegistry());
+
+  it('fires onLearnerUtterance with the learner text on a learner transcript chunk', async () => {
+    const received: string[] = [];
+    const stubDb = {
+      insert: () => ({ values: () => ({ returning: async () => [{ id: 'id' }] }) }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    } as unknown as Db;
+
+    const session = new MockRealtimeSession(CONFIG, {
+      reply: { tutorText: 'Good.', audioFrames: 0 },
+    });
+    const onLearnerUtterance = vi.fn((text: string) => received.push(text));
+    const bridge = new VoiceBridge(
+      bridgeOpts(session, stubDb, 'sess-f30-learner', { onLearnerUtterance }),
+    );
+    await bridge.start();
+
+    session.pushLearnerUtterance('what is NAND?');
+    session.flush();
+
+    expect(received).toContain('what is NAND?');
+    expect(onLearnerUtterance).toHaveBeenCalled();
+  });
+
+  it('does NOT fire onLearnerUtterance for tutor transcript chunks', async () => {
+    const received: string[] = [];
+    const stubDb = {
+      insert: () => ({ values: () => ({ returning: async () => [{ id: 'id' }] }) }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    } as unknown as Db;
+
+    // A session that ONLY emits a tutor transcript (no learner utterance).
+    const session = new MockRealtimeSession(CONFIG, {
+      reply: { tutorText: 'Tutor only.', audioFrames: 0 },
+    });
+    let capturedTranscriptCb: ((t: import('./realtimeClient.js').VoiceTranscript) => void) | undefined;
+    const origOnTranscript = session.onTranscript.bind(session);
+    vi.spyOn(session, 'onTranscript').mockImplementation((cb) => {
+      capturedTranscriptCb = cb;
+      origOnTranscript(cb);
+    });
+
+    const onLearnerUtterance = vi.fn((text: string) => received.push(text));
+    const bridge = new VoiceBridge(
+      bridgeOpts(session, stubDb, 'sess-f30-tutor', { onLearnerUtterance }),
+    );
+    await bridge.start();
+
+    // Fire a tutor-role transcript directly.
+    capturedTranscriptCb!({ role: 'tutor', text: 'Tutor reply.', at: 1, final: true });
+
+    expect(received).toHaveLength(0);
+    expect(onLearnerUtterance).not.toHaveBeenCalled();
+  });
+
+  it('absent onLearnerUtterance callback — no-ops silently, no crash', async () => {
+    const stubDb = {
+      insert: () => ({ values: () => ({ returning: async () => [{ id: 'id' }] }) }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    } as unknown as Db;
+
+    const session = new MockRealtimeSession(CONFIG, {
+      reply: { tutorText: 'ok.', audioFrames: 0 },
+    });
+    // NO onLearnerUtterance injected
+    const bridge = new VoiceBridge(bridgeOpts(session, stubDb, 'sess-f30-absent'));
+    await bridge.start();
+
+    // Pushes a learner utterance — must not throw even without the callback.
+    expect(() => {
+      session.pushLearnerUtterance('test');
+      session.flush();
+    }).not.toThrow();
+  });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe.skipIf(!canRunPg)('VoiceBridge — persistence (DB-backed)', () => {
   let db: Db;
   let pool: pg.Pool;
