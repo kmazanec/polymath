@@ -40,7 +40,7 @@
       "id": "session-start-kicks-off",
       "event": { "kind": "session_start", "lessonId": 1 },
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "worked_example"]
     },
     {
       "id": "request-hint-fresh-item-gives-l1",
@@ -53,7 +53,7 @@
       "lessonId": 2,
       "event": { "kind": "session_start", "lessonId": 2 },
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "worked_example"]
     },
     {
       "id": "l2-xor-misconception-wrong-submit-does-not-advance",
@@ -89,7 +89,7 @@
       "lessonId": 3,
       "event": { "kind": "session_start", "lessonId": 3 },
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "worked_example"]
     },
     {
       "id": "l3-not-from-nand-wrong-submit-does-not-advance",
@@ -125,7 +125,7 @@
       "lessonId": 4,
       "event": { "kind": "session_start", "lessonId": 4 },
       "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "worked_example"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "worked_example"]
     },
     {
       "id": "l4-halfway-demorgan-misconception-named-hint",

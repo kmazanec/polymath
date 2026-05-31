@@ -55,7 +55,13 @@ function median(xs: number[]): number {
  *   - ≤ `hintsUsedInLastN_items` hints used in the recent window
  *   - median response time within `[responseTimeFloorMs, responseTimeCeilingMs]`
  *   - hint ratio ≤ `hintRatioMax`, retry ratio ≤ `retryRatioMax`
- *   - BKT for the highest-confidence KC ≥ `bktMasteryThreshold`
+ *   - BKT for EVERY lesson KC ≥ `bktMasteryThreshold`
+ *
+ * BKT check is FAIL-CLOSED on empty: an empty `bktByKc` map (no KCs practiced, or
+ * a lesson with no KCs declared) is treated as a failure — a learner with no
+ * evidence cannot be declared mastery-ready. This is the mirror of the
+ * pre-seeding in `deriveState`: every KC starts at prior (< threshold), so an
+ * untouched KC always blocks.
  */
 export function evaluateRuleGate(state: LearnerState, config: MasteryConfig): RuleGateResult {
   const blockers: RuleGateBlocker[] = [];
@@ -82,8 +88,20 @@ export function evaluateRuleGate(state: LearnerState, config: MasteryConfig): Ru
   if (state.hintRatio > config.hintRatioMax) blockers.push('hint_ratio_exceeded');
   if (state.retryRatio > config.retryRatioMax) blockers.push('retry_ratio_exceeded');
 
-  const bestBkt = Math.max(0, ...Object.values(state.bktByKc));
-  if (bestBkt < config.bktMasteryThreshold) blockers.push('bkt_below_threshold');
+  // BUG 1 FIX: require EVERY KC in the lesson to have cleared the mastery threshold,
+  // not just the single highest-confidence KC. The old `Math.max` check let a learner
+  // who practiced only AND (which hits 0.96 after 2 corrects from a 0.3 prior) pass
+  // the gate while OR and NOT sat at their untouched prior (~0.3). The new check is
+  // an ALL-quantifier: every entry in `bktByKc` must reach threshold.
+  //
+  // Fail-closed on empty: if `bktByKc` is empty (no KCs at all), block. In the
+  // normal path `deriveState` pre-seeds every KC at prior, so an empty map only
+  // occurs if a caller constructs a hand-built `LearnerState` with no KCs — which
+  // is also a gate-failure, not a pass.
+  const kcValues = Object.values(state.bktByKc);
+  const allKcsMastered =
+    kcValues.length > 0 && kcValues.every((p) => p >= config.bktMasteryThreshold);
+  if (!allKcsMastered) blockers.push('bkt_below_threshold');
 
   return { passed: blockers.length === 0, blockers };
 }

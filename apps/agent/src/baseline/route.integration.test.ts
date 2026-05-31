@@ -55,7 +55,7 @@ describe.skipIf(!canRunPg)('F-16 baseline routes — scripted subject end-to-end
     await pool.end().catch(() => {});
   });
 
-  it('walks 3 content items + 2 transfer items; events land with app=baseline in the F-17 shape', async () => {
+  it('walks 4 content items + 2 transfer items; events land with app=baseline in the F-17 shape', async () => {
     // Create the session.
     const createRes = await fetch(`${baseUrl}/api/baseline/session`, { method: 'POST' });
     expect(createRes.status).toBe(201);
@@ -67,7 +67,7 @@ describe.skipIf(!canRunPg)('F-16 baseline routes — scripted subject end-to-end
     };
     const { sessionId } = created;
     expect(created.lessonId).toBe(1);
-    expect(created.contentItems).toHaveLength(3);
+    expect(created.contentItems).toHaveLength(4);
     expect(created.transferItemCount).toBe(2);
 
     // The session row carries the app discriminator.
@@ -136,18 +136,18 @@ describe.skipIf(!canRunPg)('F-16 baseline routes — scripted subject end-to-end
     const kinds = rows.map((r) => r.kind);
     expect(kinds[0]).toBe('session_started');
     expect(kinds.at(-1)).toBe('session_ended');
-    expect(kinds.filter((k) => k === 'chat_turn')).toHaveLength(6); // 2 turns × 3 items
+    expect(kinds.filter((k) => k === 'chat_turn')).toHaveLength(8); // 2 turns × 4 items
     expect(kinds.filter((k) => k === 'transfer_submitted')).toHaveLength(2);
 
     // Spot-check the shapes F-17 reads.
     const started = rows[0]!.payload as Extract<BaselineEventPayload, { kind: 'session_started' }>;
     expect(started.app).toBe('baseline');
-    expect(started.contentItemIds).toHaveLength(3);
+    expect(started.contentItemIds).toHaveLength(4);
     expect(started.transferItemIds).toHaveLength(2);
 
     const ended = rows.at(-1)!.payload as Extract<BaselineEventPayload, { kind: 'session_ended' }>;
-    // 3 content correct + 0 transfer correct of 5 total.
-    expect(ended.score).toEqual({ correct: 3, total: 5 });
+    // 4 content correct + 0 transfer correct of 6 total.
+    expect(ended.score).toEqual({ correct: 4, total: 6 });
 
     const chatTurn = rows.find((r) => r.kind === 'chat_turn')!.payload as Extract<
       BaselineEventPayload,

@@ -236,7 +236,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         }
       });
       ws.on('error', reject);
-      setTimeout(() => reject(new Error('sequence timed out')), 8000);
+      setTimeout(() => reject(new Error('sequence timed out')), 12000);
     });
     ws.close();
     return actions;
@@ -309,18 +309,22 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
-    // F-09: the gate is derived from the actual event history (BKT ≥ 0.95 after 3
-    // consecutive correct on the AND KC, no hints, no retries). The first submits
-    // don't pass the gate; once it does, the agent fires the probe. Drive correct
-    // AND submits until a TransferProbe mounts.
+    // F-09: the gate is derived from the actual event history. All lesson KCs (AND,
+    // OR, NOT) must reach BKT ≥ 0.95, plus ≥ 3 consecutive correct at hardest tier
+    // and no hints. BKT crosses 0.95 after 2 corrects from prior; OR and NOT need 2
+    // corrects each to clear, then 3 AND corrects clear AND and satisfy the streak.
     // Each submit carries an in-band responseTimeMs — the gate now requires enough
     // timed submissions (a scripted client that omits timings is blocked).
     const actions = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
     ]);
-    const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     expect(probe, 'a transfer probe should fire once the rule gate passes').toBeTruthy();
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
@@ -356,7 +360,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       .map((e) => e.payload.learnerSnapshot?.bktByKc?.['AND'])
       .filter((v): v is number => typeof v === 'number');
     expect(andTrajectory.length).toBeGreaterThanOrEqual(3);
-    expect(andTrajectory.at(-1)!).toBeGreaterThanOrEqual(0.95); // reached mastery threshold
+    expect(andTrajectory.at(-1)!).toBeGreaterThanOrEqual(0.95); // AND reached mastery threshold
   });
 
   /**
@@ -374,9 +378,15 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       sessionId: string;
     };
     // Get the learner past the rule gate and fire + pass a transfer probe (as above).
+    // All three L1 KCs (AND, OR, NOT) must reach BKT ≥ 0.95: 2 correct OR + 2 correct
+    // NOT clears those KCs, then 3 correct AND satisfies the streak and AND KC.
     const ws1 = new WebSocket(wsUrl);
     const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
       const frames: Record<string, unknown>[] = [
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
@@ -393,10 +403,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         }
       });
       ws1.on('error', reject);
-      setTimeout(() => reject(new Error('timed out')), 8000);
+      setTimeout(() => reject(new Error('timed out')), 10000);
     });
     ws1.close();
-    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = upToTransfer.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     expect(probedItemId).toBeTruthy();
@@ -483,9 +493,16 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
+    // All three L1 KCs (AND, OR, NOT) must reach BKT ≥ 0.95 (new all-KC gate).
+    // BKT crosses 0.95 after 2 corrects from prior (≈ 0.963). Clear OR and NOT first
+    // (2 each), then land 3 consecutive AND to satisfy the AND KC + hardest-tier streak.
     const ws1 = new WebSocket(wsUrl);
     const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
       const frames: Record<string, unknown>[] = [
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
@@ -502,10 +519,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         }
       });
       ws1.on('error', reject);
-      setTimeout(() => reject(new Error('timed out')), 8000);
+      setTimeout(() => reject(new Error('timed out')), 10000);
     });
     ws1.close();
-    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = upToTransfer.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     if (!probedItemId) throw new Error('no transfer probe fired');
@@ -548,18 +565,16 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
    * requires BOTH the mastery gate AND a terminal lesson, so the playground happy-path
    * tests must master L4, not L1 (L1 has L2/L3/L4 ahead → `not_terminal_lesson`).
    *
-   * Mirrors `driveToL1Mastery` exactly — the mechanism is lesson-generic (the heuristic
-   * provider reads `input.lesson.content.items`, the transfer bank is keyed by lessonId,
-   * the mastery gate's BKT condition is `max KC ≥ threshold`). Only the lesson binding,
-   * item ids, and the KC-appropriate explain-back transcript differ:
-   *   - BIND the session to L4 first via the `?lesson=4` seam on a `session_start`
-   *     (persists `lessonProgress.currentLessonId=4`; subsequent turns read that durable
-   *     binding via `lessonIdForEvent`, so they fold against L4).
-   *   - Drive 3 correct submits on an L4 de_morgan item (`l4-nand2-trap` = `NOT (A AND B)`)
-   *     with in-band response times → consecutiveCorrect=3 + de_morgan BKT ≥ 0.95 → rule gate.
+   * L4 has two KCs: de_morgan and negation. The new all-KC gate requires BOTH to clear
+   * BKT ≥ 0.95. L4 maxTier=4; `consecutiveCorrectAtHardestTier` only increments on
+   * tier-4 items. Strategy: 2 correct negation items (tier 2, e.g. l4-nor-primitive),
+   * then 3 consecutive correct tier-4 de_morgan items to satisfy streak + de_morgan BKT.
+   *
+   *   - BIND the session to L4 first via the `?lesson=4` seam on a `session_start`.
+   *   - 2 correct l4-nor-primitive (negation, tier 2) → negation BKT ≥ 0.95; no streak.
+   *   - 3 consecutive correct tier-4 items → de_morgan BKT ≥ 0.95 + streak = 3 → rule gate.
    *   - The probe fires from the L4 bank (captured dynamically); a correct transfer + a
-   *     De-Morgan-specific explain-back transcript (clears preconditions #4 KC-vocab and
-   *     #5 item-tokens for the probed item) drive the synthetic PASS to the full gate.
+   *     De-Morgan-specific explain-back transcript drive the synthetic PASS to the full gate.
    * Returns the L4-mastered session + its mounted MasteryCelebration.
    */
   async function driveToL4Mastery(): Promise<{ sessionId: string; celebration: Action }> {
@@ -567,16 +582,28 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       sessionId: string;
     };
     const l4Ws = `${wsUrl}?lesson=4`;
-    // BIND to L4 (durable lessonProgress write), then drive 3 correct de_morgan submits
-    // on ONE socket. The `?lesson=4` seam is honored only on `session_start`; subsequent
-    // turns read the durable binding (so they fold against L4 even over a plain socket).
+    // BIND to L4 (durable lessonProgress write), then drive the full all-KC gate.
+    // L4 KCs are de_morgan and negation. The `?lesson=4` seam is honored only on
+    // `session_start`; subsequent turns read the durable binding.
+    //
+    // NEW all-KC gate: negation KC has only tier-2 items (l4-nor-primitive, tier 2);
+    // de_morgan includes tier-4 items (maxTier=4). Strategy:
+    //   - 2 correct l4-nor-primitive (negation, tier 2) → negation BKT ≥ 0.95;
+    //     tier < maxTier so consecutiveCorrectAtHardestTier stays 0.
+    //   - 3 consecutive correct tier-4 items → de_morgan BKT ≥ 0.95 (crosses 0.95
+    //     after 2 from prior) AND consecutiveCorrectAtHardestTier = 3 ✓.
+    // Tier-4 items chosen: l4-comp-a-and-bc-trap, l4-comp-a-or-bc, l4-comp-or-and.
     const ws1 = new WebSocket(l4Ws);
     const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
       const frames: Record<string, unknown>[] = [
         { kind: 'session_start', sessionId, lessonId: 4 },
-        { kind: 'submit', sessionId, itemId: 'l4-nand2-trap', submission: 'NOT (A AND B)', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l4-nand2-trap', submission: 'NOT (A AND B)', correct: true, responseTimeMs: 6000 },
-        { kind: 'submit', sessionId, itemId: 'l4-nand2-trap', submission: 'NOT (A AND B)', correct: true, responseTimeMs: 4000 },
+        // Clear negation KC (tier 2 — does not affect hardest-tier streak).
+        { kind: 'submit', sessionId, itemId: 'l4-nor-primitive', submission: 'A NOR B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l4-nor-primitive', submission: 'A NOR B', correct: true, responseTimeMs: 6000 },
+        // 3 consecutive correct tier-4 de_morgan items → streak + de_morgan BKT ≥ 0.95.
+        { kind: 'submit', sessionId, itemId: 'l4-comp-a-and-bc-trap', submission: 'NOT (A AND (B OR C))', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l4-comp-a-or-bc', submission: 'NOT (A OR (B AND C))', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l4-comp-or-and', submission: 'NOT ((A OR B) AND C)', correct: true, responseTimeMs: 4000 },
       ];
       const out: Action[] = [];
       let sent = 0;
@@ -590,10 +617,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         }
       });
       ws1.on('error', reject);
-      setTimeout(() => reject(new Error('L4 drive timed out')), 8000);
+      setTimeout(() => reject(new Error('L4 drive timed out')), 12000);
     });
     ws1.close();
-    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = upToTransfer.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     if (!probedItemId) throw new Error('no L4 transfer probe fired');
@@ -601,13 +628,13 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     await driveSequence(sessionId, [
       { kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr },
     ]);
-    // A genuine De-Morgan explanation that references THIS item's tokens (vars A/B and
-    // the NOT/AND operators of the probed L4 bank items) and the generic KC vocab
-    // ("De Morgan", "truth table") — clears preconditions #3/#4/#5 for the probed item.
+    // A genuine De-Morgan explanation that references the probed item's tokens and the
+    // KC vocab ("De Morgan", "truth table", NOT/AND/OR operators, variables A/B/C) —
+    // clears preconditions #3/#4/#5 for the probed tier-4 item.
     server.explainBackCaptureRegistry.setTranscript(
       sessionId,
       probedItemId,
-      'By De Morgan, NOT of A AND B equals NOT A OR NOT B, so the truth table output is false only when both A and B are true.',
+      'By De Morgan, NOT applied to a compound expression distributes inward and flips the connective: NOT of A AND B OR C gives NOT A OR NOT B AND NOT C. The truth table confirms each row.',
     );
     const wsEb = new WebSocket(`${wsUrl}?testExplainBackVerdict=pass`);
     const celebration = await new Promise<Action>((resolve, reject) => {
@@ -617,7 +644,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
             kind: 'explain_back_recording_ended',
             sessionId,
             targetItemId: probedItemId,
-            transcript: 'De Morgan turns NOT of A AND B into NOT A OR NOT B across the truth table.',
+            transcript: 'De Morgan distributes the NOT inward and flips the connective, so NOT of A AND something becomes NOT A OR NOT something across the truth table.',
             durationMs: 20000,
           }),
         ),
@@ -675,9 +702,11 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     if (advanceAction!.type === 'mount') {
       expect(advanceAction!.component.kind).toBe('TruthTablePractice');
       if (advanceAction!.component.kind === 'TruthTablePractice') {
-        // L2 item[0] expression — F-13's canonical lessons/2 content (reconciled at the
-        // I3 merge sink; F-15 was built against a placeholder before F-13's content landed).
-        expect(advanceAction!.component.expression).toBe('(A AND B) OR (NOT C)');
+        // L2 item[0] expression — the curriculum-audit pass added a 2-variable
+        // composition BRIDGE item (`A AND NOT B`) as L2's first item, so a learner
+        // arriving from L1 meets the simplest composition before the 3-variable
+        // items (Sweller intrinsic-load sequencing).
+        expect(advanceAction!.component.expression).toBe('A AND NOT B');
       }
     }
 
@@ -759,9 +788,15 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
+    // All three L1 KCs (AND, OR, NOT) must clear BKT ≥ 0.95 before the rule gate
+    // fires the transfer probe. Same all-KC sequence as the PASS test above.
     const ws1 = new WebSocket(wsUrl);
     const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
       const frames: Record<string, unknown>[] = [
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
@@ -778,10 +813,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         }
       });
       ws1.on('error', reject);
-      setTimeout(() => reject(new Error('timed out')), 8000);
+      setTimeout(() => reject(new Error('timed out')), 10000);
     });
     ws1.close();
-    const probe = upToTransfer.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = upToTransfer.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     expect(probedItemId).toBeTruthy();
@@ -839,13 +874,17 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
-    // Pass the rule gate.
+    // Pass the rule gate (all-KC sequence: OR × 2, NOT × 2, AND × 3).
     const upToProbe = await driveSequence(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
     ]);
-    const probe = upToProbe.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = upToProbe.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     // Pass the transfer.
@@ -1179,7 +1218,13 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     // `getLesson(event.lessonId=2)` — leaking a gated L2 item for one turn. This
     // asserts the in-turn fold, not just the DB row (mirror of the seam-on
     // 'folds against L2' test, inverted).
-    it('FAILS CLOSED: a forged session_start.lessonId=2 with NO seam mounts an L1 item on turn 1 (not L2)', async () => {
+    //
+    // CHANGE 2: session_start on a fresh session now returns an IntroExplanation
+    // (instruction before practice) rather than a practice item directly. The
+    // integrity check still holds: the L1 intro explanation's topic ('AND') is an L1
+    // KC, not an L2 KC ('composition'). A leaked L2 fold would produce topic
+    // 'composition'; a correct L1 fold produces topic 'AND'.
+    it('FAILS CLOSED: a forged session_start.lessonId=2 with NO seam returns an L1 intro on turn 1 (not L2)', async () => {
       const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
         sessionId: string;
       };
@@ -1188,16 +1233,40 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       ]);
       const startAction = actions[0];
       expect(startAction).toBeDefined();
-      const expr = mountExpression(startAction!);
-      expect(expr, 'session_start must mount a practice item').toBeDefined();
-      expect(
-        L1_EXPRESSIONS.has(expr!),
-        `mounted ${String(expr)} — a forged session_start must fold against L1`,
-      ).toBe(true);
-      expect(
-        L2_EXPRESSIONS.has(expr!),
-        `mounted ${String(expr)} — gated L2 content leaked on the forged turn-1 fold`,
-      ).toBe(false);
+      // The opening move is now IntroExplanation (instruction-first).
+      expect(startAction!.type).toBe('mount');
+      if (startAction!.type === 'mount') {
+        expect(
+          ['IntroExplanation', 'TruthTablePractice', 'WorkedExample'].includes(startAction!.component.kind),
+          `unexpected component kind: ${startAction!.component.kind}`,
+        ).toBe(true);
+        // If it is an IntroExplanation: its topic must be an L1 KC ('AND'/'OR'/'NOT'),
+        // never an L2 KC ('composition'/'XOR') — that would prove L2 content leaked.
+        if (startAction!.component.kind === 'IntroExplanation') {
+          const L1_TOPICS = new Set(['AND', 'OR', 'NOT']);
+          const L2_TOPICS = new Set(['composition', 'XOR']);
+          expect(
+            L1_TOPICS.has(startAction!.component.topic),
+            `intro topic "${startAction!.component.topic}" — a forged session_start must fold against L1 intro topics`,
+          ).toBe(true);
+          expect(
+            L2_TOPICS.has(startAction!.component.topic),
+            `intro topic "${startAction!.component.topic}" — gated L2 intro content leaked on the forged turn-1 fold`,
+          ).toBe(false);
+        }
+        // If it is a practice item (lesson has no intro): expression must be an L1 one.
+        const expr = mountExpression(startAction!);
+        if (expr !== undefined) {
+          expect(
+            L1_EXPRESSIONS.has(expr),
+            `mounted ${expr} — a forged session_start must fold against L1`,
+          ).toBe(true);
+          expect(
+            L2_EXPRESSIONS.has(expr),
+            `mounted ${expr} — gated L2 content leaked on the forged turn-1 fold`,
+          ).toBe(false);
+        }
+      }
     });
 
     // RECONNECT NO-DOWNGRADE: a session durably advanced to L2 that reconnects
@@ -1374,12 +1443,17 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     /** Drive the gate to a transfer-pass so an ExplainBackPrompt is mounted; return
      *  the probed item id (the explain-back `targetItemId`). */
     async function driveToExplainBackPrompt(sessionId: string): Promise<string> {
+      // All three L1 KCs must clear the all-KC gate before the transfer probe fires.
       const actions = await driveSequence(sessionId, [
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
         { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
       ]);
-      const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+      const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
       const probedItemId =
         probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
       const probedExpr =
@@ -2021,7 +2095,7 @@ describe.skipIf(!canRunPg)('F-11 explain-back PASS path through the real fold', 
         }
       });
       ws.on('error', reject);
-      setTimeout(() => reject(new Error('sequence timed out')), 8000);
+      setTimeout(() => reject(new Error('sequence timed out')), 12000);
     });
     ws.close();
     return actions;
@@ -2032,12 +2106,17 @@ describe.skipIf(!canRunPg)('F-11 explain-back PASS path through the real fold', 
       sessionId: string;
     };
     // Drive the gate to a transfer-pass so the server mounts ExplainBackPrompt.
+    // All three L1 KCs must clear BKT ≥ 0.95 (all-KC gate).
     const actions = await drive(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
     ]);
-    const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     const [afterTransfer] = await drive(sessionId, [
@@ -2146,7 +2225,7 @@ describe.skipIf(!canRunPg)('CLUSTER C — explain-back attempt-cap under concurr
         }
       });
       ws.on('error', reject);
-      setTimeout(() => reject(new Error('sequence timed out')), 8000);
+      setTimeout(() => reject(new Error('sequence timed out')), 12000);
     });
     ws.close();
     return actions;
@@ -2157,12 +2236,17 @@ describe.skipIf(!canRunPg)('CLUSTER C — explain-back attempt-cap under concurr
       sessionId: string;
     };
     // Get to a transfer-pass so an ExplainBackPrompt is mounted.
+    // All three L1 KCs must clear the all-KC gate (OR × 2, NOT × 2, AND × 3).
     const actions = await drive(sessionId, [
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
       { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
     ]);
-    const probe = actions.find((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+    const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
     await drive(sessionId, [{ kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr }]);

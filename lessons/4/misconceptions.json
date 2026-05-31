@@ -24,6 +24,16 @@
       "itemId": "l4-comp-a-and-bc-trap",
       "halfwayTruthTable": [1, 0, 0, 0, 0, 0, 0, 0],
       "hintBody": "That's the halfway-application misconception: you distributed the negation but kept the AND. De Morgan's law flips the connective: NOT (A AND (B OR C)) = (NOT A) OR NOT (B OR C). Change the outer AND to OR when you negate."
+    },
+    {
+      "itemId": "l4-comp-a-or-bc",
+      "halfwayTruthTable": [1, 0, 0, 0, 0, 0, 0, 0],
+      "hintBody": "That's the halfway-application misconception: you correctly flipped the outer OR to AND, but then treated NOT(B AND C) as (NOT B) AND (NOT C) — forgetting to flip AND to OR inside the nested group. De Morgan applied twice: NOT(A OR (B AND C)) = (NOT A) AND NOT(B AND C) = (NOT A) AND ((NOT B) OR (NOT C)). The inner AND must also flip to OR."
+    },
+    {
+      "itemId": "l4-comp-or-and",
+      "halfwayTruthTable": [1, 1, 1, 1, 1, 1, 1, 0],
+      "hintBody": "That's the halfway-application misconception: you distributed the NOT into each operand individually — negating A, B, and C separately — but kept OR and AND as-is instead of flipping them. De Morgan applied to NOT((A OR B) AND C) requires flipping the outer AND to OR: (NOT(A OR B)) OR (NOT C). Then the inner NOT(A OR B) flips to (NOT A) AND (NOT B). Both connectives must flip."
     }
   ]
 }

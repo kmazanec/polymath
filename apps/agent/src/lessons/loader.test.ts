@@ -15,7 +15,8 @@ describe('loadLesson', () => {
     const lesson = loadLesson(1);
     expect(lesson.content.lessonId).toBe(1);
     expect(lesson.content.knowledgeComponents).toEqual(['AND', 'OR', 'NOT']);
-    expect(lesson.content.items).toHaveLength(3);
+    // 3 core operator items + 1 within-lesson spaced-review item (curriculum-audit pass).
+    expect(lesson.content.items).toHaveLength(4);
     expect(lesson.masteryConfig.bktMasteryThreshold).toBe(0.95);
   });
 

@@ -26,6 +26,27 @@ const LESSON_META: Record<number, LessonMeta> = {
       'Write the matching line of pseudocode — and see all three agree',
     ],
   },
+  2: {
+    outcomes: [
+      'Read and build nested expressions like (A AND B) OR (NOT C)',
+      'Recognise XOR — "exactly one input true" — as something you compose, not a new gate',
+      'Wire and write composed logic across all three forms',
+    ],
+  },
+  3: {
+    outcomes: [
+      'Build NOT, AND, and OR using only NAND gates',
+      'Explain why a single NAND gate can express any Boolean function',
+      'Construct a NAND-only circuit for a given truth table',
+    ],
+  },
+  4: {
+    outcomes: [
+      "Apply De Morgan's law: flip the negation AND the connective together",
+      'Avoid the halfway-application trap — negating variables but leaving the operator unchanged',
+      'Show NOT(A AND B) = (NOT A) OR (NOT B) across all three forms',
+    ],
+  },
 };
 
 /** Truth-table icon: a small 2-column grid mark. */

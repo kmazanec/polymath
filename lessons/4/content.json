@@ -1,25 +1,49 @@
 {
   "lessonId": 4,
   "title": "Lesson 4 — De Morgan's Law",
-  "_authoring": "PLACEHOLDER content (ADR-012 stretch). Pedagogically coherent with the L4 transfer bank (seed_data/transfer_items.json) and the L4 KCs; every truthTable is computed via @polymath/booleans so loadLesson(4) cannot throw. De Morgan's law is the payoff: NOT(A AND B) = (NOT A) OR (NOT B) and NOT(A OR B) = (NOT A) AND (NOT B). The trap items (l4-*-trap) carry a deliberately-constructed halfway-misconception form whose near-miss output column is authored into lessons/4/misconceptions.json; the misconception detector names it in the hint. Final wording/sequencing across the 4 tiers is Keith's pedagogical authoring (~1 day, see the spec's Manual setup).",
+  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro (explicitly bridges from L3: NAND = NOT(A AND B) is WHY De Morgan works), per-KC explanations (de_morgan with BOTH law forms stated explicitly, negation for NOR/complement forms), and a worked example (apply De Morgan to NOT(A AND B) showing the flip-negation-AND-flip-operator steps). Reordered items: clean application items first — l4-nand-equiv (tier 1) and l4-nor-equiv (tier 1) moved to FIRST two positions; trap items l4-nand2-trap and l4-nor2-trap moved to after clean introductory items; difficultyTier adjusted so clean intro items are tier 1 and the trap items that formerly were tier 1 are now tier 2. This teaches the law before presenting its traps. All truthTables preserved from original (verified via @polymath/booleans).",
   "knowledgeComponents": ["de_morgan", "negation"],
+  "intro": {
+    "lessonIntro": {
+      "title": "Lesson 4 — De Morgan's Law",
+      "body": "In Lesson 3 you built everything from NAND — and NAND is NOT(A AND B). De Morgan's law is WHY that works: it says that negating a compound expression flips each negation AND flips the connective. Two forms: NOT(A AND B) = (NOT A) OR (NOT B), and NOT(A OR B) = (NOT A) AND (NOT B). Every half-correct application misses one of those two flips — the items in this lesson are designed to catch exactly that mistake."
+    },
+    "explanations": [
+      {
+        "topic": "de_morgan",
+        "body": "De Morgan's law comes in two symmetric forms. Form 1: NOT(A AND B) = (NOT A) OR (NOT B). The negation distributes inward, AND flips to OR. Form 2: NOT(A OR B) = (NOT A) AND (NOT B). The negation distributes inward, OR flips to AND. The critical rule: when the NOT goes in, the connective MUST flip — AND becomes OR, OR becomes AND. Negating the variables without flipping the connective is the most common mistake.",
+        "visibleReps": ["truth_table"]
+      },
+      {
+        "topic": "negation",
+        "body": "NOR (Not-OR) is NOT(A OR B). Its truth table [1,0,0,0] shows it is true only when every input is false. NOR is also a universal gate (like NAND) — it can build every Boolean function. The De Morgan equivalent of NOR is (NOT A) AND (NOT B): the NOR of two values equals the AND of their complements.",
+        "visibleReps": ["truth_table"]
+      }
+    ],
+    "workedExample": {
+      "expression": "NOT (A AND B)",
+      "steps": [
+        {
+          "label": "Identify the outer connective",
+          "detail": "The expression is NOT applied to (A AND B). The outer connective inside the negation is AND."
+        },
+        {
+          "label": "Apply De Morgan Form 1",
+          "detail": "De Morgan says: NOT(A AND B) = (NOT A) OR (NOT B). Two things happen simultaneously: each variable gets negated, AND the AND flips to OR. Do both steps — if you only negate the variables but keep AND, you get (NOT A) AND (NOT B), which is the NOR table, not the NAND table."
+        },
+        {
+          "label": "Verify: compute (NOT A) OR (NOT B) row by row",
+          "detail": "(A=0,B=0): NOT 0 OR NOT 0 = 1 OR 1 = 1. (A=0,B=1): 1 OR 0 = 1. (A=1,B=0): 0 OR 1 = 1. (A=1,B=1): 0 OR 0 = 0. Table: [1,1,1,0]."
+        },
+        {
+          "label": "Cross-check: compute NOT(A AND B) directly",
+          "detail": "NOT(0 AND 0)=NOT 0=1, NOT(0 AND 1)=NOT 0=1, NOT(1 AND 0)=NOT 0=1, NOT(1 AND 1)=NOT 1=0. Same table [1,1,1,0] — De Morgan's equivalence confirmed."
+        }
+      ],
+      "visibleReps": ["truth_table", "circuit", "pseudocode"]
+    }
+  },
   "items": [
-    {
-      "itemId": "l4-nand2-trap",
-      "kc": "de_morgan",
-      "difficultyTier": 1,
-      "targetExpression": "NOT (A AND B)",
-      "variables": ["A", "B"],
-      "truthTable": [1, 1, 1, 0]
-    },
-    {
-      "itemId": "l4-nor2-trap",
-      "kc": "de_morgan",
-      "difficultyTier": 1,
-      "targetExpression": "NOT (A OR B)",
-      "variables": ["A", "B"],
-      "truthTable": [1, 0, 0, 0]
-    },
     {
       "itemId": "l4-nand-equiv",
       "kc": "de_morgan",
@@ -31,8 +55,24 @@
     {
       "itemId": "l4-nor-equiv",
       "kc": "de_morgan",
-      "difficultyTier": 2,
+      "difficultyTier": 1,
       "targetExpression": "(NOT A) AND (NOT B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 0]
+    },
+    {
+      "itemId": "l4-nand2-trap",
+      "kc": "de_morgan",
+      "difficultyTier": 2,
+      "targetExpression": "NOT (A AND B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 1, 1, 0]
+    },
+    {
+      "itemId": "l4-nor2-trap",
+      "kc": "de_morgan",
+      "difficultyTier": 2,
+      "targetExpression": "NOT (A OR B)",
       "variables": ["A", "B"],
       "truthTable": [1, 0, 0, 0]
     },

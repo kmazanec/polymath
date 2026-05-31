@@ -38,6 +38,16 @@ export type TacticalMove =
       visibleReps: Rep[];
       rationale: string;
     }
+  | {
+      /** Mounts an `IntroExplanation` card — used in the deterministic intro
+       *  sequence before the first practice item (Sweller: worked-examples-first
+       *  for novices). Compiles to a `mount` Action with kind 'IntroExplanation'. */
+      move: 'intro_explanation';
+      topic: string;
+      body: string;
+      visibleReps: Rep[];
+      rationale: string;
+    }
   | { move: 'alt_representation'; item: ProposedItem; rep: Rep; rationale: string }
   | {
       move: 'answer_question';
@@ -146,6 +156,17 @@ export function compileMove(move: TacticalMove): Action {
           kind: 'WorkedExample',
           expression: move.expression,
           steps: move.steps,
+          visibleReps: move.visibleReps,
+        },
+        rationale: move.rationale,
+      };
+    case 'intro_explanation':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'IntroExplanation',
+          topic: move.topic,
+          body: move.body,
           visibleReps: move.visibleReps,
         },
         rationale: move.rationale,

@@ -45,6 +45,11 @@ export interface LoggedEvent {
 export interface DerivedState {
   bktByKc: Record<string, BKTParams>;
   consecutiveCorrect: number;
+  /** Consecutive correct submissions at the lesson's hardest difficulty tier ONLY.
+   *  This is the value `toLearnerState` maps to `LearnerState.consecutiveCorrectAtHardestTier`;
+   *  `consecutiveCorrect` (the tier-blind count) is preserved because `server.ts`
+   *  reads it directly for the diagnostic snapshot. */
+  consecutiveCorrectAtHardestTier: number;
   hintsUsed: number;
   /** Hints requested per item this session — the authoritative hint-level source
    *  (a capped recent-history window can mis-count and reset the ladder). */
@@ -98,19 +103,42 @@ export function deriveState(
 ): DerivedState {
   const cfg = bktConfig(config);
   const kcByItem = new Map<string, string>();
+  const tierByItem = new Map<string, number>();
   for (const item of lesson.items) {
     kcByItem.set(item.itemId, item.kc);
     kcByItem.set(item.targetExpression, item.kc); // the web names items by expression
+    tierByItem.set(item.itemId, item.difficultyTier);
+    tierByItem.set(item.targetExpression, item.difficultyTier);
   }
+
+  // The hardest difficulty tier in the lesson. Used to gate `consecutiveCorrectAtHardestTier`.
+  // Guard the empty-items edge case (fail closed: 0 keeps every submit below maxTier = 0
+  // so no submit can satisfy the tier check — the gate blocks, which is correct for a
+  // misconfigured/empty lesson).
+  const maxTier = lesson.items.length > 0
+    ? Math.max(...lesson.items.map((i) => i.difficultyTier))
+    : 0;
 
   // Correctness is the server-side recompute (never the client flag), shared with
   // the per-turn `recomputeCorrect` used by the server.
   const isCorrect = (itemId: string | undefined, submission: string | undefined): boolean =>
     recomputeCorrect(lesson, itemId, submission);
 
+  // BUG 1 FIX (half here): pre-seed bktByKc with the BKT prior for EVERY KC declared
+  // in the lesson. Without this, a KC the learner never attempts is absent from the
+  // map, and evaluateRuleGate's all-KC check would only see the practiced subset —
+  // silently ignoring unpracticed KCs. A KC at prior (≈ 0.3) is well below the 0.95
+  // threshold and BLOCKS the gate, which is correct: the learner has not demonstrated
+  // mastery of a KC they've never practiced.
+  const bktByKc: Record<string, BKTParams> = {};
+  for (const kc of lesson.knowledgeComponents) {
+    bktByKc[kc] = initBKT(cfg);
+  }
+
   const state: DerivedState = {
-    bktByKc: {},
+    bktByKc,
     consecutiveCorrect: 0,
+    consecutiveCorrectAtHardestTier: 0,
     hintsUsed: 0,
     hintsByItem: {},
     missesByItem: {},
@@ -132,6 +160,11 @@ export function deriveState(
       const correct = isCorrect(ev.itemId, ev.submission);
       const kc = ev.itemId ? kcByItem.get(ev.itemId) : undefined;
       if (kc) {
+        // bktByKc is pre-seeded for all lesson KCs; for an item whose KC appears in
+        // the lesson we always have an existing entry — `?? initBKT(cfg)` is a
+        // belt-and-suspenders fallback for an item whose kc is NOT in knowledgeComponents
+        // (a content authoring mistake; the validator should catch it, but we degrade
+        // gracefully rather than crashing).
         const prior = state.bktByKc[kc] ?? initBKT(cfg);
         state.bktByKc[kc] = updateBKT(prior, correct, cfg);
       }
@@ -146,6 +179,26 @@ export function deriveState(
       }
       if (typeof ev.responseTimeMs === 'number') state.responseTimesMs.push(ev.responseTimeMs);
       state.consecutiveCorrect = correct ? state.consecutiveCorrect + 1 : 0;
+
+      // BUG 2 FIX: track hardest-tier consecutive correct separately from the
+      // tier-blind `consecutiveCorrect`. The rules:
+      //   - Correct at hardest tier   → increment.
+      //   - Incorrect at hardest tier → reset to 0.
+      //   - Any result at a LOWER tier → NEUTRAL (no increment, no reset).
+      //     Rationale: easier practice between hard items is a normal spacing pattern;
+      //     it should not penalise the learner by erasing hard-tier evidence. We only
+      //     credit and debit this counter at the tier that actually matters for the gate.
+      //   - A served hint resets it (see the request_hint branch below, mirroring the
+      //     tier-blind streak's hint-reset).
+      // For a single-tier lesson (L1: maxTier === 1 === every item's tier) this
+      // counter behaves identically to `consecutiveCorrect` — no regression for L1.
+      const itemTier = ev.itemId !== undefined ? (tierByItem.get(ev.itemId) ?? 0) : 0;
+      if (itemTier === maxTier) {
+        state.consecutiveCorrectAtHardestTier = correct
+          ? state.consecutiveCorrectAtHardestTier + 1
+          : 0;
+      }
+      // Lower-tier submits: leave consecutiveCorrectAtHardestTier unchanged.
     } else if (ev.kind === 'request_hint') {
       // Only count a hint the agent actually SERVED (mounted a HintCard). A
       // request refused during a transfer probe (no_action) must not poison the
@@ -154,6 +207,11 @@ export function deriveState(
         state.hintsUsed++;
         if (ev.itemId) state.hintsByItem[ev.itemId] = (state.hintsByItem[ev.itemId] ?? 0) + 1;
         state.consecutiveCorrect = 0; // a hinted item doesn't count toward the streak
+        // A served hint resets the hardest-tier streak too — a learner who needed a
+        // hint has NOT demonstrated fluent unassisted retrieval at that item, regardless
+        // of tier. (We do not check the item's tier here: a hint at ANY tier breaks the
+        // "no hint" sub-condition of the streak, mirroring ADR-011's hint-reset rule.)
+        state.consecutiveCorrectAtHardestTier = 0;
       }
     } else if (ev.kind === 'transfer_submitted') {
       if (ev.transferCorrect === true) state.transferPassed = true;
@@ -185,7 +243,10 @@ export function toLearnerState(derived: DerivedState, config: MasteryConfig): Le
   const items = Math.max(1, derived.submits);
   return {
     bktByKc,
-    consecutiveCorrectAtHardestTier: derived.consecutiveCorrect,
+    // BUG 2 FIX: map the tier-filtered counter, not the tier-blind `consecutiveCorrect`.
+    // `consecutiveCorrect` is preserved on DerivedState for server.ts's diagnostic snapshot;
+    // the gate reads only the hardest-tier count.
+    consecutiveCorrectAtHardestTier: derived.consecutiveCorrectAtHardestTier,
     hintsUsedInLastN: derived.hintsUsed,
     responseTimesMs: derived.responseTimesMs,
     hintRatio: derived.hintsUsed / items,

@@ -90,7 +90,9 @@ main {
 .mastery-celebration,
 .cross-lesson-recall,
 .circuit-builder,
-.truth-table {
+.truth-table,
+.intro-explanation,
+.worked-example {
   /* The workspace card is where the learner works — give it real breathing room from
    * the rounded edge rather than the tight 1rem it had (audit M-7). */
   padding: var(--space-4) var(--space-5);
@@ -450,6 +452,49 @@ button:disabled,
   color: var(--color-on-accent);
   box-shadow: var(--shadow-button);
   cursor: pointer;
+}
+
+/* --------------------------------------------------------------------------
+ * IntroExplanation — teaching card (instruction, not practice surface).
+ * The eyebrow + h2 + body pattern mirrors LessonIntro but uses an h2 (it
+ * appears below the shell's h1) and adds a faint lavender tint to distinguish
+ * "reading this" from "working on this". max-width keeps the prose measure
+ * readable (~66ch) without capping the card itself.
+ * ------------------------------------------------------------------------ */
+.intro-explanation__eyebrow { color: var(--color-text-muted); margin-bottom: var(--space-2, 0.5rem); }
+.intro-explanation__topic { margin: 0 0 var(--space-3, 1rem); }
+.intro-explanation__body { margin: 0; max-width: 66ch; line-height: 1.6; color: var(--color-text); }
+
+/* --------------------------------------------------------------------------
+ * WorkedExample — the step-by-step derivation card (Sweller worked-example
+ * effect). The expression is displayed in the brand mono so it reads as the
+ * thing being operated on; the step list is a numbered <ol> with two lines per
+ * step: a bold label naming the move, and detail text showing the result.
+ * ------------------------------------------------------------------------ */
+.worked-example__eyebrow { color: var(--color-text-muted); margin-bottom: var(--space-2, 0.5rem); }
+.worked-example__heading { margin: 0 0 var(--space-3, 1rem); }
+.worked-example__expression {
+  display: inline-block; margin: 0 0 var(--space-4, 1.5rem);
+  padding: 0.4rem 0.85rem; border-radius: var(--radius-md);
+  background: var(--color-lavender-bg); border: 1px solid var(--color-border);
+}
+.worked-example__expression code {
+  font-family: var(--font-mono); font-size: 1.1rem; font-weight: 600;
+  color: var(--color-primary); letter-spacing: 0.01em;
+}
+.worked-example__steps {
+  list-style: decimal; padding-left: 1.4rem; margin: 0;
+  display: flex; flex-direction: column; gap: var(--space-3, 1rem);
+}
+.worked-example__step {
+  display: flex; flex-direction: column; gap: 0.2rem;
+}
+.worked-example__step-label {
+  font-weight: 600; color: var(--color-ink); font-family: var(--font-display);
+}
+.worked-example__step-detail {
+  color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 /* --------------------------------------------------------------------------

@@ -14,6 +14,8 @@ import {
 } from './ExplainBackPrompt.js';
 import { MasteryCelebration } from './MasteryCelebration.js';
 import { CrossLessonRecall } from './CrossLessonRecall.js';
+import { IntroExplanation } from './IntroExplanation.js';
+import { WorkedExample } from './WorkedExample.js';
 import {
   PlaygroundCanvas,
   type PlaygroundSubmitPayload,
@@ -156,7 +158,9 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
         />
       );
     case 'IntroExplanation':
+      return <IntroExplanation spec={spec} />;
     case 'WorkedExample':
+      return <WorkedExample spec={spec} />;
     case 'ConfidenceCheck':
       return <Tbd kind={spec.kind} />;
     default: {

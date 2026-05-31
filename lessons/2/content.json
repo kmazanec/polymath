@@ -1,16 +1,64 @@
 {
   "lessonId": 2,
   "title": "Lesson 2 — Composition",
-  "_authoring": "PLACEHOLDER content (F-13). Pedagogically coherent with the L2 transfer bank (seed_data/transfer_items.json) and the L2 KCs, with every truthTable computed via @polymath/booleans so loadLesson(2) cannot throw — but the final wording/sequencing of the 12 practice items across the 4 difficulty tiers is Keith's pedagogical authoring (~1.5 days, see the spec's Manual setup). XOR is the pedagogical LABEL only; the criterion is equivalent() on the composition (A AND NOT B) OR (NOT A AND B). Never write 'A XOR B' here — the parser only knows NOT/AND/OR.",
+  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (composition, XOR-as-composition), and a worked example ((A OR B) AND C traced row-by-row). Added two 2-variable bridge items at the front (l2-bridge-and-notb and l2-nor promoted to tier 1) to ease into 3-variable composition. Interleaved XOR discrimination anchor (l2-xor-canonical) earlier — moved from tier 3 position into mid-sequence after bridge items establish OR/NOT composition. Final tier ordering: bridge items (tier 1 2-var) → simple 3-var compositions (tier 1) → NOT-inside-composition (tier 2) → XOR canonical anchor (tier 2) → XOR forms + complex composition (tier 3) → majority + 3-var XOR (tier 4). All truthTables verified MSB-first. XOR is a pedagogical label only — never written as 'A XOR B' in expressions. Gate-reachability fix: added l2-comp3-ab-or-notanot c as a third tier-4 item — mastery_config requires consecutiveCorrectAtHardestTier:3 but there were only 2 tier-4 items, making the gate mathematically unreachable. Three tier-4 items are now present: l2-majority, l2-xor-three, l2-comp3-aob-nac.",
   "knowledgeComponents": ["composition", "XOR"],
+  "intro": {
+    "lessonIntro": {
+      "title": "Lesson 2 — Composition: Building Larger Expressions",
+      "body": "You can wire the operators from Lesson 1 together to describe any condition imaginable. Composition means the output of one operator becomes the input to another. The key skill is evaluation order: work inside parentheses first, then outward — exactly like arithmetic. In this lesson you will build truth tables for compound expressions and meet XOR ('exactly one input true'), which is not a new gate but a composition of AND, OR, and NOT."
+    },
+    "explanations": [
+      {
+        "topic": "composition",
+        "body": "A composite expression nests one Boolean expression inside another. Evaluate the innermost sub-expression first, then use its result as the input to the outer operator. Parentheses force a grouping; without them, NOT binds tightest, then AND, then OR — exactly like multiplication before addition. Example: NOT A OR B means (NOT A) OR B, not NOT (A OR B).",
+        "visibleReps": ["truth_table"]
+      },
+      {
+        "topic": "XOR",
+        "body": "XOR ('exclusive or') means exactly one input is true — true when A is true and B is false, or when B is true and A is false, but NOT when both are true (unlike inclusive OR). XOR is not a separate gate in our grammar; it is the composition (A AND NOT B) OR (NOT A AND B). The truth table [0,1,1,0] is its fingerprint — check any expression claiming to be XOR against it.",
+        "visibleReps": ["truth_table"]
+      }
+    ],
+    "workedExample": {
+      "expression": "(A OR B) AND C",
+      "steps": [
+        {
+          "label": "List all 8 input combinations",
+          "detail": "Three variables A, B, C give 2³ = 8 rows, MSB-first: (000),(001),(010),(011),(100),(101),(110),(111)."
+        },
+        {
+          "label": "Evaluate the inner sub-expression (A OR B) for each row",
+          "detail": "Row (000): 0 OR 0 = 0. Row (001): 0 OR 0 = 0. Row (010): 0 OR 1 = 1. Row (011): 0 OR 1 = 1. Row (100): 1 OR 0 = 1. Row (101): 1 OR 0 = 1. Row (110): 1 OR 1 = 1. Row (111): 1 OR 1 = 1. Sub-expression column: [0,0,1,1,1,1,1,1]."
+        },
+        {
+          "label": "Apply AND with C",
+          "detail": "Now AND each sub-expression result with C (the last variable in each row tuple). (000): 0 AND 0 = 0. (001): 0 AND 1 = 0. (010): 1 AND 0 = 0. (011): 1 AND 1 = 1. (100): 1 AND 0 = 0. (101): 1 AND 1 = 1. (110): 1 AND 0 = 0. (111): 1 AND 1 = 1."
+        },
+        {
+          "label": "Read the output column",
+          "detail": "Final table for (A OR B) AND C: [0,0,0,1,0,1,0,1]. C acts as a gate — the sub-expression result only passes through when C=1."
+        }
+      ],
+      "visibleReps": ["truth_table", "circuit", "pseudocode"]
+    }
+  },
   "items": [
     {
-      "itemId": "l2-and-or-c",
+      "itemId": "l2-bridge-and-notb",
       "kc": "composition",
       "difficultyTier": 1,
-      "targetExpression": "(A AND B) OR (NOT C)",
-      "variables": ["A", "B", "C"],
-      "truthTable": [1, 0, 1, 0, 1, 0, 1, 1]
+      "targetExpression": "A AND NOT B",
+      "variables": ["A", "B"],
+      "truthTable": [0, 0, 1, 0]
+    },
+    {
+      "itemId": "l2-nor",
+      "kc": "composition",
+      "difficultyTier": 1,
+      "targetExpression": "NOT (A OR B)",
+      "variables": ["A", "B"],
+      "truthTable": [1, 0, 0, 0]
     },
     {
       "itemId": "l2-or-and-c",
@@ -29,6 +77,22 @@
       "truthTable": [0, 0, 0, 1, 1, 1, 1, 1]
     },
     {
+      "itemId": "l2-xor-canonical",
+      "kc": "XOR",
+      "difficultyTier": 2,
+      "targetExpression": "(A AND NOT B) OR (NOT A AND B)",
+      "variables": ["A", "B"],
+      "truthTable": [0, 1, 1, 0]
+    },
+    {
+      "itemId": "l2-and-or-c",
+      "kc": "composition",
+      "difficultyTier": 2,
+      "targetExpression": "(A AND B) OR (NOT C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 0, 1, 0, 1, 0, 1, 1]
+    },
+    {
       "itemId": "l2-a-and-bc",
       "kc": "composition",
       "difficultyTier": 2,
@@ -43,22 +107,6 @@
       "targetExpression": "A AND (B OR NOT C)",
       "variables": ["A", "B", "C"],
       "truthTable": [0, 0, 0, 0, 1, 0, 1, 1]
-    },
-    {
-      "itemId": "l2-nor",
-      "kc": "composition",
-      "difficultyTier": 2,
-      "targetExpression": "NOT (A OR B)",
-      "variables": ["A", "B"],
-      "truthTable": [1, 0, 0, 0]
-    },
-    {
-      "itemId": "l2-xor-canonical",
-      "kc": "XOR",
-      "difficultyTier": 3,
-      "targetExpression": "(A AND NOT B) OR (NOT A AND B)",
-      "variables": ["A", "B"],
-      "truthTable": [0, 1, 1, 0]
     },
     {
       "itemId": "l2-xor-alt-form",
@@ -99,6 +147,14 @@
       "targetExpression": "(A AND NOT B) OR (NOT A AND B) OR C",
       "variables": ["A", "B", "C"],
       "truthTable": [0, 1, 1, 1, 1, 1, 0, 1]
+    },
+    {
+      "itemId": "l2-comp3-aob-nac",
+      "kc": "composition",
+      "difficultyTier": 4,
+      "targetExpression": "(A AND B) OR (NOT A AND NOT C)",
+      "variables": ["A", "B", "C"],
+      "truthTable": [1, 0, 1, 0, 0, 0, 1, 1]
     }
   ]
 }

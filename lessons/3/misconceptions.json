@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "itemId": "l3-nand-basic",
+      "halfwayTruthTable": [0, 0, 0, 1],
+      "hintBody": "That's the AND table, not NAND. NAND stands for NOT-AND: it is the complement of AND. Wherever AND would output 1, NAND outputs 0, and vice versa. The only row where NAND is 0 is when both inputs are 1 — in all other rows, NAND is 1."
+    },
+    {
+      "itemId": "l3-not-and",
+      "halfwayTruthTable": [1, 0, 0, 0],
+      "hintBody": "That's the NOR table — NOT(A OR B) — not NOT(A AND B). You may have applied De Morgan's law in the wrong direction. NOT(A AND B) is only 0 when BOTH inputs are 1; it is 1 in the other three rows. Check the inner expression: it's AND, not OR."
+    }
+  ]
+}

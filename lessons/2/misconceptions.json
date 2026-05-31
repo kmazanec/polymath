@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "itemId": "l2-nor",
+      "halfwayTruthTable": [1, 1, 1, 0],
+      "hintBody": "That looks like a NAND table, not NOR. You may have applied AND where the expression uses OR: NOT(A OR B) is false only when A OR B is true, i.e. when at least one input is true. Check your inner sub-expression: OR is true when A=0,B=1 or A=1,B=0 — so the NOT of that gives 0 in those rows, leaving only the (A=0,B=0) row as 1."
+    },
+    {
+      "itemId": "l2-bridge-and-notb",
+      "halfwayTruthTable": [0, 1, 0, 0],
+      "hintBody": "That's a precedence confusion: you may have evaluated NOT before AND, giving NOT(A AND B) = NOT(0) = 1 in the (A=0,B=1) row instead of A AND (NOT B) = 0 AND 0 = 0. NOT binds to its immediate right operand — here NOT B means 'flip B only', not 'flip the whole AND'. The row (A=0, B=1): NOT B = 0, then A AND 0 = 0."
+    }
+  ]
+}

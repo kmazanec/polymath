@@ -88,7 +88,10 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
     expect(d.transferPassed).toBe(true);
   });
 
-  it('a clean 3-correct AND streak (in-band response times) drives the rule gate to passed', () => {
+  it('AND-only practice BLOCKS the gate — OR and NOT sit unpracticed at prior (all-KC fix)', () => {
+    // A clean 3-correct AND streak drives AND's BKT past threshold, but the gate
+    // now requires EVERY lesson KC (AND, OR, NOT) to clear it — not just the best
+    // one (the old Math.max bug let practicing only AND mint mastery of OR + NOT).
     const events: LoggedEvent[] = [
       { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and, responseTimeMs: 5000 },
       { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and, responseTimeMs: 6000 },
@@ -96,6 +99,37 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
     ];
     const ls = toLearnerState(deriveState(events, content, masteryConfig), masteryConfig);
     expect(ls.bktByKc['AND']).toBeGreaterThanOrEqual(masteryConfig.bktMasteryThreshold);
+    // OR and NOT are pre-seeded at prior and never practiced → below threshold.
+    expect(ls.bktByKc['OR']).toBeLessThan(masteryConfig.bktMasteryThreshold);
+    expect(ls.bktByKc['NOT']).toBeLessThan(masteryConfig.bktMasteryThreshold);
+    const gate = evaluateRuleGate(ls, masteryConfig);
+    expect(gate.passed).toBe(false);
+    expect(gate.blockers).toContain('bkt_below_threshold');
+  });
+
+  it('clean 3-correct on ALL THREE KCs (in-band times) drives the rule gate to passed', () => {
+    // The positive case: every KC must be practiced to clear the all-KC BKT check.
+    // Two corrects per KC clears 0.95 from prior; the streak/timing come from the
+    // hardest-tier items. L1 is single-tier, so any correct submit counts.
+    const mk = (itemId: string, submission: string, ms: number): LoggedEvent => ({
+      kind: 'submit',
+      itemId,
+      submission,
+      responseTimeMs: ms,
+    });
+    const events: LoggedEvent[] = [
+      mk('l1-or', RIGHT.or, 5000),
+      mk('l1-or', RIGHT.or, 5200),
+      mk('l1-not', RIGHT.not, 4800),
+      mk('l1-not', RIGHT.not, 5100),
+      mk('l1-and', RIGHT.and, 5000),
+      mk('l1-and', RIGHT.and, 6000),
+      mk('l1-and', RIGHT.and, 4000),
+    ];
+    const ls = toLearnerState(deriveState(events, content, masteryConfig), masteryConfig);
+    expect(ls.bktByKc['AND']).toBeGreaterThanOrEqual(masteryConfig.bktMasteryThreshold);
+    expect(ls.bktByKc['OR']).toBeGreaterThanOrEqual(masteryConfig.bktMasteryThreshold);
+    expect(ls.bktByKc['NOT']).toBeGreaterThanOrEqual(masteryConfig.bktMasteryThreshold);
     expect(evaluateRuleGate(ls, masteryConfig).passed).toBe(true);
   });
 
