@@ -41,4 +41,50 @@ None — builds on the shipped client and the frozen contracts. (The append-vs-r
 ## Manual setup required
 None for the keyless flow. (A live drive uses the local Docker stack per CLAUDE.md commands.)
 
+## Build plan (kmaz-plan-iteration, I7 — 3-draft panel; verified against code 2026-05-31)
+
+**Tier: Opus** (the transcript reducer + append-vs-re-anchor policy is the load-bearing structural change F-30/F-31 inherit; the contract freeze is a convergence point). Ships **first** in I7, alone.
+
+**Core decisions (resolved):**
+- The active item stays a **separate pinned `mounted` slot** (today's `mounted` state); a read-only `completedItem` turn is appended when it's superseded. ADR-015 Option A (active item = newest transcript turn) was explicitly rejected — keep the anchored region distinct.
+- `Turn` is a **web-local discriminated union** (never crosses the wire): `intro | workedExample | hint | answer | recall | verdict | completedItem | spokenTurn`. The `spokenTurn` variant exists NOW (F-30 produces it; F-27 only defines the slot). `renderTranscript(turn)` delegates spec-bearing turns back to the existing `renderComponent`; `never` default.
+- **`intro_advance`** = NEW append-only optional `ClientEvent` kind (no `Action` variant). "Got it — continue" sends it; the heuristic/LLM provider's `openingMove` derives the next intro stage from `recentHistory` mount count. Both providers get the branch (menu-lockstep).
+- **`prompt`** = NEW append-only optional `prompt: z.string().max(2000).optional()` on `TruthTablePractice` / `CircuitBuilder` / `PseudocodeChallenge` / `TransferProbe`. Optional on the wire; **required at the surface boundary** — a prompt-less item renders a visible `role="alert"` error placeholder (fail visible, NOT a thrown render, NOT bare). F-27 backfills authored `lessons/*/content.json` items + the heuristic compile path so the keyless demo never trips the error (pending Keith sign-off — see below).
+- Verdict: F-27 **wraps** the existing `<5ms` in-component verdict into an appended `verdict` turn (`aria-live`); it does NOT lift correctness server-side.
+- Layout: two-column grid (anchored workspace | transcript) with a **reserved left-rail slot** + lifted `phase`/`LESSON_PHASES` for F-31; `appendTurn(turn)` seam for F-30.
+
+**Frozen contract signatures** (see BUILD-PLAN-i7 §Frozen contracts):
+```ts
+// packages/contract/src/component.ts — added to EACH of TruthTablePractice/CircuitBuilder/PseudocodeChallenge/TransferProbe:
+prompt: z.string().max(2000).optional(),
+// packages/contract/src/wire.ts — appended to ClientEvent union:
+z.object({ kind: z.literal('intro_advance'), sessionId: SessionId }),
+```
+
+**Ordered checklist:**
+- [ ] 1. **[CONTRACT — convergence]** Add `prompt` optional to the 4 item kinds (`component.ts`) + `intro_advance` arm to `ClientEvent` (`wire.ts`). `pnpm --filter @polymath/contract test` + `pnpm typecheck`. Freeze before web work.
+- [ ] 2. Failing test `App.transcript.test.tsx` (mock-AgentSocket / `pushAction` pattern from `App.recall.test.tsx`): a frame sequence yields an append-only transcript; prior item → `completedItem`; hint/answer/recall append, never overwrite `mounted`.
+- [ ] 3. Implement the `Turn` union + `appendTurn` helper + transcript reducer (in `App.tsx` or a `surfaceState.ts` module); keep `mounted` as the anchored slot. Green #2.
+- [ ] 4. Implement `renderTranscript(turn)` (delegate spec turns to `renderComponent`; inline `verdict`/`spokenTurn`; `never` default); render as a semantic `<section aria-label="Lesson log">` ordered region.
+- [ ] 5. Translate the append-vs-re-anchor policy into `applyAction(r)`, replacing the inline ladder in `onMessage`. Unit-test the WorkedExample-re-anchors / hint-appends boundary.
+- [ ] 6. Failing test: on `onSubmit`, a `verdict` turn appends from `payload.correct` **before** the next mount, with `aria-live`. Implement (append, then send the wire frame unchanged).
+- [ ] 7. Add "Got it — continue" to the intro/worked-example cards (new `onAdvanceIntro` RenderOption). Test: clicking sends `intro_advance` (not `session_start`).
+- [ ] 8. Wire `onAdvanceIntro` → `socket.send({ kind: 'intro_advance', sessionId })`. Unit-test the frame shape.
+- [ ] 9. **[agent — lockstep]** Add `intro_advance` branch to `HeuristicMoveProvider.proposeMove` → `openingMove(input)`; matching branch in `OpenAiMoveProvider`. Agent unit test: `intro_advance` walks IntroExplanation → WorkedExample → first item. Run `pnpm --filter @polymath/agent test` **isolated** (shared-DB flake).
+- [ ] 10. AC#7 enforcement in `registry.tsx`: prompt-less item → `role="alert"` placeholder (not throw, not bare). Unit-test both branches.
+- [ ] 11. Render `spec.prompt` inside each rep component (`aria-describedby` the workspace). Unit-test.
+- [ ] 12. **Prompt backfill (keyless path)** *(pending sign-off)*: add `prompt` to `lessons/1..4/content.json` items + the heuristic item→spec compile path. Verify `loadLesson` still validates.
+- [ ] 13. Orientation banner (AC#5): restyle `.phase-chip` into a learner-facing banner reading `phase`; "no hints" copy during `transferring`. Unit-test per phase.
+- [ ] 14. AC#6 regressions: port `App.recall.test.tsx` / `App.transition.test.tsx` so recall/L1→L2 land as transcript turns, workspace survives.
+- [ ] 15. Layout: two-column grid (workspace | transcript), workspace does not scroll away (AC#1); reserved left-rail slot + `appendTurn`/`phase` seams for F-30/F-31.
+- [ ] 16. **[a11y jsdom]** Extend `a11y.axe.test.tsx` for the transcript region + verdict + continue control.
+- [ ] 17. **[a11y real browser]** Extend `e2e/axe.spec.ts` — shell with banner/transcript region: 0 serious/critical.
+- [ ] 18. **[LIVE DRIVE — the gate]** `docker compose up --build` (:8080), drive intro→continue→worked→continue→first-practice(with prompt)→submit→verdict→next via chrome-devtools MCP (or Playwright pointed at :8080, NOT vite :5173 which has no agent). Screenshot each; assert workspace re-anchors only on new item, transcript accumulates, verdict before next mount, no bare item.
+- [ ] 19. Isolated suites green (`web`, `contract`, `agent` alone) + `pnpm typecheck` + `pnpm build`.
+- [ ] 20. Fill Implementation notes with resolved decisions for F-29/F-30/F-31 to inherit.
+
+**Open questions for Keith:** (1) prompt-backfill into the keyless path in F-27 scope? (recommended: yes — else the keyless demo shows error placeholders). (2) `intro_advance` new kind vs reuse? (recommended: new arm). (3) live-drive via real Docker stack on :8080 acceptable (Playwright can't intercept the agent WS)? (4) keep the in-component inline verdict alongside the transcript verdict, or single-source it?
+
+**Invariants:** append-only wire (no payload reshaped, no new `ComponentSpec` kind, `COMPONENT_KINDS` unchanged); statechart spine untouched (transcript is a view); high-freq interaction stays client-only (verdict from the existing `<5ms` compute; correctness NOT moved server-side); a11y aria-live on verdict, real focusable continue control; menu-lockstep for the `intro_advance` provider branch; agent suite run isolated.
+
 ## Implementation notes (filled in by the building agent)

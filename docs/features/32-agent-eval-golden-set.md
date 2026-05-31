@@ -40,4 +40,44 @@ The brief's false-positive-mastery / anti-gaming defense (the agent must not be 
 ## Manual setup required
 `OPENAI_API_KEY` (+ `LANGCHAIN_API_KEY` for tracing) on protected `main` for the live banks; none for the offline golden set. No keys in MR pipelines (CLAUDE.md). Hand-labeling the scenario banks is human work (the labels are the ground truth).
 
+## Build plan (kmaz-plan-iteration, I7 — one opus pass; verified against code 2026-05-31)
+
+**Tier: Sonnet** (pattern-replication of two existing fully-worked runners + JSON fixtures + a near-byte-for-byte CI clone; escalate the single `agent_live_eval` YAML decision if it interacts badly with the shared workflow rules). **Lands FIRST/independently** — does not consume unshipped F-29/F-30 behavior; they append their fixtures as they land. F-32 is the gate they're "done" against.
+
+**The buried finding (the real deliverable):** `eval.test.ts`'s `liveIt('OpenAI provider agrees ≥95%')` runs ONLY inside `agent_test`, which gets NO `OPENAI_API_KEY` — **even on main push**. So the inner-agent live ≥95% move gate **has never run live.** F-32's `agent_live_eval` job is the first place it (and generation/spoken live banks) actually fires.
+
+**Core decisions (resolved):**
+- **Golden set = a NEW named bank + runner, existing banks re-run IN PLACE** (not re-homed — re-homing churns files F-29/F-30 are concurrently editing and re-triggers the explain-back path resolution). New `evals/golden/{move,generation,prompt,spoken}.json` + `apps/agent/src/agent/eval/golden.test.ts` (offline 100% + meta-check + live blocks). `scenarios.json`/`eval.test.ts` and `explainback/eval.test.ts`/`fixtures.json` fold in unchanged. "Golden set" = the policy union of all offline 100% assertions, anchored by `golden.test.ts`.
+- **Unified fixture format** = the superset of the two existing interfaces; every new file is `{ note, fixtures: Fixture[] }` with an `id`, a `bank` discriminator, and an `expectFail` meta flag.
+- **Offline/live split:** offline golden rides the EXISTING keyless `agent_test` (gates MRs, picked up free by `pnpm --filter @polymath/agent test`). Live banks run in a NEW `agent_live_eval` job (protected-main auto + `when:never` on MR + manual), mirroring `explain_back_live_eval`. `deploy.needs:` adds it.
+- **Four live banks + judges:** move ≥95% → live `OpenAIMoveProvider` (exists). explain-back ≥90% → `OpenAIExplainBackJudge` (exists, unchanged, its own runner). generation-appropriateness ≥95% → the **live keyed generator itself** (validity is the offline oracle; appropriateness = the provider's actual output quality). spoken-groundedness ≥90% → a NEW `OpenAISpokenGroundednessJudge` (sibling of the explain-back judge).
+- **Four emphases golden-vs-live:** adversarial/anti-gaming = **GOLDEN/offline** (the gate fails closed regardless of provider — the heuristic must NOT advance/master; deterministic). pedagogical-soundness = golden where deterministic, live where "best legal move." generation/spoken quality = LIVE. Validity/schema/topic-classification of all = GOLDEN.
+- **Meta-check (first-class):** `expectFail:true` negative-control fixtures the runner asserts the oracle REJECTS + non-empty/unique-id bank assertions. Guards vacuous green.
+- **Single correctness source:** generation-validity reuses the SAME `@polymath/booleans` var-capped path `layer2.ts` uses (import, don't fork). `evals/` is NOT in the Docker image (no COPY change).
+
+**Frozen artifacts** (see BUILD-PLAN-i7 §Frozen contracts): the unified Fixture JSON shape; `evals/golden/{move,generation,prompt,spoken}.json` + `README.md`; `apps/agent/src/agent/eval/golden.test.ts`; `judges/spokenGroundedness.ts`; the `agent_live_eval` `.gitlab-ci.yml` job (real YAML).
+
+**Ordered checklist (test-first; meta-check first-class; CI edits flagged):**
+- [ ] 1. `evals/golden/README.md` — frozen fixture format + "add a golden case"/"add a live scenario" recipes + the `expectFail` meta rule (AC#6). Format-first so F-29/F-30 target it.
+- [ ] 2. Write the **meta-check** first: an `expectFail:true` fixture per new bank + the runner assertion the oracle rejects it (red before oracle wiring).
+- [ ] 3. Seed `move.json`: reference the heuristic oracle (do NOT move `scenarios.json`); adversarial/anti-gaming + pedagogical golden cases; non-empty.
+- [ ] 4. Seed `generation.json`: the five reject reasons + `valid` cases (`expectValidity`). F-29 expands.
+- [ ] 5. Seed `prompt.json`: prompt-present + (meta) prompt-less `expectFail` ComponentSpec fixtures.
+- [ ] 6. Seed `spoken.json`: topic-classification golden + grounded/ungrounded live fixtures. F-30 expands.
+- [ ] 7. Implement `golden.test.ts` offline oracles: heuristic-move (reuse `inputFor`/`matches`), generation-validity via the **same var-capped `@polymath/booleans` recompute** `layer2.ts` uses, prompt-schema, topic-classification. Assert 100%.
+- [ ] 8. Wire the meta-check + non-empty/unique-id assertions into `golden.test.ts`; confirm a deliberately-broken fixture reds the suite.
+- [ ] 9. Implement `judges/spokenGroundedness.ts` (`OpenAISpokenGroundednessJudge`, sibling of the explain-back judge).
+- [ ] 10. Add the 3 `liveIt` blocks: move ≥0.95, generation-appropriateness ≥0.95, spoken-groundedness ≥0.90; all `OPENAI_API_KEY ? it : it.skip`.
+- [ ] 11. Confirm `golden.test.ts` passes 100% offline (live blocks skipped) in the keyless `agent_test` — the MR gate.
+- [ ] 12. **[CI EDIT]** Add `agent_live_eval` job (protected-main auto + `when:never` on MR + manual) running `golden.test.ts` + `eval.test.ts` WITH the key.
+- [ ] 13. **[CI EDIT]** Add `- agent_live_eval` to `deploy.needs:` (only on main push; never blocks MRs).
+- [ ] 14. Verify secret isolation: grep `.gitlab-ci.yml` — `OPENAI_API_KEY` in NO `merge_request_event`-reachable job; `verify`/`agent_test` keyless.
+- [ ] 15. Update `eval.test.ts` header → ADR-017 + note its live gate now fires in `agent_live_eval` (it never did before). No behavior change.
+- [ ] 16. Isolated `pnpm --filter @polymath/agent test` green; confirm no `apps/agent/Dockerfile` COPY change (`evals/` is CI/test-only).
+- [ ] 17. Update Implementation notes: golden set = `golden.test.ts` + `evals/golden/*` ∪ existing banks re-run; the `agent_live_eval` job; the dead-live-gate finding.
+
+**Open questions for Keith:** (1) confirm the inner-agent live ≥95% gate was NEVER running (and whether to ship `agent_live_eval` `allow_failure` initially in case the provider has drifted and would red main on first run). (2) re-run existing banks in place (recommended) vs physically re-home under `evals/golden/`? (3) generation-appropriateness judge = the live keyed generator itself (recommended) vs a separate LLM judge? (4) does F-32 or F-30 own `OpenAISpokenGroundednessJudge`? (5) `deploy.needs: agent_live_eval` (blocks deploy on red live eval) vs advisory? (6) non-empty-bank floor per bank at the F-32 barrier (explain-back uses ≥30)?
+
+**Invariants:** no provider secret in any MR-reachable job (`agent_live_eval` `when:never` on MR + `liveIt` self-skips — belt-and-suspenders); offline golden 100%-gates MRs in the keyless `agent_test`; live banks protected-main only; single correctness source (var-capped `@polymath/booleans`, over-cap = `reject_over_var_cap` never enumerated); meta-check guards vacuous green; `evals/` NOT in the Docker image; fold in don't reshape (existing banks + runners unchanged).
+
 ## Implementation notes (filled in by the building agent)

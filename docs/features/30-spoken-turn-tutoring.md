@@ -43,4 +43,43 @@ ADR-004's "conversational Q&A with the inner agent" (voice) — anticipated but 
 ## Manual setup required
 LiveKit env (`LIVEKIT_API_KEY`/`SECRET`/`URL`) + `OPENAI_API_KEY` for the live voice + LLM path; on-device tablet mic test (a human must verify real capture — the realtime round-trip is mocked in tests per ADR-006). No keys in MR pipelines.
 
+## Build plan (kmaz-plan-iteration, I7 — one opus pass; verified against code 2026-05-31)
+
+**Tier: Sonnet** + standard Opus review pass (the integrity boundary is fully specified by the explain-back precedent — checklist, not open design). Builds against the **frozen F-27 surface** (soft dep) and the shipped voice path (F-10/F-11).
+
+**Core decisions (resolved):**
+- **Seam:** new `LearnerUtteranceCapture` + `LearnerUtteranceRegistry` (in `apps/agent/src/voice/`) — direct copies of `ExplainBackCapture`/`ExplainBackCaptureRegistry`, keyed by **sessionId only** (no targetItemId), prosody stripped. Injected into `createServer` via a `latestLearnerUtteranceFor(sessionId)` getter, mirroring `explainBackTranscriptFor`.
+- **FILL THE SEAM (the CLAUDE.md half-bug):** the `VoiceBridge` gains an injected `onLearnerUtterance?(text)` callback fired from `handleTranscript` on each `role==='learner'` chunk; `createServer` wires it to `utteranceRegistry.setLatest(sessionId, text)`. The production wiring is half the feature and gets its own first-class test — a fail-closed input nothing fills is a gate nobody can pass.
+- **Trigger:** NEW append-only `ClientEvent` kind `spoken_turn { sessionId }` — **NO transcript/question field** (reusing `learner_question` is rejected: its required `question` string IS the forbidden client-trusted path). The server reads `latestLearnerUtteranceFor(boundSessionId)`; empty → honest no-op (`ack`), never answer a client string.
+- **Routing:** the trigger builds a synthetic in-process `learner_question` event and runs it through the **same** generic turn (`proposeWithTimeout` → `answer_question`), so off-topic folding + topic classification + the text reply come for free. **NO new ServerMessage** — `answer_question` already carries `question`+`answer` and `actionAdapter.ts` already surfaces both. Add append-only optional `spoken: true` on the `answer_question` Action so F-27 renders the learner side as a spoken bubble (fail-safe default = typed).
+- **WS binding:** thread `boundSessionId` into `FrameOptions` (it currently lives only in the `ws.on('message')` closure); the trigger keys off the bound id, not the frame's `sessionId` (the MR !8 deletion-scheduling rule).
+- **Not-configured degrade:** no LiveKit env → registry stays empty → `spoken_turn` fails closed to "voice unavailable"; no crash; typed Q&A intact (AC#6).
+- Explain-back seam UNCHANGED (sibling). voice_turn: NOT double-logged (the spoken Q&A persists as an `answer_question` row; `voice_turn` stays the bridge's concern).
+
+**Frozen signatures** (see BUILD-PLAN-i7 §Frozen contracts): `LearnerUtteranceCapture`/`LearnerUtteranceRegistry`; `ServerDeps.learnerUtteranceRegistry?` + `ServerDeps.latestLearnerUtteranceFor?`; `VoiceBridgeOpts.onLearnerUtterance?`; `FrameOptions.boundSessionId?`; `ClientEvent` `spoken_turn { sessionId }`; `answer_question` optional `spoken`.
+
+**Ordered checklist (integrity/adversarial tests first-class):**
+- [ ] 1. (test) `LearnerUtteranceCapture`: learner chunks → `transcript()` latest; tutor chunks ignored; empty before any chunk.
+- [ ] 2. Implement `learnerUtteranceCapture.ts` (copy/strip `explainBackCapture.ts`).
+- [ ] 3. (test) `LearnerUtteranceRegistry`: `setLatest`/`latestFor` per session; sessionId-only key; unknown → undefined; empty string → undefined; no cross-session leak.
+- [ ] 4. Implement `learnerUtteranceRegistry.ts` (copy/strip `explainBackRegistry.ts`).
+- [ ] 5. **[CONTRACT — append-only, coordinate w/ F-27 wire add]** Add `spoken_turn` to `ClientEvent` + optional `spoken` to `answer_question`. Tests: `spoken_turn` parses with `{sessionId}` only and REJECTS any `transcript`/`question`; `answer_question` parses with/without `spoken`.
+- [ ] 6. (test) VoiceBridge feed: a learner chunk fires `onLearnerUtterance(text)`; tutor chunks don't; absent callback no-ops. (The fill-the-seam guard.)
+- [ ] 7. Implement `onLearnerUtterance` in `VoiceBridge.handleTranscript` (learner branch).
+- [ ] 8. Thread `boundSessionId` into `FrameOptions`, set from `ws.on('message')`; document the WS-binding rationale.
+- [ ] 9. **(integrity, adversarial)** `spoken_turn` with `sessionId` ≠ bound id does NOT answer the bound session's utterance; junk fields Zod-stripped, no client text reaches the answer.
+- [ ] 10. **(integrity, adversarial)** No server capture → fails closed (`ack`/no-op), never an `answer_question` with client text; no row persisted.
+- [ ] 11. Implement `handleSpokenTurnTurn`: read `latestLearnerUtteranceFor(boundSessionId)`; empty → `ack`+return; else synthetic `learner_question` through the generic turn, mark the action `spoken:true`. Dispatch before the generic block.
+- [ ] 12. **(integration, agent suite, serialized)** A captured turn + `spoken_turn` routes through `learner_question → answer_question`; answered `question` = server-captured text; reply is TEXT; `spoken:true` crosses the wire.
+- [ ] 13. **(integration)** An off-topic captured spoken question → `answer_question{off_topic}` persisted `app IS NULL`, increments `countOffTopicAnswers` identically to typed (AC#5).
+- [ ] 14. End-to-end production-wiring test in `createServer`: `MockRealtimeSession` → bridge feed → `spoken_turn` → agent answers the captured text (the legitimate-path-fills-the-seam proof).
+- [ ] 15. **(AC#6)** No LiveKit env → `spoken_turn` fails closed, no crash, typed Q&A still answers.
+- [ ] 16. **(regression)** Explain-back integrity suite passes unchanged (registry/preconditions/judge untouched).
+- [ ] 17. **(web, against frozen F-27)** `actionAdapter`/App test — `answer_question{spoken:true}` appends a `spokenTurn{speaker:'learner'}` + a tutor turn, interleaved; `spoken` absent → typed bubble.
+- [ ] 18. **(F-32 contribution)** Add spoken-turn golden cases (topic classification, 100% offline) + live groundedness ≥90% bank per ADR-017. F-32 owns the harness.
+
+**Open questions for Keith:** (1) trigger kind name `spoken_turn` — confirm (no collision with F-27's `intro_advance`). (2) reach the web transcript via optional `spoken` flag on `answer_question` (recommended) vs F-27 always rendering an `answer_question`'s `question` as a learner turn? (3) persist spoken Q&A as a `voice_turn` too, or is the `answer_question` row sufficient? (recommended: sufficient). (4) empty-capture no-op = quiet `ack` (recommended) vs visible "voice unavailable"? (5) does F-32 or F-30 own the `OpenAISpokenGroundednessJudge`?
+
+**Invariants:** server-captured only, never the client frame; fail closed to empty; the legitimate path actually fills the seam; explain-back untouched (sibling); off-topic folds into the uncapped `countOffTopicAnswers`; `events.app IS NULL`; WS bound-session; append-only wire; TTS-out stays explain-back-only (reply is TEXT); `RealtimeSession` interface unchanged (add a getter).
+
 ## Implementation notes (filled in by the building agent)
