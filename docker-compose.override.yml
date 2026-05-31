@@ -1,0 +1,39 @@
+# Local DEV override — auto-merged on top of docker-compose.yml by `docker compose`.
+#
+# Purpose: make the FULL stack on :8080 hot-reload. The base `web` service serves a
+# static Vite bundle (no HMR); this override swaps it for the Vite dev server (the
+# Dockerfile `dev` target) with the source bind-mounted, so editing apps/web live-
+# updates the browser while /api and the /agent WebSocket still go to the real agent
+# through Caddy. One origin (http://localhost:8080), full product, HMR.
+#
+# This file is LOCAL-ONLY: production deploys use `ops/compose.prod.yaml` explicitly
+# (`docker compose -f ops/compose.prod.yaml …`), which never loads this override, so
+# the bind-mount + dev server never reach the droplet.
+#
+# Usage:  docker compose up -d            # backend + Caddy + Vite-dev web, all on :8080
+#         (edit apps/web/src/** → browser hot-reloads)
+#
+# To run the PRODUCTION-like static bundle locally instead (e.g. to verify the
+# `vite build` artifact / DCE), bypass this override:
+#         docker compose -f docker-compose.yml up -d --build web
+
+services:
+  web:
+    build:
+      # Build the Vite dev-server stage instead of the nginx static-bundle stage.
+      target: dev
+    environment:
+      # Tell Vite's HMR client the PUBLIC port (Caddy's published host port) so its
+      # hot-reload websocket connects back through Caddy, not Vite's internal :80.
+      HMR_CLIENT_PORT: ${CADDY_HOST_PORT:-8080}
+      # The dev server proxies /api and /agent to the agent only when a request
+      # reaches Vite directly; behind Caddy these are routed to the agent first.
+      AGENT_ORIGIN: http://agent:8080
+    volumes:
+      # Live source for HMR. Named volumes keep node_modules / dist from the image
+      # (don't let the host shadow the container's installed deps).
+      - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/public:/app/apps/web/public
+      - ./apps/web/index.html:/app/apps/web/index.html
+      - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts
+      - ./packages:/app/packages

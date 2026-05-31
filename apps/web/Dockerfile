@@ -32,3 +32,18 @@ COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 # SPA fallback so client-side routes resolve to index.html.
 RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  location / {\n    try_files $uri /index.html;\n  }\n}\n' > /etc/nginx/conf.d/default.conf
 EXPOSE 80
+
+# --------------------------------------------------------------------------
+# Dev target: the Vite dev server (HMR) instead of the static nginx bundle.
+# Selected by docker-compose.override.yml so the full Caddy stack on :8080 hot-
+# reloads. NOT used in production (compose.prod.yaml builds the default `runtime`
+# stage). Source is bind-mounted by the override; this image only needs deps + the
+# vite binary. It reuses the `build` stage (deps already installed) and runs vite
+# on :80 so Caddy's `reverse_proxy web:80` reaches it unchanged. HMR is configured
+# in vite.config.ts (clientPort 8080) so the browser's HMR websocket goes back
+# through Caddy on the published host port.
+# --------------------------------------------------------------------------
+FROM build AS dev
+WORKDIR /app/apps/web
+EXPOSE 80
+CMD ["pnpm", "exec", "vite", "--host", "0.0.0.0", "--port", "80"]
