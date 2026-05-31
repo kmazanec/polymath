@@ -1,0 +1,105 @@
+{
+  "note": "Golden spoken-turn fixtures (F-32 / ADR-017). Each fixture covers topic-classification (offline, deterministic) and spoken-groundedness (live, key-gated). Topic classification uses the same isBooleanTopic heuristic the HeuristicMoveProvider uses offline. Groundedness is judged live by OpenAISpokenGroundednessJudge at ≥90% agreement on protected main only. F-30 appends additional fixtures as it lands. The `expectFail:true` fixture is the meta-check.",
+  "fixtures": [
+    {
+      "id": "meta-check-wrong-topic-should-fail",
+      "bank": "spoken",
+      "note": "META-CHECK: this fixture expects 'off_topic' for a clearly on-topic Boolean logic question. The runner asserts the oracle REJECTS this classification — guards against a vacuously-green suite.",
+      "expectFail": true,
+      "question": "what does the AND gate do?",
+      "answer": "The AND gate outputs 1 only when both inputs are 1.",
+      "expectTopic": "off_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "on-topic-and-gate-question",
+      "bank": "spoken",
+      "note": "On-topic: a Boolean logic question about the AND gate. Must classify as on_topic.",
+      "question": "what does the AND gate do?",
+      "answer": "The AND gate outputs 1 only when both inputs A and B are 1. All other input combinations give 0.",
+      "expectTopic": "on_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "on-topic-truth-table-question",
+      "bank": "spoken",
+      "note": "On-topic: a question about truth tables in Boolean logic. Must classify as on_topic.",
+      "question": "how do I read a truth table?",
+      "answer": "A truth table lists every possible combination of input values and shows the output for each row. For 2 inputs like A and B, there are 4 rows: 00, 01, 10, 11.",
+      "expectTopic": "on_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "on-topic-not-gate-question",
+      "bank": "spoken",
+      "note": "On-topic: a question about the NOT gate (inverter). Must classify as on_topic.",
+      "question": "why does NOT flip the output?",
+      "answer": "The NOT gate is an inverter: it takes one input and produces the opposite. If the input is 1, the output is 0, and vice versa.",
+      "expectTopic": "on_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "on-topic-xor-question",
+      "bank": "spoken",
+      "note": "On-topic: a question about XOR. Must classify as on_topic.",
+      "question": "is XOR a real gate or do I build it?",
+      "answer": "XOR is a real gate that outputs 1 when the inputs differ. You can also build it from AND, OR, and NOT gates.",
+      "expectTopic": "on_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "off-topic-video-games",
+      "bank": "spoken",
+      "note": "Off-topic avoidance: learner tries to steer the tutor off-task. Must classify as off_topic.",
+      "question": "can we talk about video games instead?",
+      "answer": "I can help with Boolean logic and this lesson. For other topics, Nerdy has tutors who can help.",
+      "expectTopic": "off_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "off-topic-history-essay",
+      "bank": "spoken",
+      "note": "Off-topic avoidance: learner tries to get the tutor to help with an unrelated subject. Must classify as off_topic.",
+      "question": "can you help me write my history essay?",
+      "answer": "I can help with Boolean logic and this lesson. For history essays, Nerdy has other tutors who can help.",
+      "expectTopic": "off_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "off-topic-weather",
+      "bank": "spoken",
+      "note": "Off-topic: completely unrelated to Boolean logic. Must classify as off_topic.",
+      "question": "what is the weather like today?",
+      "answer": "I can help with Boolean logic and this lesson. For weather questions, you'll need to check elsewhere.",
+      "expectTopic": "off_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "live-grounded-and-gate-answer",
+      "bank": "spoken",
+      "note": "LIVE: a grounded, factually correct answer about the AND gate. The groundedness judge should PASS this. On-topic classification also checked offline.",
+      "question": "what does AND do?",
+      "answer": "AND outputs true only when both inputs are true. So for A AND B: if A=1 and B=1 the output is 1, otherwise it is 0.",
+      "expectTopic": "on_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "live-grounded-or-gate-answer",
+      "bank": "spoken",
+      "note": "LIVE: a grounded answer about the OR gate. Groundedness judge should PASS.",
+      "question": "when is OR true?",
+      "answer": "OR is true whenever at least one input is true. A OR B is false only when both A and B are false.",
+      "expectTopic": "on_topic",
+      "expectGrounded": true
+    },
+    {
+      "id": "live-ungrounded-wrong-reasoning",
+      "bank": "spoken",
+      "note": "LIVE: a spoken answer with wrong Boolean reasoning (AND described as OR). The groundedness judge should FAIL this — wrong content under fluent delivery is not acceptable.",
+      "question": "when is AND true?",
+      "answer": "AND is true whenever either A or B is true, so it is true in most cases.",
+      "expectTopic": "on_topic",
+      "expectGrounded": false
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "note": "Golden move fixtures (F-32 / ADR-017). Each fixture asserts the heuristic MoveProvider produces the expected tactical move. These are deterministic (no LLM) and run offline in every CI job. The adversarial fixtures verify the anti-gaming defenses (false-positive-mastery, hint-abuse, guess-streak, scaffold removal, off-topic avoidance). The `expectFail:true` fixture is the meta-check: the runner asserts this oracle REJECTS it (guards against a vacuously-green suite).",
+  "fixtures": [
+    {
+      "id": "meta-check-wrong-move-should-fail",
+      "bank": "move",
+      "note": "META-CHECK: this fixture intentionally expects the WRONG move ('no_action' on a fresh session_start). The runner asserts the oracle REJECTS this — guards against a vacuously-green suite.",
+      "expectFail": true,
+      "lessonId": 1,
+      "event": { "kind": "session_start", "lessonId": 1 },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "no_action"
+    },
+    {
+      "id": "adversarial-forged-correct-no-rulegate-no-probe",
+      "bank": "move",
+      "note": "Anti-gaming: a learner sends a 'correct' submit (e.g. forged client flag) but the rule-gate is NOT passed. Must NOT fire a transfer probe or declare mastery — must keep practicing. The agent reads currentSubmitCorrect (server-derived), which agrees with the forged client flag here, but the RULE GATE is the truth-maker.",
+      "lessonId": 1,
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B", "correct": true },
+      "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+    },
+    {
+      "id": "adversarial-guess-streak-wrong-drops-to-simpler",
+      "bank": "move",
+      "note": "Guess-streak defense: the learner has already missed this item once and submits another wrong answer. A repeated miss must DROP to a simpler item (never re-present the same one). A guesser cannot grind the same item to a lucky pass.",
+      "lessonId": 1,
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A OR B", "correct": false },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "priorMissesByItem": { "l1-and": 1 },
+      "expectMove": "simpler_item"
+    },
+    {
+      "id": "adversarial-hint-then-claim-ready-ladder-exhausted",
+      "bank": "move",
+      "note": "Hint-abuse defense: a learner has drained all three hint levels on this item and asks for a fourth. The agent must NOT hand another crutch — the ladder is exhausted (no_action). Scaffolds used do not count as progress.",
+      "lessonId": 1,
+      "event": { "kind": "request_hint", "itemId": "l1-and" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 3, "ruleGatePassed": false },
+      "hintsByItem": { "l1-and": 3 },
+      "expectMove": "no_action"
+    },
+    {
+      "id": "adversarial-no-hint-during-transfer-probe",
+      "bank": "move",
+      "note": "Scaffold-removal defense: during a transfer probe (scaffolds removed), the learner requests a hint. The agent must REFUSE — no crutch during the transfer measurement. A hint here would void the 'can they transfer without support?' signal.",
+      "lessonId": 1,
+      "event": { "kind": "request_hint", "itemId": "l1-and" },
+      "learnerState": { "consecutiveCorrect": 3, "hintsUsed": 0, "ruleGatePassed": true },
+      "inTransferProbe": true,
+      "expectMove": "no_action"
+    },
+    {
+      "id": "adversarial-off-topic-deflected",
+      "bank": "move",
+      "note": "Avoidance defense: learner steers the tutor off-task. Must classify as off_topic and deflect, not chase the tangent. The agent's move is answer_question (its topic field is off_topic).",
+      "lessonId": 1,
+      "event": { "kind": "learner_question", "question": "this is boring, can we just talk about video games instead?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "off_topic"
+    },
+    {
+      "id": "adversarial-forged-early-transfer-probe-blocked",
+      "bank": "move",
+      "note": "Early-probe defense: rule-gate NOT passed, but learner has 2 consecutive corrects. The agent must NOT fire a transfer probe (ruleGatePassed=false). Continues practicing.",
+      "lessonId": 1,
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B", "correct": true },
+      "learnerState": { "consecutiveCorrect": 2, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+    },
+    {
+      "id": "pedagogical-session-start-intro-first",
+      "bank": "move",
+      "note": "Pedagogical soundness: fresh session_start (no prior history) should start the intro sequence — not immediately drop the learner into a practice item. Intro/worked-example/item are all valid opening moves.",
+      "lessonId": 1,
+      "event": { "kind": "session_start", "lessonId": 1 },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "worked_example"]
+    },
+    {
+      "id": "pedagogical-rule-gate-passed-fires-probe",
+      "bank": "move",
+      "note": "Pedagogical soundness: when rule-gate passes and a held-out transfer candidate is available, the agent should fire a transfer probe — not keep giving practice items.",
+      "lessonId": 1,
+      "event": { "kind": "submit", "itemId": "l1-not", "submission": "NOT A" },
+      "learnerState": { "consecutiveCorrect": 3, "hintsUsed": 0, "ruleGatePassed": true },
+      "transferCandidates": [
+        { "itemId": "L1-01-and", "targetExpression": "A AND B", "targetRep": "circuit", "hiddenReps": ["truth_table"] }
+      ],
+      "expectMove": "propose_transfer_probe"
+    },
+    {
+      "id": "pedagogical-on-topic-question-answered",
+      "bank": "move",
+      "note": "Pedagogical soundness: an on-topic Boolean logic question is answered (not deflected). The agent classifies it on_topic.",
+      "lessonId": 1,
+      "event": { "kind": "learner_question", "question": "what does the AND gate do?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "on_topic"
+    },
+    {
+      "id": "pedagogical-wrong-submit-remediates",
+      "bank": "move",
+      "note": "Pedagogical soundness: a wrong submit (first miss) should remediate (rephrase or simpler item) — NOT advance the learner.",
+      "lessonId": 1,
+      "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B", "correct": false },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMoveOneOf": ["rephrase", "simpler_item", "worked_example"]
+    },
+    {
+      "id": "pedagogical-fresh-hint-gives-l1",
+      "bank": "move",
+      "note": "Pedagogical soundness: a fresh hint request (no prior hints on this item) gives an L1 hint — not immediately jumps to L3 or exhausts the ladder.",
+      "lessonId": 1,
+      "event": { "kind": "request_hint", "itemId": "l1-and" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "hintsByItem": { "l1-and": 0 },
+      "expectMove": "propose_hint"
+    }
+  ]
+}

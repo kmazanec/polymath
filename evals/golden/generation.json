@@ -1,0 +1,95 @@
+{
+  "note": "Golden generation fixtures (F-32 / ADR-017). Each fixture asserts the var-capped @polymath/booleans validator accepts or rejects a proposed generated item. The validity oracle reuses the SAME var-capped booleans path that layer2.ts uses (single correctness source). F-29 appends additional fixtures as it lands. The `expectFail:true` fixture is the meta-check: the runner asserts this oracle REJECTS it.",
+  "fixtures": [
+    {
+      "id": "meta-check-wrong-validity-should-fail",
+      "bank": "generation",
+      "note": "META-CHECK: this fixture intentionally expects 'valid' for an expression with a wrong claimed truth table. The runner asserts the oracle REJECTS this claim — guards against a vacuously-green suite.",
+      "expectFail": true,
+      "expression": "A AND B",
+      "claimedTruthTable": [1, 1, 1, 0],
+      "expectValidity": "valid"
+    },
+    {
+      "id": "valid-and-expression",
+      "bank": "generation",
+      "note": "A valid generated item: A AND B with the correct truth table [0,0,0,1] (MSB-first, 2 vars → 4 rows).",
+      "expression": "A AND B",
+      "claimedTruthTable": [0, 0, 0, 1],
+      "expectValidity": "valid"
+    },
+    {
+      "id": "valid-or-expression",
+      "bank": "generation",
+      "note": "A valid generated item: A OR B with the correct truth table [0,1,1,1].",
+      "expression": "A OR B",
+      "claimedTruthTable": [0, 1, 1, 1],
+      "expectValidity": "valid"
+    },
+    {
+      "id": "valid-not-expression",
+      "bank": "generation",
+      "note": "A valid single-variable NOT expression: NOT A with truth table [1,0] (MSB-first, 1 var).",
+      "expression": "NOT A",
+      "claimedTruthTable": [1, 0],
+      "expectValidity": "valid"
+    },
+    {
+      "id": "valid-three-variable-expression",
+      "bank": "generation",
+      "note": "A valid 3-variable expression (A AND B) OR C — within the var-cap. 3 vars = 8 rows.",
+      "expression": "(A AND B) OR C",
+      "claimedTruthTable": [0, 1, 0, 1, 0, 1, 1, 1],
+      "expectValidity": "valid"
+    },
+    {
+      "id": "reject-wrong-key-and-expression",
+      "bank": "generation",
+      "note": "Wrong-key rejection: A AND B with a claimed table [1,1,1,0] (the OR table, not AND). The validator recomputes and catches the mismatch.",
+      "expression": "A AND B",
+      "claimedTruthTable": [1, 1, 1, 0],
+      "expectValidity": "reject_wrong_key"
+    },
+    {
+      "id": "reject-wrong-key-or-expression",
+      "bank": "generation",
+      "note": "Wrong-key rejection: A OR B with claimed table [0,0,0,1] (the AND table). Mismatch caught.",
+      "expression": "A OR B",
+      "claimedTruthTable": [0, 0, 0, 1],
+      "expectValidity": "reject_wrong_key"
+    },
+    {
+      "id": "reject-unparseable-expression",
+      "bank": "generation",
+      "note": "Unparseable expression rejection: a syntactically invalid expression that the boolean parser cannot parse.",
+      "expression": "A AND AND B",
+      "claimedTruthTable": [0, 0, 0, 1],
+      "expectValidity": "reject_unparseable"
+    },
+    {
+      "id": "reject-unparseable-empty-expression",
+      "bank": "generation",
+      "note": "Unparseable expression rejection: an empty string is not a valid boolean expression.",
+      "expression": "",
+      "claimedTruthTable": [],
+      "expectValidity": "reject_unparseable"
+    },
+    {
+      "id": "reject-over-var-cap-11-variables",
+      "bank": "generation",
+      "note": "Over-var-cap rejection: 11 variables exceeds the MAX_DISTINCT_VARS=10 cap. The validator must REJECT without enumerating (DoS defense).",
+      "expression": "A AND B AND C AND D AND E AND F AND G AND H AND I AND J AND K",
+      "claimedTruthTable": [0],
+      "expectValidity": "reject_over_var_cap"
+    },
+    {
+      "id": "valid-at-var-cap-10-variables",
+      "bank": "generation",
+      "note": "Boundary: exactly 10 variables is AT the cap and should be accepted (not over-cap). 10 vars = 1024 rows — the table here is wrong on purpose for the boundary test, so we validate parse+var-count only; expectValidity=valid is for the cap check, not the key.",
+      "note2": "Actually 10 vars is valid at-cap but the table would need 1024 entries — instead we test at-cap acceptance with a simpler expression that just tests the var count boundary. Using 10 distinct vars with an AND chain.",
+      "expression": "A AND B AND C AND D AND E AND F AND G AND H AND I AND J",
+      "claimedTruthTable": [0],
+      "expectValidity": "reject_wrong_key"
+    }
+  ]
+}

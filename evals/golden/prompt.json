@@ -1,0 +1,111 @@
+{
+  "note": "Golden prompt-presence fixtures (F-32 / ADR-017). Each fixture asserts that the optional 'prompt' field on item ComponentSpec variants is present (non-empty string) or absent. The I7 contract adds optional 'prompt' to TruthTablePractice, CircuitBuilder, PseudocodeChallenge, and TransferProbe. F-27 requires the renderer treats a prompt-less item as a visible error; F-29 supplies prompts on generated items. The `expectFail:true` fixture is the meta-check.",
+  "fixtures": [
+    {
+      "id": "meta-check-prompt-absent-should-fail",
+      "bank": "prompt",
+      "note": "META-CHECK: this fixture has no 'prompt' field but expects expectPromptPresent=true. The runner asserts the oracle REJECTS this claim — guards against a vacuously-green suite.",
+      "expectFail": true,
+      "componentSpec": {
+        "kind": "TruthTablePractice",
+        "expression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "visibleReps": ["truth_table"]
+      },
+      "expectPromptPresent": true
+    },
+    {
+      "id": "prompt-present-truth-table",
+      "bank": "prompt",
+      "note": "TruthTablePractice with a non-empty prompt: the oracle should report prompt present.",
+      "componentSpec": {
+        "kind": "TruthTablePractice",
+        "expression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "visibleReps": ["truth_table"],
+        "prompt": "Fill in the truth table for A AND B."
+      },
+      "expectPromptPresent": true
+    },
+    {
+      "id": "prompt-present-circuit-builder",
+      "bank": "prompt",
+      "note": "CircuitBuilder with a non-empty prompt: the oracle should report prompt present.",
+      "componentSpec": {
+        "kind": "CircuitBuilder",
+        "targetExpression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "allowedGates": ["AND", "OR", "NOT"],
+        "visibleReps": ["circuit"],
+        "prompt": "Build a circuit that computes A AND B."
+      },
+      "expectPromptPresent": true
+    },
+    {
+      "id": "prompt-present-pseudocode-challenge",
+      "bank": "prompt",
+      "note": "PseudocodeChallenge with a non-empty prompt: the oracle should report prompt present.",
+      "componentSpec": {
+        "kind": "PseudocodeChallenge",
+        "targetExpression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "visibleReps": ["pseudocode"],
+        "prompt": "Write pseudocode that returns A AND B."
+      },
+      "expectPromptPresent": true
+    },
+    {
+      "id": "prompt-present-transfer-probe",
+      "bank": "prompt",
+      "note": "TransferProbe with a non-empty prompt: the oracle should report prompt present.",
+      "componentSpec": {
+        "kind": "TransferProbe",
+        "expression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "targetRep": "circuit",
+        "hiddenReps": ["truth_table"],
+        "itemId": "L1-01-and",
+        "prompt": "Build the circuit for this expression without the truth table."
+      },
+      "expectPromptPresent": true
+    },
+    {
+      "id": "prompt-absent-truth-table",
+      "bank": "prompt",
+      "note": "TruthTablePractice WITHOUT a prompt: expectPromptPresent=false. The oracle should report prompt absent. This is the pre-F-29 state (authored items not yet backfilled).",
+      "componentSpec": {
+        "kind": "TruthTablePractice",
+        "expression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "visibleReps": ["truth_table"]
+      },
+      "expectPromptPresent": false
+    },
+    {
+      "id": "prompt-absent-circuit-builder",
+      "bank": "prompt",
+      "note": "CircuitBuilder WITHOUT a prompt: expectPromptPresent=false.",
+      "componentSpec": {
+        "kind": "CircuitBuilder",
+        "targetExpression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "allowedGates": ["AND", "OR", "NOT"],
+        "visibleReps": ["circuit"]
+      },
+      "expectPromptPresent": false
+    },
+    {
+      "id": "prompt-empty-string-not-present",
+      "bank": "prompt",
+      "note": "A prompt field set to an empty string should be treated as absent (not present). Guards against an agent emitting a blank prompt to satisfy the schema check.",
+      "componentSpec": {
+        "kind": "TruthTablePractice",
+        "expression": "A AND B",
+        "claimedTruthTable": [0, 0, 0, 1],
+        "visibleReps": ["truth_table"],
+        "prompt": ""
+      },
+      "expectPromptPresent": false
+    }
+  ]
+}
