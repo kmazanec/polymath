@@ -136,6 +136,53 @@ langsmith_live_verify:
         pnpm install --frozen-lockfile &&
         pnpm --filter @polymath/graph exec vitest run src/explainback/eval.test.ts"
 
+# F-32 / ADR-017: The golden set + inner-agent live eval gate. Runs golden.test.ts
+# (the offline 100% assertions + the liveIt gates) AND eval.test.ts (the existing
+# inner-agent labelled scenarios) WITH OPENAI_API_KEY so the live ≥95% gate fires.
+#
+# SECRET-EXPOSURE DEFENSE: mirrors explain_back_live_eval byte-for-byte. OPENAI_API_KEY
+# is a PROTECTED variable — it reaches this job ONLY because:
+#   1. The `main` branch is a protected branch; the protected variable is available to
+#      jobs running on protected-branch pipelines.
+#   2. MR pipelines are BLOCKED (`when: never`), so an untrusted same-project MR can
+#      NEVER see the key even if it modifies a test/script to exfiltrate it.
+#   3. The manual fallback (`when: manual`) requires a maintainer-triggered run — the
+#      key is exposed only to code a human maintainer has reviewed.
+#
+# BURIED FINDING (F-32): the existing inner-agent live ≥95% gate (eval.test.ts's `liveIt`)
+# runs in `agent_test` which receives NO OPENAI_API_KEY — even on main push. It has ALWAYS
+# self-skipped. This job is the FIRST place that gate (and the new golden-set live gates)
+# actually fire live. `allow_failure: true` on the main-push auto-run initially (D13) so a
+# provider drift on first run does not red main; remove after the first green run.
+agent_live_eval:
+  stage: verify
+  needs: []
+  resource_group: heavy-droplet
+  rules:
+    # Protected branch (main): auto-run with the protected OPENAI_API_KEY variable.
+    # allow_failure: true initially (D13) — the inner-agent live gate has never fired;
+    # provider may have drifted. Remove allow_failure once the first run is green.
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+      allow_failure: true
+    # Never on merge-request pipelines — the OPENAI_API_KEY secret-exposure vector.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    # Manual trigger (maintainer-only, non-blocking) for ad-hoc runs.
+    - when: manual
+      allow_failure: true
+  script:
+    - >
+      docker run --rm
+      -v "$CI_PROJECT_DIR":/src:ro
+      -e OPENAI_API_KEY="$OPENAI_API_KEY"
+      node:22-bookworm-slim
+      bash -c "set -e &&
+        cp -a /src /work && cd /work &&
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm --filter @polymath/agent exec vitest run src/agent/eval/golden.test.ts &&
+        pnpm --filter @polymath/agent exec vitest run src/agent/eval/eval.test.ts"
+
 # The agent suite incl. the WS+Postgres integration test. The integration test
 # connects to TEST_POSTGRES_URL (a sibling container) instead of spawning its own
 # Docker pg — the shell-executor test container has no Docker socket. Sibling pg
@@ -189,6 +236,11 @@ deploy:
     # as verify+agent_test finished, before this gate ran or while it was failing. It
     # only runs on a main push (same rule as deploy), so it never blocks MR pipelines.
     - langsmith_live_verify
+    # F-32: the golden-set live eval gate (agent_live_eval) also runs on main push.
+    # `allow_failure: true` on that job means it does NOT block deploy on a red — this
+    # is the intended first-run safety (D13). Once the gate is consistently green, remove
+    # allow_failure from agent_live_eval and it will block deploy on regression.
+    - agent_live_eval
   rules:
     - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
   variables:

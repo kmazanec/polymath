@@ -8,11 +8,18 @@ import { OpenAIMoveProvider } from '../openaiClient.js';
 import { loadLesson } from '../../lessons/loader.js';
 
 /**
- * F-05 criterion 8: the inner-agent eval gate (≥95% agreement on labelled
+ * F-05 criterion 8 / ADR-017: the inner-agent eval gate (≥95% agreement on labelled
  * scenarios). The live gate runs through the real OpenAI provider and is **skipped
  * without `OPENAI_API_KEY`** (the CI gate runs it when the key is present). The
  * deterministic subset is always asserted against the key-free heuristic provider,
  * so the labelled data is exercised offline and cannot silently rot.
+ *
+ * **F-32 finding (the buried live-gate bug):** the `liveIt` gate below runs ONLY
+ * inside `agent_test`, which receives NO `OPENAI_API_KEY` — even on a push to
+ * `main`. So the inner-agent live ≥95% gate has **always self-skipped** and has
+ * **never run live.** F-32's new `agent_live_eval` CI job is the first place this
+ * gate (and the new golden-set live banks) actually fire with a key present. This
+ * file is included in `agent_live_eval`'s test run alongside `golden.test.ts`.
  */
 
 interface Scenario {
