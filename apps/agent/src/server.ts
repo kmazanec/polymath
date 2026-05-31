@@ -45,6 +45,7 @@ import {
 } from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
 import { compileMove, type TacticalMove } from './agent/menu.js';
+import { defaultItemPrompt } from './agent/introAdvance.js';
 import { computeRecall } from './agent/recallReflex.js';
 import { loadLesson, loadLessonIfExists, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
@@ -1281,6 +1282,11 @@ async function handleAdvanceLessonTurn(
             expression: first.targetExpression,
             claimedTruthTable: first.truthTable,
             visibleReps: ['truth_table'],
+            // F-27 AC#7: backfill prompt so the surface boundary never shows
+            // PromptMissing (finding F27-1).  F-29's LLM generation will supply
+            // a richer prompt; this is the keyless heuristic fallback that ships
+            // first and is the live-drive target.
+            prompt: defaultItemPrompt(first.targetExpression, 'truth_table'),
           },
           rationale: `L1 mastery earned — advancing to lesson ${event.toLessonId} and mounting its first item "${first.itemId}" (server reflex, F-15)`,
         }

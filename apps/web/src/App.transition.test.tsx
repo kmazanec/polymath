@@ -79,9 +79,12 @@ const l1Practice: ServerMessage = {
     type: 'mount',
     component: {
       kind: 'TruthTablePractice',
-      expression: 'A & B',
+      // F-27 AC#7: prompt required so the renderer does not hit PromptMissing.
+      // Expression uses booleans grammar keywords (AND/OR), not symbols (&/|).
+      expression: 'A AND B',
       claimedTruthTable: [0, 0, 0, 1],
       visibleReps: ['truth_table'],
+      prompt: 'Complete the truth table for: A AND B',
     },
   },
 };
@@ -92,9 +95,15 @@ const l2Practice: ServerMessage = {
     type: 'mount',
     component: {
       kind: 'TruthTablePractice',
-      expression: 'A | B',
+      // F-27 AC#7: prompt required so the renderer does not hit PromptMissing.
+      // Before the server.ts fix the advance reflex built the ComponentSpec
+      // without a `prompt` field, causing PromptMissing to render instead of
+      // the L2 workspace (finding F27-1).
+      // Expression uses booleans grammar keywords (AND/OR), not symbols (&/|).
+      expression: 'A OR B',
       claimedTruthTable: [0, 1, 1, 1],
       visibleReps: ['truth_table'],
+      prompt: 'Complete the truth table for: A OR B',
     },
   },
 };
@@ -151,6 +160,14 @@ describe('App L1 → L2 macro transition (F-15 client AC#2)', () => {
     act(() => socket.receive(l2Practice));
     await waitFor(() => {
       expect(phaseEl()?.getAttribute('data-phase')).toBe('practicing');
+      // F27-1: The L2 workspace must render the actual truth table, NOT a
+      // PromptMissing alert.  Before the server fix the advance reflex built the
+      // ComponentSpec without a `prompt` field, which (per F-27 AC#7) causes
+      // registry.tsx to return the `role="alert"` PromptMissing placeholder.
+      // Both assertions land inside waitFor so they wait for the same React flush
+      // that delivers the mounted spec and the phase update.
+      expect(container.querySelector('[role="alert"][data-prompt-missing]')).toBeNull();
+      expect(container.querySelector('table[role="table"]')).not.toBeNull();
     });
     // The Hint button renders again for the L2 item (only shown in practicing).
     expect(container.querySelector('.hint-button')).not.toBeNull();
