@@ -1,0 +1,235 @@
+.signal-field {
+  --sf-resting: color-mix(in srgb, var(--color-ink) 62%, var(--color-accent));
+  --sf-grid: color-mix(in srgb, var(--color-accent) 28%, transparent);
+  --sf-gate: color-mix(in srgb, var(--color-accent) 42%, transparent);
+  --sf-node: color-mix(in srgb, var(--color-ink) 58%, var(--color-cyan));
+  --sf-pulse: color-mix(in srgb, var(--color-signal) 82%, var(--color-cyan));
+  --sf-pulse-soft: color-mix(in srgb, var(--color-cyan) 44%, transparent);
+  --sf-field-opacity: 0.42;
+  --sf-grid-opacity: 0.2;
+  --sf-far-opacity: 0.2;
+  --sf-mid-opacity: 0.27;
+  --sf-near-opacity: 0.52;
+  --sf-gate-opacity: 0.18;
+  --sf-node-opacity: 0.36;
+  --sf-hot-node-opacity: 0.58;
+  --sf-glow-opacity: 0.34;
+
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: var(--sf-field-opacity);
+  overflow: hidden;
+  /* Fade the field away from the top-left where the headline lives so copy stays
+   * crisp; fuller toward the edges and bottom where it frames rather than competes. */
+  -webkit-mask: radial-gradient(140% 120% at 24% 16%, transparent 16%, #000 76%);
+          mask: radial-gradient(140% 120% at 24% 16%, transparent 16%, #000 76%);
+}
+
+.signal-field__grid {
+  opacity: var(--sf-grid-opacity);
+}
+
+.signal-field__grid-line {
+  fill: none;
+  stroke: var(--sf-grid);
+  stroke-width: 1;
+}
+
+.signal-field__layer--far {
+  opacity: var(--sf-far-opacity);
+  transform: translate3d(-10px, -6px, 0);
+}
+
+.signal-field__layer--mid {
+  opacity: var(--sf-mid-opacity);
+  transform: translate3d(0, 0, 0);
+}
+
+.signal-field__layer--near {
+  opacity: var(--sf-near-opacity);
+  transform: translate3d(10px, 8px, 0);
+}
+
+.signal-field__trace {
+  fill: none;
+  stroke: var(--sf-resting);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.signal-field__layer--far .signal-field__trace {
+  stroke-width: 1.4;
+}
+
+.signal-field__layer--near .signal-field__trace {
+  stroke-width: 2.8;
+}
+
+.signal-field__trace-glow,
+.signal-field__pulse {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Paths carry pathLength={100}, so all dash math is on a normalized 0-100 scale and
+ * one rule traverses every trace regardless of its real length. A short lit bead
+ * (length ~5) runs from just before the path start (offset 100) to just past its
+ * end (offset -5), reading as one bright signal bead travelling the whole wire. */
+.signal-field__trace-glow {
+  stroke: var(--sf-pulse-soft);
+  stroke-width: 5.5;
+  stroke-dasharray: 8 200;
+  stroke-dashoffset: 100;
+  opacity: 0;
+  filter: url("#signal-field-glow");
+  animation: signal-field-glow var(--signal-duration) linear infinite;
+  animation-delay: var(--signal-delay);
+}
+
+.signal-field__pulse {
+  stroke: var(--sf-pulse);
+  stroke-width: 4;
+  stroke-dasharray: 5 200;
+  stroke-dashoffset: 100;
+  opacity: 0;
+  filter: url("#signal-field-glow");
+  animation: signal-field-pulse var(--signal-duration) linear infinite;
+  animation-delay: var(--signal-delay);
+}
+
+.signal-field__pulse--near {
+  stroke-width: 4.8;
+  stroke-dasharray: 6 200;
+}
+
+.signal-field__nodes {
+  opacity: var(--sf-node-opacity);
+}
+
+.signal-field__node {
+  fill: var(--sf-node);
+  stroke: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.signal-field__node--far {
+  opacity: 0.42;
+}
+
+.signal-field__node--mid {
+  opacity: 0.74;
+}
+
+.signal-field__node--near {
+  opacity: 0.9;
+}
+
+.signal-field__node--hot {
+  fill: var(--sf-pulse);
+  opacity: var(--sf-hot-node-opacity);
+  filter: url("#signal-field-glow");
+}
+
+.signal-field__glyphs {
+  opacity: var(--sf-gate-opacity);
+}
+
+.signal-field__gate {
+  fill: color-mix(in srgb, var(--color-accent) 24%, transparent);
+  stroke: var(--sf-gate);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Paths carry pathLength={100}; all dash math is on a normalized 0-100 scale, so one
+ * rule traverses every trace regardless of real length. The bead runs offset 100 to -5
+ * (just before the start to just past the end) across the first ~10% of the cycle, then
+ * the wire rests dark for the remainder: calm, sparse firing, not a constant runway. */
+@keyframes signal-field-pulse {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 100;
+  }
+
+  3% {
+    opacity: 0.95;
+  }
+
+  7% {
+    opacity: 0.95;
+    stroke-dashoffset: -5;
+  }
+
+  10% {
+    opacity: 0;
+    stroke-dashoffset: -5;
+  }
+
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -5;
+  }
+}
+
+@keyframes signal-field-glow {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 100;
+  }
+
+  5% {
+    opacity: var(--sf-glow-opacity);
+  }
+
+  8% {
+    opacity: var(--sf-glow-opacity);
+    stroke-dashoffset: -8;
+  }
+
+  14% {
+    opacity: 0;
+    stroke-dashoffset: -8;
+  }
+
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -8;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .signal-field {
+    --sf-resting: color-mix(in srgb, var(--color-ink) 38%, var(--color-accent));
+    --sf-grid: color-mix(in srgb, var(--color-cyan) 20%, transparent);
+    --sf-gate: color-mix(in srgb, var(--color-accent) 48%, transparent);
+    --sf-node: color-mix(in srgb, var(--color-cyan) 46%, var(--color-ink));
+    --sf-field-opacity: 0.5;
+    --sf-grid-opacity: 0.16;
+    --sf-far-opacity: 0.18;
+    --sf-mid-opacity: 0.34;
+    --sf-near-opacity: 0.58;
+    --sf-gate-opacity: 0.22;
+    --sf-node-opacity: 0.42;
+    --sf-hot-node-opacity: 0.68;
+    --sf-glow-opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signal-field__trace-glow,
+  .signal-field__pulse {
+    animation: none;
+    opacity: 0;
+  }
+}

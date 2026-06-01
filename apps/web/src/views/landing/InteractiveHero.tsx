@@ -187,6 +187,7 @@ function CircuitPanel({
   return (
     <div className="ihero__card ihero__card--gate">
       <span className="ihero__tag">circuit</span>
+      <div className="ihero__svg-wrap">
       <svg
         className="ihero__svg"
         viewBox="0 0 200 120"
@@ -227,6 +228,7 @@ function CircuitPanel({
           className={`ihero__node ${outHi ? 'ihero__node--hi' : 'ihero__node--lo'}`}
         />
       </svg>
+      </div>
     </div>
   );
 }

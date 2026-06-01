@@ -155,7 +155,23 @@
 
 .ihero__card--table { grid-area: table; }
 .ihero__card--gate  { grid-area: gate;  display: flex; flex-direction: column; }
-.ihero__card--code  { grid-area: code; }
+.ihero__card--code  { grid-area: code;  display: flex; flex-direction: column; }
+
+/* The circuit card gives its SVG the whole body below the tag and centers the gate
+ * in it — the diagram should own its panel, not float small at the bottom. */
+.ihero__card--gate .ihero__svg-wrap {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 9rem;
+}
+
+/* The truth table is the tallest panel and sets the row height; the circuit and code
+ * panels stretch to match (grid default). Rather than leave that extra height as a void,
+ * each panel DISTRIBUTES its content to fill it — the gate centers and grows, the code
+ * block + verdict line center vertically. The layout reads as three deliberate
+ * instruments of equal stature, not one full card beside two half-empty ones. */
 
 .ihero__tag {
   display: block;
@@ -243,11 +259,11 @@
 }
 
 /* ── Circuit (SVG) ─────────────────────────────────────────────────────────── */
+/* The SVG fills its centering wrapper (.ihero__svg-wrap owns the vertical centering
+ * and min-height); here it just spans the available width so the gate reads large. */
 .ihero__svg {
   width: 100%;
   height: auto;
-  margin-top: auto;    /* push down in flex column so tag sits at top */
-  flex: 1;
   overflow: visible;
 }
 
@@ -323,8 +339,10 @@
 }
 
 /* ── Pseudocode ────────────────────────────────────────────────────────────── */
+/* The tag sits at the top; the code block + verdict line are grouped and centered in
+ * the remaining height so the panel fills evenly rather than leaving a void below. */
 .ihero__code {
-  margin: 0;
+  margin: auto 0 var(--space-2-5);   /* center the block in the leftover vertical space */
   padding: var(--space-2-5) var(--space-3);  /* 0.75rem 1rem */
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);

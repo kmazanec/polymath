@@ -2,19 +2,23 @@ import { type ReactElement } from 'react';
 import { Link } from 'react-router-dom';
 import './landing.css';
 import { InteractiveHero } from './landing/InteractiveHero.js';
+import { SignalField } from './landing/SignalField.js';
 
 /**
  * The Polymath landing page — the apex marketing surface at `/`.
  *
- * On-brand per docs/BRAND.md: deep indigo-navy ink, cyan accent, Poppins display
- * over Karla body, big rounded cards, soft indigo shadows, springy reveals. The
- * pedagogical thesis is told *visually* by the interactive hero: a live A AND B
- * preview where toggling the inputs lights up the truth table row, the gate wires,
- * and the pseudocode comment simultaneously in signal-green — "one idea, three forms"
- * felt before a word is read.
+ * Direction: "The Living Substrate" (bold reinvention, frontend-design skill).
+ * The interactive A·B demo is no longer a widget parked below a copy column —
+ * it is the HERO. A live circuit substrate (SignalField) breathes behind the
+ * whole page; the oversized headline and the live AND-gate share one continuous
+ * composition so "one idea, three forms" is *felt* before a word is read. The
+ * three representations read left→right as a SIGNAL BUS: table → circuit → code,
+ * the signal propagating across the page.
  *
- * The signature spectrum gradient is deliberately NOT used here — it is reserved for
- * the mastery-celebration moment (BRAND.md "the one wow flourish").
+ * Brand-anchored (docs/BRAND.md): deep indigo-navy ink, cyan + indigo accents,
+ * signal-green reserved for HIGH/true, Poppins display over Karla body, JetBrains
+ * Mono for logic notation. The signature spectrum gradient stays reserved for the
+ * mastery-celebration moment — never used as chrome here.
  *
  * Pure static brand surface: no session, no WebSocket. The lesson session only
  * starts when the learner clicks Begin on the overview (`/learn`).
@@ -22,7 +26,7 @@ import { InteractiveHero } from './landing/InteractiveHero.js';
 export function Landing(): ReactElement {
   return (
     <div className="landing">
-      <BrandField />
+      <SignalField />
 
       <header className="landing__top">
         <div className="landing__brand">
@@ -35,12 +39,12 @@ export function Landing(): ReactElement {
       </header>
 
       <main className="landing__main">
-        {/* ── Hero: narrow copy band → full-width interactive demo ── */}
-        <section className="landing__hero">
+        {/* ── Hero: the headline + the live demo are ONE composition ── */}
+        <section className="landing__hero" aria-label="Polymath — one idea, three forms">
           <div className="landing__hero-copy">
             <p className="eyebrow landing__eyebrow">Mastery-grade Boolean logic</p>
             <h1 className="landing__headline">
-              One idea,
+              One&nbsp;idea,
               <br />
               <span className="landing__headline-accent">three&nbsp;forms.</span>
             </h1>
@@ -60,8 +64,10 @@ export function Landing(): ReactElement {
             </div>
           </div>
 
-          {/* Full-width interactive hero is the centerpiece below the copy band */}
-          <InteractiveHero />
+          {/* The live, hyperresponsive product preview — the centerpiece. */}
+          <div className="landing__hero-demo">
+            <InteractiveHero />
+          </div>
         </section>
 
         <section className="landing__pillars" aria-label="How mastery is earned">
@@ -84,16 +90,19 @@ export function Landing(): ReactElement {
         </section>
 
         <section className="landing__strip">
-          <h2 className="eyebrow landing__strip-lead">The curriculum</h2>
+          <div className="landing__strip-head">
+            <h2 className="eyebrow landing__strip-lead">The curriculum</h2>
+            <Link to="/learn" className="landing__strip-cta">
+              Start with Lesson&nbsp;1
+              <span aria-hidden="true">→</span>
+            </Link>
+          </div>
           <ol className="landing__lessons">
             <li><span className="landing__lesson-n">1</span> Basic operators</li>
             <li><span className="landing__lesson-n">2</span> Composition &amp; XOR</li>
             <li><span className="landing__lesson-n">3</span> NAND universality</li>
             <li><span className="landing__lesson-n">4</span> De&nbsp;Morgan&rsquo;s law</li>
           </ol>
-          <Link to="/learn" className="landing__strip-cta">
-            Start with Lesson&nbsp;1 →
-          </Link>
         </section>
       </main>
 
@@ -173,9 +182,4 @@ function MasteryIcon(): ReactElement {
       <path d="M12 3 A9 9 0 0 0 12 21 Z" fill="currentColor" />
     </svg>
   );
-}
-
-/** Soft atmospheric indigo radial field behind the hero (one bloom, not three). */
-function BrandField(): ReactElement {
-  return <div className="landing__field" aria-hidden="true" />;
 }
