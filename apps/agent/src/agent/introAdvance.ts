@@ -198,6 +198,15 @@ export function explanationBeforeNextItem(input: AgentInput): TacticalMove | nul
   if (!current || !next || next.kc === current.kc) return null;
   const firstItemForNextKc = items.findIndex((candidate) => candidate.kc === next.kc);
   if (firstItemForNextKc !== idx + 1) return null;
+  const nextKcItems = new Set(
+    items
+      .filter((candidate) => candidate.kc === next.kc)
+      .flatMap((candidate) => [candidate.itemId, candidate.targetExpression]),
+  );
+  const alreadyPracticedNextKc = input.recentHistory.some(
+    (turn) => turn.eventKind === 'submit' && turn.itemId !== undefined && nextKcItems.has(turn.itemId),
+  );
+  if (alreadyPracticedNextKc) return null;
 
   return explanationForTopic(
     input,

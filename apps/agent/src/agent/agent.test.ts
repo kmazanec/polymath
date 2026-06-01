@@ -140,6 +140,46 @@ describe('inner-agent flow (heuristic, key-free)', () => {
     }
   });
 
+  it('at the end of the item list, remounts below-threshold KC practice instead of dead-ending', async () => {
+    const inp = input({
+      kind: 'submit',
+      sessionId: SID,
+      itemId: 'A AND NOT B',
+      submission: 'A AND NOT B',
+      correct: true,
+      repSubmission: { rep: 'truth_table', cells: [0, 0, 1, 0] },
+    });
+    inp.learnerState.bktByKc = { AND: 0.97, OR: 0.8, NOT: 0.8 };
+
+    const action = await new StubAgentClient().propose(inp);
+
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
+      expect(action.component.expression).toBe('A OR B');
+    }
+  });
+
+  it('repair practice does not re-teach a KC that already has a submit in recent history', async () => {
+    const inp = input({
+      kind: 'submit',
+      sessionId: SID,
+      itemId: 'A OR B',
+      submission: 'A OR B',
+      correct: true,
+      repSubmission: { rep: 'truth_table', cells: [0, 1, 1, 1] },
+    });
+    inp.recentHistory = [
+      { eventKind: 'submit', actionType: 'mount', rationale: '', itemId: 'NOT A' },
+    ];
+
+    const action = await new StubAgentClient().propose(inp);
+
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
+      expect(action.component.expression).toBe('NOT A');
+    }
+  });
+
   it('on a ready learner with a held-out item, it fires a transfer probe (not mastery)', async () => {
     const inp = input({ kind: 'submit', sessionId: SID, itemId: 'l1-not', submission: 'NOT A' }, true);
     inp.transferCandidates = [PROBE];

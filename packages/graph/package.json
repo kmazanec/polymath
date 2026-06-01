@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@langchain/core": "^0.3.30",
-    "@langchain/langgraph": "^0.2.40",
+    "@langchain/langgraph": "^0.2.74",
     "@langchain/openai": "^0.3.17",
     "@polymath/booleans": "workspace:*",
     "@polymath/contract": "workspace:*",

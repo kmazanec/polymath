@@ -136,6 +136,8 @@ export class HeuristicMoveProvider implements MoveProvider {
       if (explanation) return Promise.resolve(explanation);
       const next = pickLessonItem(input);
       if (next) return Promise.resolve(next);
+      const targeted = pickGateRepairItem(input);
+      if (targeted) return Promise.resolve(targeted);
       return Promise.resolve({
         move: 'no_action',
         reason: 'wait_for_learner',
@@ -399,13 +401,19 @@ function simplerVariant(current: ProposedItem, input: AgentInput): ProposedItem 
   const items = [...input.lesson.content.items].sort((a, b) => a.difficultyTier - b.difficultyTier);
   const simpler = items.find((i) => i.targetExpression !== current.targetExpression);
   if (!simpler) return current;
+  return proposedItemFromLessonItem(input, simpler, current.rep);
+}
+
+type LessonItem = AgentInput['lesson']['content']['items'][number];
+
+function proposedItemFromLessonItem(input: AgentInput, item: LessonItem, rep: Rep): ProposedItem {
   return {
-    rep: current.rep,
-    targetExpression: simpler.targetExpression,
-    claimedTruthTable: simpler.truthTable,
-    visibleReps: current.visibleReps,
-    allowedGates: circuitAllowedGates(input, current.rep),
-    prompt: defaultItemPrompt(simpler.targetExpression, current.rep),
+    rep,
+    targetExpression: item.targetExpression,
+    claimedTruthTable: item.truthTable,
+    visibleReps: [rep],
+    allowedGates: circuitAllowedGates(input, rep),
+    prompt: defaultItemPrompt(item.targetExpression, rep),
   };
 }
 
@@ -431,15 +439,44 @@ function pickLessonItem(input: AgentInput): TacticalMove | null {
     move: 'next_practice_item',
     tier: next.difficultyTier,
     rationale: `advancing to "${next.itemId}" (heuristic provider)`,
-    item: {
-      rep,
-      targetExpression: next.targetExpression,
-      claimedTruthTable: next.truthTable,
-      visibleReps: [rep],
-      allowedGates: circuitAllowedGates(input, rep),
-      // F-27 AC#7: backfill prompt so the surface boundary never shows PromptMissing.
-      prompt: defaultItemPrompt(next.targetExpression, rep),
-    },
+    item: proposedItemFromLessonItem(input, next, rep),
+  };
+}
+
+/** When the learner reaches the end of the authored item list before the rule gate
+ *  passes, keep serving targeted practice instead of dead-ending. The all-KC gate
+ *  requires every KC's BKT to clear the threshold; L1 has only one OR and one NOT
+ *  authored item, so a clean first pass can legitimately need a second exposure.
+ *  Pick the first below-threshold KC in lesson order, avoiding the just-submitted
+ *  item when another item for that KC exists. */
+function pickGateRepairItem(input: AgentInput): TacticalMove | null {
+  const ev = input.event;
+  if (ev.kind !== 'submit') return null;
+  const items = input.lesson.content.items;
+  if (items.length === 0) return null;
+
+  const rep = ev.repSubmission ? ev.repSubmission.rep : 'truth_table';
+  const threshold = input.lesson.masteryConfig.bktMasteryThreshold;
+  const belowThreshold = input.lesson.content.knowledgeComponents.find(
+    (kc) => (input.learnerState.bktByKc[kc] ?? 0) < threshold,
+  );
+  const currentId = ev.itemId;
+
+  let item: LessonItem | undefined;
+  if (belowThreshold) {
+    const candidates = items.filter((i) => i.kc === belowThreshold);
+    item =
+      candidates.find((i) => i.itemId !== currentId && i.targetExpression !== currentId) ??
+      candidates[0];
+  }
+  item ??= items.find((i) => i.itemId !== currentId && i.targetExpression !== currentId) ?? items[0];
+  if (!item) return null;
+
+  return {
+    move: 'next_practice_item',
+    tier: item.difficultyTier,
+    rationale: `rule-gate still blocked — targeted practice for "${item.kc}" via "${item.itemId}" (heuristic provider)`,
+    item: proposedItemFromLessonItem(input, item, rep),
   };
 }
 
