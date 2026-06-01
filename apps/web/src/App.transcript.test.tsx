@@ -282,6 +282,43 @@ describe('App verdict turn (F-27 AC#3)', () => {
       expect(verdictEl).not.toBeNull();
     });
   });
+
+  it('remounts a same-expression remediation item with fresh editable cells', async () => {
+    const { container } = render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    pushAction(TT_PRACTICE_2);
+    await waitFor(() => {
+      const workspace = container.querySelector('[data-testid="workspace"]');
+      expect(workspace?.querySelector('[aria-label*="A OR B"]')).not.toBeNull();
+    });
+
+    const submit = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.toLowerCase().includes('submit'),
+    );
+    expect(submit).toBeDefined();
+    fireEvent.click(submit!);
+
+    await waitFor(() => {
+      const workspace = container.querySelector('[data-testid="workspace"]');
+      expect(workspace?.querySelector('[data-verdict]')).not.toBeNull();
+    });
+
+    pushAction({
+      ...TT_PRACTICE_2,
+      prompt: 'Try A OR B again. Work row by row.',
+    });
+
+    await waitFor(() => {
+      const workspace = container.querySelector('[data-testid="workspace"]');
+      const outputButtons = Array.from(
+        workspace?.querySelectorAll('.truth-table-output-cell') ?? [],
+      ) as HTMLButtonElement[];
+      expect(outputButtons.length).toBeGreaterThan(0);
+      expect(outputButtons.every((button) => !button.disabled)).toBe(true);
+      expect(outputButtons.every((button) => !button.hasAttribute('data-verdict'))).toBe(true);
+    });
+  });
 });
 
 describe('App intro_advance (F-27 AC#4)', () => {

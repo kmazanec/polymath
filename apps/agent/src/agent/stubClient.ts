@@ -103,8 +103,8 @@ export class HeuristicMoveProvider implements MoveProvider {
         if (same) {
           return Promise.resolve(
             priorWrong
-              ? { move: 'simpler_item', item: simplerVariant(same, input), rationale: 'repeated miss on this item — dropping to a simpler one (heuristic provider)' }
-              : { move: 'rephrase', item: same, rationale: 're-presenting the item after a miss (heuristic provider)' },
+              ? { move: 'simpler_item', item: withRemediationPrompt(simplerVariant(same, input)), rationale: 'repeated miss on this item — dropping to a simpler one (heuristic provider)' }
+              : { move: 'rephrase', item: withRemediationPrompt(same), rationale: 're-presenting the item after a miss with a corrective prompt (heuristic provider)' },
           );
         }
       }
@@ -414,6 +414,13 @@ function proposedItemFromLessonItem(input: AgentInput, item: LessonItem, rep: Re
     visibleReps: [rep],
     allowedGates: circuitAllowedGates(input, rep),
     prompt: defaultItemPrompt(item.targetExpression, rep),
+  };
+}
+
+function withRemediationPrompt(item: ProposedItem): ProposedItem {
+  return {
+    ...item,
+    prompt: `Try ${item.targetExpression} again. Work row by row: ask what would make the expression true, then mark 1 only for those rows.`,
   };
 }
 

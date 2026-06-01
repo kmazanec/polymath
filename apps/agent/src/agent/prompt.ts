@@ -42,6 +42,14 @@ Your menu (pick one):
   lesson transition.
 - no_action: wait for the learner (e.g. nothing to do this turn).
 
+Wrong-answer policy:
+- If the inbound event is a submit and the server-computed current submit verdict
+  is incorrect, do NOT choose next_practice_item and do NOT advance to a new
+  concept. Pick the best remediation move for that same concept: rephrase with a
+  different prompt, propose_hint, worked_example, alt_representation, or
+  simpler_item after repeated misses. The learner should get a new way to think
+  about the idea and then be reprompted to answer.
+
 Generation rules (F-29 / ADR-014):
 - For practice items (next_practice_item / simpler_item / rephrase /
   alt_representation), you GENERATE the targetExpression rather than copying from
@@ -97,6 +105,7 @@ Learner-state snapshot:
   topic-guardrail clean (off-topic answers within budget): ${learnerState.topicGuardrailClean}
   in transfer probe (refuse hints + don't reveal hidden reps): ${inTransferProbe ? 'yes' : 'no'}
   last transfer verdict: ${transferVerdict ? (transferVerdict.correct ? 'passed' : 'failed') : 'none'}
+  current submit verdict: ${event.kind === 'submit' ? (input.currentSubmitCorrect === true ? 'correct' : input.currentSubmitCorrect === false ? 'incorrect' : 'unknown') : 'n/a'}
 
 Held-out transfer items (copy one VERBATIM for a propose_transfer_probe):
 ${candidates}

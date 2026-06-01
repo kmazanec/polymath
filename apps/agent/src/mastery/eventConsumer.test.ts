@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadLesson } from '../lessons/loader.js';
-import { deriveState, toLearnerState, type LoggedEvent } from './eventConsumer.js';
+import { deriveState, recomputeCorrect, toLearnerState, type LoggedEvent } from './eventConsumer.js';
 import { evaluateRuleGate } from './gate.js';
 
 const { content, masteryConfig } = loadLesson(1);
@@ -32,6 +32,21 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
     );
     expect(d.consecutiveCorrect).toBe(0);
     expect(d.bktByKc['AND']!.pMastered).toBeLessThan(masteryConfig.bktPrior_L0);
+  });
+
+  it('scores truth-table submissions from output cells, not the echoed target expression', () => {
+    expect(
+      recomputeCorrect(content, 'l1-and', RIGHT.and, {
+        rep: 'truth_table',
+        cells: [0, 0, 0, 1],
+      }),
+    ).toBe(true);
+    expect(
+      recomputeCorrect(content, 'l1-and', RIGHT.and, {
+        rep: 'truth_table',
+        cells: [0, 1, 1, 1],
+      }),
+    ).toBe(false);
   });
 
   it('counts consecutive correct, resetting on a wrong submit or a hint', () => {

@@ -94,15 +94,16 @@ export function wantsHiddenRep(question: string, hiddenReps: readonly Rep[]): Re
 /** A stable identity for the mounted workspace, used as a React `key` so a new
  *  item remounts fresh (no stale submitted/cells state from the prior item). */
 function mountKey(spec: ComponentSpec): string {
+  const promptKey = 'prompt' in spec && spec.prompt ? `:${spec.prompt}` : '';
   switch (spec.kind) {
     case 'TruthTablePractice':
-      return `tt:${spec.expression}`;
+      return `tt:${spec.expression}${promptKey}`;
     case 'CircuitBuilder':
-      return `circuit:${spec.targetExpression}`;
+      return `circuit:${spec.targetExpression}${promptKey}`;
     case 'PseudocodeChallenge':
-      return `pseudo:${spec.targetExpression}`;
+      return `pseudo:${spec.targetExpression}${promptKey}`;
     case 'TransferProbe':
-      return `probe:${spec.itemId}`;
+      return `probe:${spec.itemId}${promptKey}`;
     case 'ExplainBackPrompt':
       return `explain:${spec.targetItemId}:${spec.promptBody}`;
     default:

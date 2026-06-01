@@ -1,6 +1,6 @@
 import { type BKTConfig, type BKTParams, initBKT, updateBKT } from '@polymath/bkt';
 import { scoreEquivalence } from '@polymath/booleans';
-import type { LessonContent, MasteryConfig } from '@polymath/contract';
+import type { LessonContent, MasteryConfig, RepSubmission } from '@polymath/contract';
 import type { LearnerState } from './gate.js';
 
 /**
@@ -17,10 +17,11 @@ export interface LoggedEvent {
   kind: string;
   /** The item the event concerns (canonical expression or itemId). */
   itemId?: string;
-  /** The learner's submitted canonical expression — the server recomputes
-   *  correctness from this (it does NOT trust a client `correct` flag for the
-   *  integrity-critical BKT/streak; ADR-010 the validator is the truth-maker). */
+  /** The learner's submitted canonical expression. For truth tables this echoes
+   *  the target expression; the output column lives in `repSubmission.cells`. */
   submission?: string;
+  /** The learner's representation-native answer, when the client supplied one. */
+  repSubmission?: RepSubmission;
   /** Server-computed transfer verdict on a `transfer_submitted`. */
   transferCorrect?: boolean;
   /** Server-computed explain-back verdict on an `explain_back_recording_ended`
@@ -88,10 +89,19 @@ export function recomputeCorrect(
   lesson: LessonContent,
   itemId: string | undefined,
   submission: string | undefined,
+  repSubmission?: RepSubmission,
 ): boolean {
-  if (!itemId || submission === undefined) return false;
+  if (!itemId) return false;
   const item = lesson.items.find((i) => i.itemId === itemId || i.targetExpression === itemId);
   if (!item) return false;
+  if (repSubmission?.rep === 'truth_table') {
+    const expected = item.truthTable;
+    return (
+      repSubmission.cells.length === expected.length &&
+      repSubmission.cells.every((cell, index) => cell === expected[index])
+    );
+  }
+  if (submission === undefined) return false;
   return scoreEquivalence(submission, item.targetExpression);
 }
 
@@ -121,8 +131,11 @@ export function deriveState(
 
   // Correctness is the server-side recompute (never the client flag), shared with
   // the per-turn `recomputeCorrect` used by the server.
-  const isCorrect = (itemId: string | undefined, submission: string | undefined): boolean =>
-    recomputeCorrect(lesson, itemId, submission);
+  const isCorrect = (
+    itemId: string | undefined,
+    submission: string | undefined,
+    repSubmission?: RepSubmission,
+  ): boolean => recomputeCorrect(lesson, itemId, submission, repSubmission);
 
   // BUG 1 FIX (half here): pre-seed bktByKc with the BKT prior for EVERY KC declared
   // in the lesson. Without this, a KC the learner never attempts is absent from the
@@ -157,7 +170,7 @@ export function deriveState(
   for (const ev of events) {
     if (ev.kind === 'submit') {
       state.submits++;
-      const correct = isCorrect(ev.itemId, ev.submission);
+      const correct = isCorrect(ev.itemId, ev.submission, ev.repSubmission);
       const kc = ev.itemId ? kcByItem.get(ev.itemId) : undefined;
       if (kc) {
         // bktByKc is pre-seeded for all lesson KCs; for an item whose KC appears in

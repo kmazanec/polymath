@@ -302,6 +302,35 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     }
   });
 
+  it('a wrong truth-table output column remediates instead of advancing even when submission echoes the target', async () => {
+    const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
+      sessionId: string;
+    };
+
+    const [action] = await driveSequence(sessionId, [
+      {
+        kind: 'submit',
+        sessionId,
+        itemId: 'l1-or',
+        submission: 'A OR B',
+        repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 0] },
+        correct: false,
+      },
+    ]);
+
+    expect(action!.type).toBe('mount');
+    if (action!.type === 'mount' && action!.component.kind === 'TruthTablePractice') {
+      expect(action!.component.expression).toBe('A OR B');
+      expect(action!.component.prompt).toMatch(/try .*again/i);
+    }
+
+    await new Promise((r) => setTimeout(r, 300));
+    const replay = (await (await fetch(`${baseUrl}/api/session/${sessionId}/replay`)).json()) as {
+      events: { payload: { submitVerdict?: { correct?: boolean } } }[];
+    };
+    expect(replay.events.some((e) => e.payload.submitVerdict?.correct === false)).toBe(true);
+  });
+
   it('answers an on-topic question and deflects an off-topic one (criteria 4,5)', async () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;

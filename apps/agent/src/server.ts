@@ -348,7 +348,14 @@ async function lessonIdForEvent(db: Db, event: ClientEvent): Promise<number> {
  *  server-side (the BKT/streak must not trust the client's `correct` flag). */
 function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
   const p = (payload ?? {}) as {
-    event?: { itemId?: string; submission?: string; correct?: boolean; responseTimeMs?: number; targetItemId?: string };
+    event?: {
+      itemId?: string;
+      submission?: string;
+      correct?: boolean;
+      responseTimeMs?: number;
+      targetItemId?: string;
+      repSubmission?: Extract<ClientEvent, { kind: 'submit' }>['repSubmission'];
+    };
     transferVerdict?: { correct?: boolean };
     // F-12 extends the projection to read `topicClassification` for the
     // topic-guardrail counter (was type + component.kind only).
@@ -363,6 +370,7 @@ function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
     // An explain-back event names its item via `targetItemId` (not `itemId`).
     itemId: p.event?.itemId ?? p.event?.targetItemId ?? p.event?.submission,
     submission: p.event?.submission,
+    repSubmission: p.event?.repSubmission,
     responseTimeMs: p.event?.responseTimeMs,
     transferCorrect: p.transferVerdict?.correct,
     // A served hint = the logged action mounted a HintCard (a refused request is a
@@ -459,7 +467,9 @@ async function updateAndReadLearnerState(
     hintsByItem: derived.hintsByItem,
     priorMissesByItem: priorDerived.missesByItem,
     currentSubmitCorrect:
-      current.kind === 'submit' ? recomputeCorrect(lesson.content, current.itemId, current.submission) : undefined,
+      current.kind === 'submit'
+        ? recomputeCorrect(lesson.content, current.itemId, current.submission, current.repSubmission)
+        : undefined,
   };
 }
 
@@ -2213,7 +2223,7 @@ export async function handleClientFrame(
     // `transferVerdict`; `fetchMetricInputs` reads this, not `event.correct`.
     const submitVerdict =
       event.kind === 'submit'
-        ? { correct: recomputeCorrect(lesson.content, event.itemId, event.submission) }
+        ? { correct: recomputeCorrect(lesson.content, event.itemId, event.submission, event.repSubmission) }
         : undefined;
 
     await deps.db.insert(events).values({

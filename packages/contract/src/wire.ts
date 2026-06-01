@@ -30,8 +30,8 @@ export type SessionId = z.infer<typeof SessionId>;
  * Each rep populates exactly one branch:
  *  - truth_table: the learner-filled output column, 0/1 ints, MSB-first (matches
  *    @polymath/booleans truth-table order). The item's target expression travels
- *    in the required `submission` field (truth-table has no learner-authored
- *    expression).
+ *    in the required `submission` field; the server uses these cells for
+ *    truth-table correctness because there is no learner-authored expression.
  *  - circuit / pseudocode: the learner *builds* an expression, so its canonical
  *    form is in `submission`; `expression` here echoes it for self-containment,
  *    plus the rep-native source (topology / pseudocode text) for replay.
