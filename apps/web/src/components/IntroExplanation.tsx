@@ -34,6 +34,39 @@ export function IntroExplanation({
   // gate and instead shows the illustrative grid.
   const gate = gateForTopic(spec.topic);
 
+  // The illustration-only card (e.g. "Truth tables": a grid + explanatory prose,
+  // no gate) reads better as two columns on a wide card — the table on the left,
+  // the text on the right — instead of a tall single column with the grid pushed
+  // far below the fold. Operator cards (which carry a gate) keep their stacked
+  // layout. Collapses back to one column on narrow widths via CSS.
+  const twoColumn = Boolean(spec.illustration) && !gate;
+
+  if (twoColumn) {
+    return (
+      <section
+        className="intro-explanation intro-explanation--split"
+        aria-label={spec.topic}
+      >
+        <p className="eyebrow intro-explanation__eyebrow">Concept</p>
+        <h2 className="intro-explanation__topic">{spec.topic}</h2>
+        <div className="intro-explanation__split">
+          <div className="intro-explanation__split-figure">
+            <ReadOnlyTruthTable
+              illustration={spec.illustration!}
+              caption="Inputs on the left, Output on the right. Each row is one situation — read it across; the Output column top-to-bottom is what this operator does."
+            />
+          </div>
+          <p className="intro-explanation__body intro-explanation__split-text">{spec.body}</p>
+        </div>
+        {onAdvanceIntro && (
+          <button type="button" className="intro-continue-btn" onClick={onAdvanceIntro}>
+            Got it — continue
+          </button>
+        )}
+      </section>
+    );
+  }
+
   return (
     // B5 (a11y): label the region directly with this card's own topic. The old
     // `aria-labelledby="intro-explanation-topic"` used a HARDCODED, non-unique id;

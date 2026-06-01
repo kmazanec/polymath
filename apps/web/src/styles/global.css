@@ -515,6 +515,34 @@ button:disabled,
  * card uses paragraph breaks. The mono'd symbol/code fragments read as code inline. */
 .intro-explanation__body { margin: var(--space-4, 1.25rem) 0 0; max-width: 66ch; line-height: 1.65; color: var(--color-text); white-space: pre-line; }
 
+/* ── Two-column illustration card (the "Truth tables" explainer) ─────────────
+ * Grid + prose side by side: the table on the left, the text on the right, so
+ * the grid sits beside the explanation rather than far below it. Collapses to a
+ * single column (table first) on narrow cards. */
+.intro-explanation__split {
+  display: grid;
+  /* Fixed-ish figure column sized to the table; text takes the rest. (A bare
+   * `auto` lets the inner .truth-table card's full-width stretch eat the row,
+   * squashing the text into a one-word-per-line sliver.) */
+  grid-template-columns: 18rem minmax(0, 1fr);
+  gap: var(--space-5, 2rem);
+  align-items: start;
+  margin-top: var(--space-4, 1.25rem);
+}
+.intro-explanation__split-figure { margin: 0; min-width: 0; }
+/* The ReadOnlyTruthTable renders as a full .truth-table card; in this column it
+ * should fill the fixed figure column, not impose its own card chrome again. */
+.intro-explanation__split-figure > * { margin: 0; width: 100%; }
+/* Inside the grid the text manages its own column width — drop the top margin
+ * (the grid supplies the gap) but keep the readable measure. */
+.intro-explanation__split-text { margin: 0; max-width: 60ch; }
+@media (max-width: 52rem) {
+  .intro-explanation__split {
+    grid-template-columns: 1fr;
+    gap: var(--space-4, 1.25rem);
+  }
+}
+
 /* ── Operator gate diagram (AND/OR/NOT intro cards) ──────────────────────────
  * The canonical ANSI gate shape with input/output wire stubs, so the learner meets
  * the operator's logic-gate form alongside its symbol + code (brief: three reps). */
