@@ -233,6 +233,30 @@
       "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B", "correct": true },
       "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
       "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+    },
+    {
+      "id": "spoken-on-topic-boolean-question-answered",
+      "note": "F-30 (ADR-016) spoken-turn golden case: a voice-captured Boolean logic question routes through the same generic Q&A path as a typed question. Topic classification must be on_topic; answer must be grounded in Boolean logic. Deterministic offline (topic classification), not a live LLM eval.",
+      "event": { "kind": "learner_question", "question": "why does NAND always output true when both inputs are false?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "on_topic"
+    },
+    {
+      "id": "spoken-off-topic-question-deflected",
+      "note": "F-30 (ADR-016) spoken-turn off-topic golden case: a voice-captured question unrelated to Boolean logic must be deflected (off_topic). The spoken-turn path reuses the same topic guardrail as typed questions — countOffTopicAnswers increments identically. Deterministic offline.",
+      "event": { "kind": "learner_question", "question": "can you tell me a joke?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "off_topic"
+    },
+    {
+      "id": "spoken-not-gate-question-on-topic",
+      "note": "F-30 (ADR-016): spoken question about NOT gate operations. Topic classification: on_topic. The answer should confirm understanding or give further instruction about the NOT operation (ADR-016 AC#1).",
+      "event": { "kind": "learner_question", "question": "does NOT flip a true input to false?" },
+      "learnerState": { "consecutiveCorrect": 0, "hintsUsed": 0, "ruleGatePassed": false },
+      "expectMove": "answer_question",
+      "expectTopic": "on_topic"
     }
   ]
 }
