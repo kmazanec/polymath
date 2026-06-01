@@ -115,6 +115,17 @@ export const F26_MENU = [...F06_MENU, 'verify_playground_equivalence'] as const;
 
 const DEFAULT_GATES: Gate[] = ['AND', 'OR', 'NOT'];
 
+function transferPrompt(expression: string, targetRep: Rep): string {
+  switch (targetRep) {
+    case 'truth_table':
+      return `Transfer check: complete the truth table for ${expression}.`;
+    case 'circuit':
+      return `Transfer check: build a circuit for ${expression}.`;
+    case 'pseudocode':
+      return `Transfer check: write pseudocode for ${expression}.`;
+  }
+}
+
 /** Build the item-generating `ComponentSpec` for a proposed item. The three
  *  item-generating variants differ in their expression field name and (circuit
  *  only) `allowedGates`. F-27/F-29: passes through `item.prompt` to the spec so the
@@ -214,6 +225,7 @@ export function compileMove(move: TacticalMove): Action {
           targetRep: move.targetRep,
           hiddenReps: move.hiddenReps,
           itemId: move.itemId,
+          prompt: transferPrompt(move.expression, move.targetRep),
         },
         rationale: move.rationale,
       };

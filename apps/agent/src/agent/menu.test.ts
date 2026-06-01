@@ -149,6 +149,7 @@ describe('compileMove', () => {
     expect(a.component.targetRep).toBe('circuit');
     expect(a.component.hiddenReps).toEqual(['truth_table']);
     expect(a.component.itemId).toBe('L1-01-and');
+    expect(a.component.prompt).toBe('Transfer check: build a circuit for A AND B.');
   });
 
   it('no_action → no_action with reason preserved', () => {
