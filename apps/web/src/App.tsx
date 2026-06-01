@@ -174,65 +174,60 @@ function LessonSession({
   const transcript = surface.transcript;
 
   return (
-    <>
-      {/* F-27 (AC#5): orientation banner — tells the learner what mode they're in. */}
-      <div className="orientation-banner" data-phase={phase} data-testid="orientation-banner">
-        <span className="orientation-banner__text">{orientationText(phase)}</span>
+    <div className="thread">
+      {/* F-31 FlowSkeleton — slim glanceable progress stepper across the top.
+          aria-hidden is removed (the skeleton IS orientation content). */}
+      <div className="thread__stepper">
+        <FlowSkeleton phase={phase} />
       </div>
 
-      {/* F-27/F-31 layout: three-column grid [left-rail | workspace | transcript].
-          Left column: FlowSkeleton orientation rail (F-31).
-          Center: the anchored workspace (never scrolls away).
-          Right: the append-only transcript log. */}
-      <div className="lesson-layout">
-        {/* F-31 FlowSkeleton — mounted in the reserved left-rail slot.
-            aria-hidden is removed (the skeleton IS orientation content). */}
-        <div className="lesson-layout__rail">
-          <FlowSkeleton phase={phase} />
-        </div>
+      {/* THE CONVERSATION — one single-threaded vertical stream. Past turns scroll
+          up; the live workspace is anchored at the foot, just above the composer. */}
+      <div className="thread__scroll">
+        <div className="thread__inner">
+          {/* F-27 (AC#5): orientation banner — what mode the learner is in. Pinned to the
+              top of the thread; the test queries it by data-testid/data-phase. */}
+          <div className="orientation-banner" data-phase={phase} data-testid="orientation-banner">
+            <span className="orientation-banner__pip" aria-hidden="true" />
+            <span className="orientation-banner__text">{orientationText(phase)}</span>
+          </div>
 
-        {/* ANCHORED WORKSPACE — pinned; re-anchors only on new active item. */}
-        <div className="lesson-layout__workspace" data-testid="workspace">
-          <AnimateOrNot phase={phase}>
-            <div key={mountKey(mounted)}>
-              {renderComponent(mounted, {
-                onSubmit,
-                explainBackDeps,
-                onExplainBackEnd,
-                onContinue,
-                // F-27 AC#4: pass onAdvanceIntro only to intro/worked-example
-                // specs so the "Got it — continue" control appears in the workspace.
-                // In the transcript (read-only), onAdvanceIntro is omitted.
-                ...(mounted.kind === 'IntroExplanation' || mounted.kind === 'WorkedExample'
-                  ? { onAdvanceIntro }
-                  : {}),
-                ...(mounted.kind === 'MasteryCelebration' && mounted.nextLessonId === undefined
-                  ? { onTryPlayground }
-                  : {}),
-              })}
-            </div>
-          </AnimateOrNot>
-        </div>
-
-        {/* TRANSCRIPT — append-only ordered log. */}
-        <div className="lesson-layout__transcript">
+          {/* TRANSCRIPT — append-only ordered log, ABOVE the live item in one thread. */}
           <TranscriptLog turns={transcript} />
+
+          {/* THE LIVE TURN — the current concept / practice item / probe, anchored at
+              the foot of the conversation where the learner acts. */}
+          <div className="thread__live" data-testid="workspace">
+            <AnimateOrNot phase={phase}>
+              <div key={mountKey(mounted)}>
+                {renderComponent(mounted, {
+                  onSubmit,
+                  explainBackDeps,
+                  onExplainBackEnd,
+                  onContinue,
+                  // F-27 AC#4: onAdvanceIntro is now driven by the composer's ONE
+                  // primary button, not an in-card control — so it is NOT passed to
+                  // intro/worked-example specs here (no in-card "Got it — continue").
+                  ...(mounted.kind === 'MasteryCelebration' && mounted.nextLessonId === undefined
+                    ? { onTryPlayground }
+                    : {}),
+                })}
+              </div>
+            </AnimateOrNot>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {(phase === 'practicing' || phase === 'transferring') && (
-        <button
-          type="button"
-          className="hint-button"
-          onClick={onRequestHint}
-          disabled={conn !== 'open' || phase === 'transferring'}
-          aria-label="Request a hint"
-          data-phase={phase}
-        >
-          Hint
-        </button>
-      )}
-    </>
+/** Item-bearing / intro specs that the composer's ONE button advances with
+ *  `onAdvanceIntro` (a "Continue" affordance) when there's no pending question. */
+function isAdvanceable(spec: ComponentSpec): boolean {
+  return (
+    spec.kind === 'IntroExplanation' ||
+    spec.kind === 'WorkedExample' ||
+    spec.kind === 'LessonIntro'
   );
 }
 
@@ -617,27 +612,60 @@ export function App(): ReactElement {
     }
   }, [phase]);
 
+  // ── The ONE primary composer action ──────────────────────────────────────
+  // A single button that becomes Continue / Send by context (complaint #2):
+  //  - text in the box        → "Send"     (dispatches onAskQuestion)
+  //  - else an advanceable     → "Continue" (dispatches onAdvanceIntro)
+  //    intro/worked/lesson card
+  //  - else                    → "Send" (inert until the learner types)
+  const hasQuestion = question.trim().length > 0;
+  const canAdvance = !hasQuestion && !playground && isAdvanceable(surface.mounted);
+  const primaryLabel = hasQuestion ? 'Send' : canAdvance ? 'Continue' : 'Send';
+  const primaryDisabled = conn !== 'open' || (!hasQuestion && !canAdvance);
+  const onPrimary = useCallback((): void => {
+    if (question.trim().length > 0) {
+      onAskQuestion();
+      return;
+    }
+    if (!playground && isAdvanceable(surface.mounted)) {
+      onAdvanceIntro();
+    }
+  }, [question, playground, surface.mounted, onAskQuestion, onAdvanceIntro]);
+
+  // The Hint affordance is a CLEARLY-SECONDARY control during practice only, and is
+  // disabled during a transfer probe (probe-integrity boundary — preserved).
+  const hintVisible = !playground && (phase === 'practicing' || phase === 'transferring');
+
   return (
-    <main>
+    <main className="lesson-shell">
       <h1 className="visually-hidden">Polymath — Boolean logic lesson</h1>
       <header className="app-shell-top">
         <div className="app-logo"><span className="app-logo__mark" aria-hidden="true">◑</span> Polymath</div>
         <div className="app-shell-progress">
           {/* Legacy phase-chip retained for existing tests that query data-phase */}
           <span className="phase-chip" data-phase={phase}>{phase}</span>
+          <OverflowMenu sessionId={sessionId} />
         </div>
       </header>
+
       {analyticsConsent === null && (
         <ConsentModal onAccept={onAcceptAnalytics} onDecline={onDeclineAnalytics} />
       )}
+
       {playground ? (
-        <div key="playground">
-          {renderComponent(playground, {
-            onPlaygroundSubmit,
-            onPlaygroundRequestScaffold,
-            onExitPlayground,
-            playgroundScaffold: playgroundAnswer?.kind === 'AgentAnswer' ? playgroundAnswer.answer : null,
-          })}
+        <div className="thread" key="playground">
+          <div className="thread__scroll">
+            <div className="thread__inner">
+              <div className="thread__live">
+                {renderComponent(playground, {
+                  onPlaygroundSubmit,
+                  onPlaygroundRequestScaffold,
+                  onExitPlayground,
+                  playgroundScaffold: playgroundAnswer?.kind === 'AgentAnswer' ? playgroundAnswer.answer : null,
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       ) : (
         <LessonSession
@@ -656,44 +684,82 @@ export function App(): ReactElement {
         />
       )}
 
-      <div className="lesson-support">
+      {/* ── THE COMMAND BAR — one pinned composer, OUTSIDE the content ────────
+          A mic icon lives INSIDE the input; ONE primary button (Continue/Send);
+          the Hint is a quiet secondary chip shown only during practice. */}
+      <div className="composer">
+        {intelligibilityFor && (
+          <IntelligibilityCheck mountedKind={intelligibilityFor} onAnswer={onIntelligibilityAnswer} />
+        )}
+
         <form
-          className="ask-agent"
+          className="composer__bar"
           onSubmit={(e) => {
             e.preventDefault();
-            onAskQuestion();
+            onPrimary();
           }}
         >
-          <label htmlFor="ask-agent-input">Ask the tutor a question</label>
-          <input
-            id="ask-agent-input"
-            type="text"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            disabled={conn !== 'open'}
-            placeholder="e.g. what does an AND gate do?"
-          />
-          <button type="submit" disabled={conn !== 'open' || question.trim().length === 0}>
-            Ask
+          {hintVisible && (
+            <button
+              type="button"
+              className="hint-button composer__hint"
+              onClick={onRequestHint}
+              disabled={conn !== 'open' || phase === 'transferring'}
+              aria-label="Request a hint"
+              data-phase={phase}
+            >
+              <span aria-hidden="true">💡</span> Hint
+            </button>
+          )}
+
+          <div className="ask-agent">
+            <label className="visually-hidden" htmlFor="ask-agent-input">Ask the tutor a question</label>
+            {sessionId && <AskTutorButton sessionId={sessionId} />}
+            <input
+              id="ask-agent-input"
+              type="text"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              disabled={conn !== 'open'}
+              placeholder="Ask the tutor anything…"
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="btn btn--primary composer__primary"
+            disabled={primaryDisabled}
+          >
+            {primaryLabel}
+            <span className="btn__arrow" aria-hidden="true">→</span>
           </button>
         </form>
-
-        {sessionId && <AskTutorButton sessionId={sessionId} />}
-
-        <HandoffButton sessionId={sessionId} />
       </div>
-
-      {intelligibilityFor && (
-        <IntelligibilityCheck mountedKind={intelligibilityFor} onAnswer={onIntelligibilityAnswer} />
-      )}
 
       <p className="app-conn-status" aria-live="polite" data-conn={conn} data-phase={phase}>
         Connection: {conn}
       </p>
-
-      <footer className="app-footer">
-        <AboutSessionData />
-      </footer>
     </main>
+  );
+}
+
+/**
+ * The quiet overflow ("⋯") menu — collapses the formerly-scattered secondary
+ * affordances (hand off to a tutor, about this session's data) into ONE
+ * unobtrusive control (complaint #2). A real <details>/<summary> disclosure:
+ * keyboard-operable, no JS state, native Esc-free toggle. The AboutSessionData
+ * modal trigger and the HandoffButton link live inside.
+ */
+function OverflowMenu({ sessionId }: { sessionId: string | null }): ReactElement {
+  return (
+    <details className="overflow">
+      <summary className="overflow__trigger" aria-label="More options">
+        <span aria-hidden="true">⋯</span>
+      </summary>
+      <div className="overflow__panel" role="menu">
+        <HandoffButton sessionId={sessionId} />
+        <AboutSessionData />
+      </div>
+    </details>
   );
 }

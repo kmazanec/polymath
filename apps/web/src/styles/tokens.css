@@ -164,6 +164,31 @@
   --shadow-lift: 0 12px 32px rgba(50,54,97,0.16), 0 2px 8px rgba(50,54,97,0.08);
   --ease-spring: cubic-bezier(0.16,0.84,0.44,1);
   --dur-hover: 0.18s;
+
+  /* ── "Signal Desk" — the reimagined lesson-shell substrate (App.tsx) ──────────
+   * The lesson shell is a FIXED dark workbench in BOTH light and dark themes — it is
+   * a focused, full-bleed app surface (a logician's terminal), not a document that
+   * flips with the OS theme. So these tokens are theme-fixed; the cards rendered ON
+   * the desk keep their own --color-surface (which DOES flip) and stay AA on both.
+   * The signature accent rail is an electric violet→cyan that traces the live thread
+   * and the progress stepper. signal-green stays reserved for "correct" (untouched). */
+  --desk-bg: #0b0d1f;
+  --desk-glow-violet: rgba(108, 99, 255, 0.16);
+  --desk-glow-cyan: rgba(23, 226, 234, 0.10);
+  /* The conversation thread sits on a slightly lifted panel above the desk. */
+  --desk-panel: rgba(255, 255, 255, 0.025);
+  --desk-hairline: rgba(255, 255, 255, 0.08);
+  --desk-text: #e9ebff;
+  --desk-text-muted: #9aa0c8;
+  /* The signature accent rail / spine gradient — the one memorable gesture. */
+  --rail: linear-gradient(180deg, #7b6cff 0%, #5b8cff 50%, #17e2ea 100%);
+  --rail-violet: #7b6cff;
+  --rail-cyan: #17e2ea;
+  --desk-accent: #8b8cf0;
+  /* The command-bar composer surface — a darker trough the input + button sit in. */
+  --composer-bg: rgba(8, 10, 26, 0.92);
+  --composer-field: rgba(255, 255, 255, 0.05);
+  --composer-hairline: rgba(255, 255, 255, 0.12);
 }
 
 @media (prefers-color-scheme: dark) {

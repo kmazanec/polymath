@@ -49,6 +49,38 @@ main {
   gap: var(--space-4, 1.5rem);
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+ * "SIGNAL DESK" — the reimagined lesson shell (tablet-first conversation).
+ *
+ * The lesson surface is NOT a centered document column; it is a full-viewport app
+ * frame that owns 100dvh: a slim progress stepper at the top, ONE single-threaded
+ * scrolling conversation in the middle (history → live item, top to bottom), and a
+ * pinned command-bar composer at the foot. iPad portrait + landscape both fill the
+ * screen with no dead zones. (Owner complaints #1, #3, #4.)
+ *
+ * This is scoped to `main.lesson-shell` so the marketing/report views keep the
+ * generic centered `main` above.
+ * ════════════════════════════════════════════════════════════════════════════ */
+main.lesson-shell {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  height: 100dvh;
+  min-height: 100dvh;
+  /* The desk substrate: a deep indigo-black workbench with two faint accent auroras
+     bleeding in from the corners — atmosphere, not a flat fill. */
+  background: var(--desk-bg);
+  background-image:
+    radial-gradient(900px 600px at 8% -8%, var(--desk-glow-violet) 0%, transparent 60%),
+    radial-gradient(900px 600px at 100% 108%, var(--desk-glow-cyan) 0%, transparent 60%);
+  background-attachment: fixed;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+}
+
 /* Visible focus ring for keyboard users (never `outline: none` without a replacement).
  * 3px offset so the ring sits clearly OUTSIDE a pill/ghost button's own border rather
  * than merging with it (design-audit a11y L-3). */
@@ -683,120 +715,366 @@ button:disabled,
 }
 .mastery-celebration .continue-to-next-lesson:disabled { background: rgba(255,255,255,0.75); color: #202344; }
 
-/* ─── F-27: Coherent learning surface (ADR-015) ─────────────────────────────
-   Two-column grid: [left-rail reserved for F-31] [anchored workspace] [transcript].
-   On narrow viewports (< 48rem) stacks single-column with the transcript below.
-   ────────────────────────────────────────────────────────────────────────────*/
+/* ════════════════════════════════════════════════════════════════════════════
+ * SIGNAL DESK — the single-threaded conversation + command-bar composer.
+ *
+ * Reimagines the old 3-column grid (rail | workspace | transcript) into ONE
+ * vertical thread: a slim stepper on top, a scrolling conversation in the middle
+ * (history above, the live item anchored at the foot), and a pinned composer below
+ * with ONE primary button. (Owner complaints #1, #2, #3, #4.)
+ * ════════════════════════════════════════════════════════════════════════════ */
 
-.lesson-layout {
+/* The thread is the middle grid row of main.lesson-shell; it scrolls INTERNALLY so
+   the stepper + composer stay pinned and the screen never document-scrolls. */
+.thread {
   display: grid;
-  /* F-31: rail is now 10rem (was 0 reserved for F-31); workspace + transcript share 1fr each. */
-  grid-template-columns: 10rem 1fr 1fr;
-  grid-template-rows: auto;
-  gap: var(--space-4, 1.5rem);
-  align-items: start;
+  grid-template-rows: auto 1fr;
+  min-height: 0;            /* let the scroller actually shrink inside the grid */
+  overflow: hidden;
 }
-@media (max-width: 56rem) {
-  /* Collapse to single column on narrow / tablet-portrait viewports. */
-  .lesson-layout {
-    grid-template-columns: 1fr;
-  }
-  .lesson-layout__rail { display: none; }
-  .lesson-layout__transcript { margin-top: var(--space-4, 1.5rem); }
+.thread__stepper {
+  padding: var(--space-2-5) clamp(1rem, 4vw, 2.5rem) var(--space-2);
+  border-bottom: 1px solid var(--desk-hairline);
+}
+.thread__scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The conversation column: constrained measure, CENTERED in the wide tablet/desktop
+   viewport, with the signature accent SPINE running up the left edge of the thread —
+   the one continuous line of thought from top to bottom. `margin-top: auto` bottom-
+   anchors the conversation so the live item rests just above the composer when the
+   thread is short, and scrolls naturally once it fills the viewport. */
+.thread__inner {
+  width: 100%;
+  max-width: 52rem;
+  margin: auto auto 0;
+  padding: var(--space-4) clamp(1rem, 4vw, 2.5rem) var(--space-5);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3-5);
+}
+.thread__inner::before {
+  content: '';
+  position: absolute;
+  left: clamp(0.4rem, 2vw, 1.1rem);
+  top: var(--space-5);
+  bottom: var(--space-5);
+  width: 2px;
+  border-radius: 2px;
+  background: var(--rail);
+  opacity: 0.5;
+}
+/* The live turn — the current concept / practice item / probe, anchored at the foot
+   of the conversation, lifted and ringed so it reads as "this is yours to act on now". */
+.thread__live {
+  position: relative;
+  border-radius: var(--radius-card);
+}
+.thread__live::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: calc(var(--radius-card) + 3px);
+  padding: 2px;
+  background: var(--rail);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  opacity: 0.7;
+  pointer-events: none;
 }
 
-/* Left rail: sticky orientation column — houses FlowSkeleton (F-31). */
-.lesson-layout__rail {
-  position: sticky;
-  top: var(--space-4, 1.5rem);
-}
-
-/* Anchored workspace: never scrolls away, anchored to the top */
-.lesson-layout__workspace {
-  position: sticky;
-  top: var(--space-4, 1.5rem);
-  min-height: 16rem;
-}
-
-/* Transcript: ordered, append-only log */
-.lesson-layout__transcript {
-  min-height: 4rem;
-}
-
-.transcript-log {
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, rgba(0,0,0,.08));
-  border-radius: var(--radius-card, .75rem);
-  padding: var(--space-3, 1rem);
-}
+/* ── The conversation log (history) — one chat thread, top → bottom ───────── */
+.transcript-log { display: contents; }   /* the <section> is a transparent wrapper; turns are direct thread children */
 .transcript-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2, .5rem);
+  gap: var(--space-3);
 }
-.transcript-list-item {
-  animation: fade-in 200ms ease-out;
-}
+.transcript-list-item { animation: fade-in 220ms var(--ease-spring); }
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: none; }
 }
 .transcript-empty {
-  color: var(--color-text-muted, #999);
-  font-size: .875rem;
-  font-style: italic;
+  color: var(--desk-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  letter-spacing: 0.02em;
+  padding-left: 1.5rem;
 }
 
-/* Individual turn types */
-.transcript-turn { padding: var(--space-1, .25rem) var(--space-2, .5rem); border-radius: .5rem; }
-.transcript-turn--hint   { background: var(--color-hint-bg, #fffbe6); border-left: 3px solid #f59e0b; }
-.transcript-turn--answer { background: var(--color-surface, #fff); border-left: 3px solid var(--color-accent, #6366f1); }
-.transcript-turn--recall { background: var(--color-surface, #fff); border-left: 3px solid #64748b; }
+/* Turn cards float ON the desk — translucent panels with a left accent tab, set off
+   from the spine. Agent/teaching turns lean left; the learner's own turns lean right. */
+.transcript-turn { border-radius: var(--radius-md); }
+.transcript-turn :is(.intro-explanation, .worked-example, .hint-card, .agent-answer, .cross-lesson-recall) {
+  border-radius: var(--radius-md);
+}
 .transcript-turn--verdict {
-  display: flex;
-  align-items: center;
-  gap: .5rem;
-  font-weight: 600;
-  border-radius: .5rem;
-  padding: .375rem .75rem;
-}
-.transcript-verdict--correct  { background: #ecfdf5; color: #065f46; border-left: 3px solid #10b981; }
-.transcript-verdict--incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #ef4444; }
-.verdict-icon { font-size: 1.1em; }
-.transcript-turn--completed-item { color: var(--color-text-muted, #64748b); font-size: .875rem; }
-.completed-item-label { display: flex; align-items: center; gap: .375rem; }
-.transcript-turn--spoken { display: flex; flex-direction: column; gap: .25rem; padding: .5rem .75rem; }
-.transcript-spoken--learner { background: #f0f4ff; border-radius: 1rem 1rem 0 1rem; align-self: flex-end; }
-.transcript-spoken--agent   { background: #f8f8f8; border-radius: 1rem 1rem 1rem 0; }
-.spoken-speaker { font-size: .75rem; font-weight: 600; color: var(--color-text-muted, #64748b); }
-
-/* Orientation banner (AC#5): tells the learner what mode they're in */
-.orientation-banner {
-  background: var(--color-surface, #fff);
-  border: 1px solid var(--color-border, rgba(0,0,0,.08));
-  border-radius: var(--radius-pill, 2rem);
-  padding: .375rem 1rem;
   display: inline-flex;
   align-items: center;
   gap: .5rem;
-  font-size: .875rem;
-  font-weight: 500;
-  color: var(--color-ink, #1b1f3a);
-  margin-bottom: var(--space-2, .5rem);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-pill);
+  padding: .4rem .9rem;
+  align-self: flex-start;
+  border: 1px solid transparent;
+}
+.transcript-verdict--correct  { background: rgba(20,201,138,0.14); color: #5ef0bf; border-color: rgba(20,201,138,0.4); }
+.transcript-verdict--incorrect { background: rgba(240,149,74,0.14); color: #ffb27a; border-color: rgba(240,149,74,0.4); }
+.verdict-icon { font-size: 1.1em; }
+.transcript-turn--completed-item {
+  color: var(--desk-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding-left: 1.5rem;
+}
+.completed-item-label { display: flex; align-items: center; gap: .4rem; opacity: 0.75; }
+.completed-item-label span[aria-hidden] { color: var(--color-signal); }
+.transcript-turn--spoken { display: flex; flex-direction: column; gap: .3rem; padding: .65rem .95rem; max-width: 85%; }
+.transcript-spoken--learner {
+  background: linear-gradient(135deg, rgba(123,108,255,0.22), rgba(91,140,255,0.18));
+  border: 1px solid rgba(123,108,255,0.35);
+  border-radius: 1rem 1rem .25rem 1rem;
+  align-self: flex-end;
+  color: var(--desk-text);
+}
+.transcript-spoken--agent {
+  background: var(--desk-panel);
+  border: 1px solid var(--desk-hairline);
+  border-radius: 1rem 1rem 1rem .25rem;
+  color: var(--desk-text);
+}
+.spoken-speaker { font-family: var(--font-mono); font-size: var(--font-size-xs); font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--desk-text-muted); }
+
+/* Orientation banner (AC#5) — a slim mono mode-line at the top of the thread. */
+.orientation-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  align-self: flex-start;
+  padding: .35rem .9rem .35rem .7rem;
+  border-radius: var(--radius-pill);
+  background: var(--desk-panel);
+  border: 1px solid var(--desk-hairline);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--desk-text-muted);
+}
+.orientation-banner__pip {
+  width: .5rem; height: .5rem; border-radius: 50%;
+  background: var(--rail-violet);
+  box-shadow: 0 0 0 3px rgba(123,108,255,0.22);
 }
 .orientation-banner[data-phase="transferring"] {
-  background: #fffbe6;
-  border-color: #f59e0b;
-  color: #92400e;
+  border-color: rgba(214,185,74,0.5); color: #e6cf6a;
 }
+.orientation-banner[data-phase="transferring"] .orientation-banner__pip { background: #d6b94a; box-shadow: 0 0 0 3px rgba(214,185,74,0.22); }
 .orientation-banner[data-phase="mastered"] {
-  background: #ecfdf5;
-  border-color: #10b981;
-  color: #065f46;
+  border-color: rgba(20,201,138,0.5); color: #5ef0bf;
 }
+.orientation-banner[data-phase="mastered"] .orientation-banner__pip { background: var(--color-signal); box-shadow: 0 0 0 3px var(--color-signal-glow); }
+
+/* ── The command bar — ONE pinned composer, outside the content ──────────── */
+.composer {
+  background: var(--composer-bg);
+  border-top: 1px solid var(--composer-hairline);
+  backdrop-filter: blur(12px);
+  padding: var(--space-3) clamp(1rem, 4vw, 2.5rem)
+           calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2-5);
+}
+.composer__bar {
+  width: 100%;
+  max-width: 52rem;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2-5);
+}
+/* The input field is the centerpiece: a rounded trough with the mic INSIDE it. */
+.composer .ask-agent {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .3rem .4rem .3rem .5rem;
+  border-radius: var(--radius-pill);
+  background: var(--composer-field);
+  box-shadow: inset 0 0 0 1px var(--composer-hairline);
+  transition: box-shadow var(--dur-hover) ease;
+}
+.composer .ask-agent:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--rail-violet), 0 0 0 4px rgba(123,108,255,0.18);
+}
+.composer .ask-agent input {
+  font: inherit;
+  font-size: var(--font-size-md);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: .55rem .25rem;
+  border: none;
+  background: transparent;
+  color: var(--desk-text);
+}
+.composer .ask-agent input::placeholder { color: var(--desk-text-muted); }
+.composer .ask-agent input:focus-visible { outline: none; }
+
+/* The voice control becomes a MIC ICON inside the input (complaint #2). Its text
+   label stays in the DOM (the accessible name + the tests read it) but is visually
+   collapsed to font-size 0; the 🎤 glyph is restored to full size. */
+.composer .ask-tutor { flex: 0 0 auto; }
+.composer .ask-tutor__button {
+  width: var(--touch-target-min); height: var(--touch-target-min);
+  min-width: var(--touch-target-min); padding: 0;
+  border-radius: 50%;
+  font-size: 0;                                   /* collapse the text label visually */
+  background: transparent; color: var(--desk-text-muted);
+  box-shadow: none;
+}
+.composer .ask-tutor__button > span[aria-hidden] { font-size: 1.2rem; }
+.composer .ask-tutor__button:not(:disabled):hover {
+  transform: none; background: rgba(123,108,255,0.18); color: var(--desk-text);
+}
+.composer .ask-tutor__button[data-voice-state="connected"] {
+  background: rgba(240,90,90,0.2); color: #ff9a9a;
+}
+.composer .ask-tutor--unavailable .ask-tutor__button { color: var(--desk-text-muted); opacity: 0.5; }
+.composer .ask-tutor__note { display: none; }     /* the input placeholder already explains; keep the bar clean */
+
+/* The ONE primary button — Continue / Send. Carries the accent rail as a fill. */
+.composer__primary {
+  flex: 0 0 auto;
+  background: var(--rail-violet);
+  background-image: linear-gradient(135deg, var(--rail-violet), #5b8cff);
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(123,108,255,0.4);
+}
+.composer__primary:not(:disabled):hover {
+  transform: translateY(-2px);
+  background-image: linear-gradient(135deg, #8b7dff, #6e9bff);
+  box-shadow: 0 10px 28px rgba(123,108,255,0.5);
+}
+
+/* The Hint — a CLEARLY-SECONDARY ghost chip, left of the input during practice only. */
+.composer__hint {
+  flex: 0 0 auto;
+  align-self: center;
+  background: transparent;
+  color: var(--desk-text-muted);
+  box-shadow: inset 0 0 0 1px var(--desk-hairline);
+  font-size: var(--font-size-sm);
+  padding: 0.5rem 1rem;
+}
+.composer__hint:not(:disabled):hover {
+  color: var(--desk-text);
+  box-shadow: inset 0 0 0 1px var(--rail-violet);
+}
+
+/* Intelligibility check — a quiet inline row above the bar, not a fat card. */
+.composer .intelligibility-check {
+  width: 100%; max-width: 52rem; margin: 0 auto;
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  font-size: var(--font-size-sm); color: var(--desk-text-muted);
+}
+.composer .intelligibility-check__prompt { margin: 0; font-family: var(--font-mono); }
+.composer .intelligibility-check__actions { display: flex; gap: var(--space-2); }
+.composer .intelligibility-check .btn--ghost {
+  color: var(--desk-text); box-shadow: inset 0 0 0 1px var(--desk-hairline);
+  min-height: 2.25rem; padding: .35rem 1rem; font-size: var(--font-size-sm);
+}
+.composer .intelligibility-check .btn--ghost:hover { box-shadow: inset 0 0 0 1px var(--rail-violet); }
+
+/* ── Tablet portrait (≤ 53rem): the bar wraps so the input keeps a usable width ── */
+@media (max-width: 53rem) {
+  .composer__bar { flex-wrap: wrap; }
+  .composer .ask-agent { flex: 1 1 100%; order: -1; }
+  .composer__hint { order: 1; }
+  .composer__primary { order: 2; margin-left: auto; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * Lesson-shell chrome overrides — the header + cards on the FIXED dark desk.
+ * (The base rules above use theme-flipping --color-* tokens; on the fixed dark
+ * substrate we pin them to the desk palette so contrast holds in both OS themes.)
+ * ════════════════════════════════════════════════════════════════════════════ */
+.lesson-shell .app-shell-top {
+  margin: 0;
+  padding: var(--space-2-5) clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--desk-hairline);
+  background: transparent;
+}
+.lesson-shell .app-logo { color: var(--desk-text); letter-spacing: var(--tracking-display); }
+.lesson-shell .app-shell-progress { display: flex; align-items: center; gap: var(--space-2); }
+.lesson-shell .phase-chip {
+  background: var(--desk-panel); color: var(--desk-text-muted);
+  box-shadow: inset 0 0 0 1px var(--desk-hairline);
+}
+
+/* The overflow "⋯" menu — the quiet home for handoff + about-session. */
+.overflow { position: relative; }
+.overflow__trigger {
+  list-style: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--touch-target-min); height: var(--touch-target-min);
+  border-radius: 50%; color: var(--desk-text-muted);
+  font-size: 1.4rem; line-height: 1; user-select: none;
+}
+.overflow__trigger::-webkit-details-marker { display: none; }
+.overflow__trigger:hover { background: var(--desk-panel); color: var(--desk-text); }
+.overflow[open] .overflow__trigger { background: var(--desk-panel); color: var(--desk-text); }
+.overflow__panel {
+  position: absolute; right: 0; top: calc(100% + .4rem); z-index: 50;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  min-width: 16rem; padding: var(--space-3);
+  background: #14162c; border: 1px solid var(--desk-hairline);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lift);
+}
+.overflow__panel .handoff-button,
+.overflow__panel .about-session-trigger {
+  color: var(--desk-accent); text-align: left;
+  min-height: var(--touch-target-min); display: inline-flex; align-items: center;
+}
+
+/* The cards rendered in the thread (intro, hint, practice, etc.) keep --color-surface
+   which DOES flip with the OS theme — that's intentional: the WORK cards are light in
+   light mode / dark in dark mode and stay AA, floating on the fixed dark desk. They get
+   a slightly stronger lift so they read as resting ON the dark workbench. */
+.thread .lesson-intro,
+.thread .hint-card,
+.thread .agent-answer,
+.thread .transfer-probe,
+.thread .explain-back,
+.thread .cross-lesson-recall,
+.thread .circuit-builder,
+.thread .truth-table,
+.thread .intro-explanation,
+.thread .worked-example,
+.thread .mastery-celebration,
+.thread .playground-canvas {
+  box-shadow: var(--shadow-lift);
+}
+
+/* The connection-status line stays an off-screen aria-live region (announced, not seen). */
 
 /* "Got it — continue" button for intro/worked-example cards (AC#4) */
 .intro-continue-btn {
@@ -859,83 +1137,94 @@ button:disabled,
  * block above (animation/transition: none !important) so no separate override needed.
  * ─────────────────────────────────────────────────────────────────────────── */
 
-.flow-skeleton {
-  padding: var(--space-2, .5rem) 0;
-}
+/* On the Signal Desk the skeleton is a slim HORIZONTAL stepper across the top —
+   glanceable orientation, not a fat sidebar. Each step is a node + label; a connector
+   line runs between them, lit up to the furthest-reached phase. */
+.flow-skeleton { padding: 0; }
 
 .flow-skeleton__list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2, .5rem);
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
 }
 
 .flow-skeleton__step {
   display: flex;
   align-items: center;
-  gap: var(--space-2, .5rem);
-  font-size: var(--font-size-sm, .85rem);
-  color: var(--color-text-muted);
-  line-height: var(--line-height-tight, 1.4);
-  padding: .25rem 0;
+  gap: .45rem;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--desk-text-muted);
   position: relative;
+  padding: .15rem 0;
+}
+/* Connector line between steps. */
+.flow-skeleton__step:not(:last-child)::after {
+  content: '';
+  width: clamp(1rem, 3vw, 2.75rem);
+  height: 2px;
+  margin: 0 .55rem;
+  border-radius: 2px;
+  background: var(--desk-hairline);
 }
 
 .flow-skeleton__dot {
   display: inline-block;
-  width: .5rem;
-  height: .5rem;
+  width: .55rem;
+  height: .55rem;
   border-radius: 50%;
-  background: var(--color-low, #c2c6d8);
+  background: var(--desk-hairline);
   flex: 0 0 auto;
   transition: background var(--dur-hover, .18s) ease,
-              transform var(--dur-hover, .18s) var(--ease-spring);
+              transform var(--dur-hover, .18s) var(--ease-spring),
+              box-shadow var(--dur-hover, .18s) ease;
 }
 
 /* Active step (current phase on the mainline, or the mainline parent of a branch). */
 .flow-skeleton__step--active .flow-skeleton__dot {
-  background: var(--color-accent, #4a4bb6);
-  transform: scale(1.4);
+  background: var(--rail-violet);
+  transform: scale(1.35);
 }
 .flow-skeleton__step--active .flow-skeleton__label {
-  color: var(--color-ink);
+  color: var(--desk-text);
   font-weight: 600;
 }
 [aria-current='step'] > .flow-skeleton__dot {
-  background: var(--color-accent, #4a4bb6);
-  box-shadow: 0 0 0 3px rgba(74, 75, 182, .25);
+  background: var(--rail-violet);
+  box-shadow: 0 0 0 4px rgba(123, 108, 255, .28);
 }
 
-/* Completed mainline step (earlier than the furthest reached). */
-.flow-skeleton__step--completed .flow-skeleton__dot {
-  background: var(--color-pass, #097a54);
-}
-.flow-skeleton__step--completed .flow-skeleton__label {
-  color: var(--color-text-muted);
-  text-decoration-line: none;
-}
+/* Completed mainline step (earlier than the furthest reached) — lit cyan, connector lit. */
+.flow-skeleton__step--completed .flow-skeleton__dot { background: var(--rail-cyan); }
+.flow-skeleton__step--completed::after { background: linear-gradient(90deg, var(--rail-cyan), var(--rail-violet)); }
+.flow-skeleton__step--completed .flow-skeleton__label { color: var(--desk-text-muted); }
 
-/* Branch marker — appears inline below the active mainline label. */
+/* Branch marker — a small pill trailing the active mainline label. */
 .flow-skeleton__branch {
-  display: block;
-  margin-left: calc(.5rem + var(--space-2, .5rem));
-  margin-top: .1rem;
-  font-size: var(--font-size-xs, .72rem);
+  display: inline-block;
+  margin-left: .45rem;
+  font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   font-weight: 600;
   letter-spacing: var(--tracking-label, .07em);
   text-transform: uppercase;
-  color: var(--color-accent, #4a4bb6);
-  background: var(--color-lavender, #f4f5ff);
+  color: var(--rail-cyan);
+  background: rgba(23, 226, 234, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(23, 226, 234, 0.35);
   border-radius: var(--radius-pill, 9999px);
-  padding: .15rem .5rem;
+  padding: .12rem .55rem;
   white-space: nowrap;
 }
 
-@media (prefers-color-scheme: dark) {
-  .flow-skeleton__branch {
-    background: var(--color-lavender, #1b1f3a);
-  }
+/* On narrow tablet-portrait, hide the step labels (keep dots + branch) so the stepper
+   stays a single glanceable row and never wraps awkwardly. */
+@media (max-width: 40rem) {
+  .flow-skeleton__step:not(.flow-skeleton__step--active) .flow-skeleton__label { display: none; }
 }

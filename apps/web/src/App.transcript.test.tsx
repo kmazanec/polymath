@@ -24,6 +24,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import type { ComponentSpec, ServerMessage } from '@polymath/contract';
 import type { AgentSocketHandlers } from './ws/client.js';
+import {
+  ANALYTICS_CONSENT_ACCEPT,
+  ANALYTICS_CONSENT_DECLINE,
+  ANALYTICS_CONSENT_TITLE,
+} from './copy/privacy.js';
 
 // ── AgentSocket double ──────────────────────────────────────────────────────
 
@@ -44,6 +49,14 @@ vi.mock('./ws/client.js', () => ({
     close(): void {}
   },
 }));
+
+const posthogMock = vi.hoisted(() => ({
+  initPostHog: vi.fn(async () => undefined),
+  capture: vi.fn(),
+  groupBySession: vi.fn(),
+}));
+
+vi.mock('./observability/posthog.js', () => posthogMock);
 
 // Silence the voice button (token endpoint not available in jsdom).
 vi.mock('./voice/AskTutorButton.js', () => ({ AskTutorButton: () => null }));
@@ -106,6 +119,10 @@ const INTRO_EXPLANATION: ComponentSpec = {
 beforeEach(() => {
   capturedHandlers = null;
   sentFrames.length = 0;
+  window.localStorage.clear();
+  posthogMock.initPostHog.mockClear();
+  posthogMock.capture.mockClear();
+  posthogMock.groupBySession.mockClear();
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => ({ json: async () => ({ sessionId: SESSION_ID }) })) as unknown as typeof fetch,
@@ -114,10 +131,48 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
 // ── Tests ────────────────────────────────────────────────────────────────────
+
+describe('App analytics consent persistence', () => {
+  it('persists an accepted analytics choice and does not ask again on remount', async () => {
+    const first = render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    fireEvent.click(first.getByText(ANALYTICS_CONSENT_ACCEPT));
+
+    expect(window.localStorage.getItem('polymath.analyticsConsent.v1')).toBe('accepted');
+    await waitFor(() => expect(posthogMock.initPostHog).toHaveBeenCalledTimes(1));
+
+    first.unmount();
+    capturedHandlers = null;
+    render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    expect(document.body.textContent).not.toContain(ANALYTICS_CONSENT_TITLE);
+  });
+
+  it('persists a declined analytics choice and does not initialize analytics on remount', async () => {
+    const first = render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    fireEvent.click(first.getByText(ANALYTICS_CONSENT_DECLINE));
+
+    expect(window.localStorage.getItem('polymath.analyticsConsent.v1')).toBe('declined');
+    expect(posthogMock.initPostHog).not.toHaveBeenCalled();
+
+    first.unmount();
+    capturedHandlers = null;
+    render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    expect(document.body.textContent).not.toContain(ANALYTICS_CONSENT_TITLE);
+    expect(posthogMock.initPostHog).not.toHaveBeenCalled();
+  });
+});
 
 describe('App transcript model (F-27 AC#1/#2)', () => {
   it('accumulates a transcript: intro → hint → second item, never overwriting', async () => {
