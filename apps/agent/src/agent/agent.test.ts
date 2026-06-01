@@ -4,6 +4,7 @@ import { StubAgentClient } from './stubClient.js';
 import type { AgentInput } from './client.js';
 import { loadLesson } from '../lessons/loader.js';
 import { validateOutboundAction } from './validateAction.js';
+import { readLessonIntro } from './introAdvance.js';
 
 const lesson = loadLesson(1);
 const SID = '00000000-0000-0000-0000-000000000000';
@@ -269,34 +270,48 @@ describe('inner-agent: intro_advance (F-27 AC#4, menu-lockstep)', () => {
     };
   }
 
-  it('stage 0 (0 prior mounts): advances to IntroExplanation', async () => {
-    const inp = introAdvanceInput(0);
-    const action = await new StubAgentClient().propose(inp);
-    // The lesson has intro content with explanations; stage 0 → IntroExplanation.
-    if (action.type === 'mount') {
-      // May be IntroExplanation (if intro content is present) or a practice item.
-      expect(['IntroExplanation', 'TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'])
-        .toContain(action.component.kind);
-    } else {
-      // no_action is acceptable if intro content is absent (graceful degrade).
-      expect(action.type).toBe('no_action');
+  // Lesson 1 teaches every operator (AND, OR, NOT) and then the truth-table grid
+  // BEFORE the worked example — so the intro walks all N explanation cards in order,
+  // then the worked example at stage N, then practice. This guards that arc: the
+  // learner is never asked to fill a table before the table has been taught.
+  const introExplanationCount = readLessonIntro(1)?.explanations?.length ?? 0;
+
+  it('teaches every authored explanation card in order before the worked example', async () => {
+    // The real Lesson 1 has the operator+table explanation cards; assert the arc.
+    expect(introExplanationCount).toBeGreaterThanOrEqual(4); // AND, OR, NOT, Truth tables
+    for (let stage = 0; stage < introExplanationCount; stage++) {
+      const action = await new StubAgentClient().propose(introAdvanceInput(stage));
+      expect(action.type).toBe('mount');
+      if (action.type === 'mount') {
+        expect(action.component.kind).toBe('IntroExplanation');
+      }
     }
   });
 
-  it('stage 1 (1 prior mount): advances to WorkedExample or practice item', async () => {
-    const inp = introAdvanceInput(1);
-    const action = await new StubAgentClient().propose(inp);
-    if (action.type === 'mount') {
-      expect(['WorkedExample', 'TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'])
-        .toContain(action.component.kind);
-    } else {
-      expect(action.type).toBe('no_action');
+  it('the LAST explanation card is the truth-table card (taught after the operators)', async () => {
+    const action = await new StubAgentClient().propose(
+      introAdvanceInput(introExplanationCount - 1),
+    );
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount' && action.component.kind === 'IntroExplanation') {
+      expect(action.component.topic.toLowerCase()).toContain('truth table');
     }
   });
 
-  it('stage 2+ (2+ prior mounts): mounts the first practice item', async () => {
-    const inp = introAdvanceInput(2);
-    const action = await new StubAgentClient().propose(inp);
+  it('stage N (after all explanations): advances to the WorkedExample', async () => {
+    const action = await new StubAgentClient().propose(
+      introAdvanceInput(introExplanationCount),
+    );
+    expect(action.type).toBe('mount');
+    if (action.type === 'mount') {
+      expect(action.component.kind).toBe('WorkedExample');
+    }
+  });
+
+  it('stage N+1+ (after the worked example): mounts the first practice item', async () => {
+    const action = await new StubAgentClient().propose(
+      introAdvanceInput(introExplanationCount + 1),
+    );
     if (action.type === 'mount') {
       expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'])
         .toContain(action.component.kind);

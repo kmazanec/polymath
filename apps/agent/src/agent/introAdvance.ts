@@ -193,34 +193,49 @@ export function explanationBeforeNextItem(input: AgentInput): TacticalMove | nul
 
 /**
  * The deterministic opening move.  Shared between `session_start` and
- * `intro_advance`.  Stage is derived from prior mount count in `recentHistory`:
+ * `intro_advance`.  Stage is derived from prior mount count in `recentHistory`,
+ * and the intro now walks EVERY authored explanation IN ORDER before the worked
+ * example, so the lesson teaches each operator (and then the truth-table grid)
+ * before any practice — never showing a representation it hasn't taught.
  *
- *   Stage 0 (0 prior mounts) → IntroExplanation (first KC explanation)
- *   Stage 1 (1 prior mount)  → WorkedExample
- *   Stage 2 (2+ prior mounts)→ first practice item
+ * With E authored explanation cards [e0, e1, …, e(E-1)]:
+ *   Stage 0           → IntroExplanation e0      (e.g. AND)
+ *   Stage 1           → IntroExplanation e1      (e.g. OR)
+ *   …
+ *   Stage E-1         → IntroExplanation e(E-1)  (e.g. the truth-table card)
+ *   Stage E           → WorkedExample
+ *   Stage E+1 onward  → first practice item
+ *
+ * `priorMounts` is the number of mount turns already shown in this opening
+ * sequence, so it IS the index of the next card to teach. (Backwards-compatible:
+ * a lesson with a single explanation behaves exactly as the old stage 0/1/2.)
  */
 export function openingMove(input: AgentInput): TacticalMove {
   const priorMounts = input.recentHistory.filter((t) => t.actionType === 'mount').length;
   const intro = readLessonIntro(input.lesson.content.lessonId);
 
   if (intro) {
-    if (priorMounts === 0) {
-      const firstExplanation = intro.explanations?.[0];
-      if (firstExplanation) {
-        const visibleReps = toRepArray(firstExplanation.visibleReps);
-        const illustration = toIllustration(firstExplanation.illustration);
+    const explanations = intro.explanations ?? [];
+
+    // Stages 0..E-1: teach each authored explanation card in order.
+    if (priorMounts < explanations.length) {
+      const explanation = explanations[priorMounts];
+      if (explanation) {
+        const visibleReps = toRepArray(explanation.visibleReps);
+        const illustration = toIllustration(explanation.illustration);
         return {
           move: 'intro_explanation',
-          topic: firstExplanation.topic,
-          body: firstExplanation.body,
+          topic: explanation.topic,
+          body: explanation.body,
           visibleReps,
           ...(illustration ? { illustration } : {}),
-          rationale: `intro stage 0 — mounting IntroExplanation for KC "${firstExplanation.topic}" (opening move)`,
+          rationale: `intro stage ${priorMounts}/${explanations.length} — teaching "${explanation.topic}" before practice (opening move)`,
         };
       }
     }
 
-    if (priorMounts === 1) {
+    // Stage E: the worked example, once every explanation has been taught.
+    if (priorMounts === explanations.length) {
       const we = intro.workedExample;
       if (we) {
         const visibleReps = toRepArray(we.visibleReps, ['truth_table']);
@@ -231,7 +246,7 @@ export function openingMove(input: AgentInput): TacticalMove {
           steps: we.steps,
           visibleReps,
           ...(illustration ? { illustration } : {}),
-          rationale: `intro stage 1 — mounting WorkedExample for "${we.expression}" (opening move)`,
+          rationale: `intro stage ${priorMounts} — mounting WorkedExample for "${we.expression}" after all ${explanations.length} explanation(s) (opening move)`,
         };
       }
     }
