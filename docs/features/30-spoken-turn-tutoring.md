@@ -83,3 +83,34 @@ LiveKit env (`LIVEKIT_API_KEY`/`SECRET`/`URL`) + `OPENAI_API_KEY` for the live v
 **Invariants:** server-captured only, never the client frame; fail closed to empty; the legitimate path actually fills the seam; explain-back untouched (sibling); off-topic folds into the uncapped `countOffTopicAnswers`; `events.app IS NULL`; WS bound-session; append-only wire; TTS-out stays explain-back-only (reply is TEXT); `RealtimeSession` interface unchanged (add a getter).
 
 ## Implementation notes (filled in by the building agent)
+
+### Resolved decisions
+
+**D9 (spoken flag):** `answer_question.spoken` is forwarded through `actionAdapter.ts` in the `AdapterResult.answer` shape. App.tsx calls `appendSpokenTurn(prev, 'learner', question)` before `applyMount(answerSpec)` when `r.answer.spoken` is true — this gives the learner-bubble-then-agent-reply interleaving in order. Absent `spoken` → no learner bubble (typed path unchanged).
+
+**D10 (trigger kind):** `spoken_turn { sessionId }` with NO transcript/question field. The Zod schema strips any junk fields a client attaches. The server Zod parse test + adversarial integration test both verify no client string survives.
+
+**WS binding (item 8):** `boundSessionId` threaded through `FrameOptions` from the `ws.on('message')` closure. `handleSpokenTurnTurn` uses `effectiveSessionId = boundId` for ALL DB operations (utterance lookup, events insert, reply). A frame with a forged `sessionId` gets no row written under the victim session.
+
+**Empty-capture no-op:** quiet `ack` (recommended) — the client knows the trigger was received without an error surfacing.
+
+**Persist kind:** `spoken_turn` (not `learner_question`) with `capturedQuestion` field in the payload event so the replay shows the server-captured text.
+
+### Assumptions
+
+- The `learner_question` synthetic event reuses the full generic turn (BKT fold, learnerState update, proposeWithTimeout). This means a spoken Q&A DOES update `learner_state` — this is intentional (a spoken question is a legitimate turn).
+- Off-topic spoken questions increment `countOffTopicAnswers` identically to typed ones because the synthetic `learner_question` is processed by the same fold. Confirmed by the integration test (item 13).
+- The `appendSpokenTurn` for the learner side uses the server-captured question (from `r.answer.question`), which equals `action.question` since the stub sets `question: ev.question`. In production with a real LLM, the `action.question` will echo the captured text (the LLM receives it as the `learner_question` event).
+
+### What downstream features inherit
+
+- `PolymathServer.learnerUtteranceRegistry` is exposed for the production VoiceBridge to call `setLatest(sessionId, text)` via its `onLearnerUtterance` callback.
+- `VoiceBridgeOpts.onLearnerUtterance?` is the callback slot. The production wiring in `createServer` would inject `(text) => utteranceRegistry.setLatest(sessionId, text)` when spinning up a VoiceBridge per session.
+- The `SpokenTurn` shape in `surfaceState.ts` (from F-27) is what the transcript renders; F-30 calls `appendSpokenTurn` to produce it.
+- F-32 owns `OpenAISpokenGroundednessJudge` + the live bank. F-30 contributed 3 topic-classification golden cases to `scenarios.json`.
+
+### Blockers / deferred items
+
+- The production VoiceBridge-to-registry wiring (connecting a live LiveKit session to `utteranceRegistry.setLatest`) is the deferred cross-platform device smoke — the same pattern as the explain-back seam. The seam EXISTS and the unit test proves the bridge fires the callback; binding a live session awaits real keys + devices.
+- `TTS-out stays explain-back-only` per spec: the spoken-Q&A reply is TEXT (`answer_question`), not synthesized speech. This is intentional.
+- `voice_turn` double-logging: spoken Q&A does NOT produce a `voice_turn` row — only a `spoken_turn` row. The spec confirmed "the `answer_question` row is sufficient."
