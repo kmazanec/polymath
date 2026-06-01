@@ -7,12 +7,19 @@
  * ─────────────────────────────────────────────────────────────────────────── */
 
 /* Visible handle dot: 14px — large enough to see, small enough to not clutter.
- * The transparent ::before adds a 44px (2.75rem) hit-slop around each handle. */
+ * The transparent ::before adds a 44px (2.75rem) hit-slop around each handle.
+ *
+ * NOTE: do NOT set `position` here. The xyflow library's own style.css already
+ * declares `.react-flow__handle { position: absolute }` and positions each handle
+ * via `.react-flow__handle-{left,right,top,bottom}` with top/left/transform.
+ * Overriding to `position: relative` would discard those offsets and misplace every
+ * wire endpoint. Since `position: absolute` IS a positioned containing block,
+ * the `::before { position: absolute }` below is still anchored to the handle — no
+ * override needed. */
 .react-flow__handle {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  position: relative; /* needed for ::before absolute positioning */
 }
 .react-flow__handle::before {
   content: '';
