@@ -757,17 +757,85 @@ function blockerRemediationAction(blockers: MasteryGateResult['blockers']): Acti
   };
 }
 
-function wrongSubmitRemediationAction(
+/** Server-side recompute of the correct truth table for an arbitrary learner-attempted
+ *  expression (R2-2). The server NEVER trusts a client-supplied answer key — the wrong-submit
+ *  retry must carry a `claimedTruthTable` the Layer-2 gate (validateLayer2) will accept, so we
+ *  recompute it here from the expression via @polymath/booleans. Honors the distinct-variable
+ *  cap (the booleans grammar permits 26 vars → 2^26 enumeration blocks the event loop;
+ *  CLAUDE.md invariant). Over-cap or unparseable → null (skip), NEVER an enumeration. */
+function recomputeTruthTableForExpression(expression: string): (0 | 1)[] | null {
+  try {
+    if (variables(parse(expression)).length > MAX_EQUIVALENCE_VARS) return null;
+    return truthTable(expression).out.map((b) => (b ? 1 : 0));
+  } catch {
+    return null;
+  }
+}
+
+/** Build a rep-aware, editable practice/retry mount for an arbitrary expression + recomputed
+ *  truth table. Shared by the authored and NON-AUTHORED (LLM-generated continued-practice)
+ *  wrong-submit remediation paths (R2-2) so both yield an editable retry, never `no_action`.
+ *  `visibleReps` always includes the item's own rep so the surface renders (the
+ *  `repairVisibleReps` chokepoint in validateAction.ts also enforces this; we set it correctly
+ *  regardless). This mount still flows through validateOutboundAction + Layer-2 + the earned-it
+ *  gate at the call site — it is never privileged (no MasteryCelebration/TransferProbe/ExplainBack). */
+function retryMountForExpression(
+  lesson: Lesson,
+  expression: string,
+  truthTableOut: (0 | 1)[],
+  rep: 'truth_table' | 'circuit' | 'pseudocode',
+  prompt: string,
+  rationale: string,
+): Action {
+  const visibleReps = [rep];
+  switch (rep) {
+    case 'truth_table':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'TruthTablePractice',
+          expression,
+          claimedTruthTable: truthTableOut,
+          visibleReps,
+          prompt,
+        },
+        rationale,
+      };
+    case 'circuit':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'CircuitBuilder',
+          targetExpression: expression,
+          claimedTruthTable: truthTableOut,
+          allowedGates: lesson.content.lessonId === 3 ? ['NAND'] : ['AND', 'OR', 'NOT'],
+          visibleReps,
+          prompt,
+        },
+        rationale,
+      };
+    case 'pseudocode':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'PseudocodeChallenge',
+          targetExpression: expression,
+          claimedTruthTable: truthTableOut,
+          visibleReps,
+          prompt,
+        },
+        rationale,
+      };
+  }
+}
+
+export function wrongSubmitRemediationAction(
   event: ClientEvent,
   lesson: Lesson,
   priorMissesByItem: Record<string, number>,
   proposedAction?: Action,
 ): Action | null {
   if (event.kind !== 'submit') return null;
-  const item = lesson.content.items.find(
-    (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,
-  );
-  if (!item) return null;
   const rep = event.repSubmission?.rep ?? 'truth_table';
   const attempt = (priorMissesByItem[event.itemId] ?? 0) + 1;
   const llmExplanation = remediationTextFromAction(proposedAction);
@@ -782,54 +850,42 @@ function wrongSubmitRemediationAction(
     pseudocode:
       'rewrite the expression step by step, checking it matches the operator rule for every input.',
   };
-  const prompt =
-    llmExplanation ??
-    `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: ${repGuidance[rep]}`;
-  const visibleReps = [rep];
-  const rationale =
-    llmExplanation
+
+  const item = lesson.content.items.find(
+    (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,
+  );
+
+  if (item) {
+    // Authored item: use the item's own (validator-checked) truthTable.
+    const prompt =
+      llmExplanation ??
+      `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: ${repGuidance[rep]}`;
+    const rationale = llmExplanation
       ? `incorrect submit for "${event.itemId}"; converting agent explanation into editable retry mount (server reflex)`
       : `incorrect submit for "${event.itemId}" produced no usable agent remediation; remounting same item (server reflex)`;
-
-  switch (rep) {
-    case 'truth_table':
-      return {
-        type: 'mount',
-        component: {
-          kind: 'TruthTablePractice',
-          expression: item.targetExpression,
-          claimedTruthTable: item.truthTable,
-          visibleReps,
-          prompt,
-        },
-        rationale,
-      };
-    case 'circuit':
-      return {
-        type: 'mount',
-        component: {
-          kind: 'CircuitBuilder',
-          targetExpression: item.targetExpression,
-          claimedTruthTable: item.truthTable,
-          allowedGates: lesson.content.lessonId === 3 ? ['NAND'] : ['AND', 'OR', 'NOT'],
-          visibleReps,
-          prompt,
-        },
-        rationale,
-      };
-    case 'pseudocode':
-      return {
-        type: 'mount',
-        component: {
-          kind: 'PseudocodeChallenge',
-          targetExpression: item.targetExpression,
-          claimedTruthTable: item.truthTable,
-          visibleReps,
-          prompt,
-        },
-        rationale,
-      };
+    return retryMountForExpression(lesson, item.targetExpression, item.truthTable, rep, prompt, rationale);
   }
+
+  // R2-2 (CRITICAL dead-end class): the submitted item is NOT one of the lesson's authored
+  // `content.items` — it is an LLM-GENERATED continued-practice item (e.g. "A & B" minted by
+  // the agent past the authored ladder). The old lookup returned null here, so a WRONG submit
+  // produced `no_action` and the workspace stayed LOCKED on the disabled item — the learner
+  // was STRANDED with no retry. Instead, re-mount the SAME expression the learner just
+  // attempted, using only data carried on the submit frame: the expression is `event.itemId`
+  // (the client sets currentItemId = spec.expression; `event.submission` echoes it as the
+  // canonical string). We RECOMPUTE the correct truth table server-side (never trust a client
+  // answer key) so the retry has a Layer-2-valid `claimedTruthTable`. Over-cap/unparseable
+  // expression → null (no editable retry possible) → fall through to the forward-progress net.
+  const expression = (event.itemId || event.submission || '').trim();
+  if (expression.length === 0) return null;
+  const recomputed = recomputeTruthTableForExpression(expression);
+  if (!recomputed) return null;
+  const prompt =
+    llmExplanation ?? `Try ${expression} again. Attempt ${attempt.toString()}: ${repGuidance[rep]}`;
+  const rationale = llmExplanation
+    ? `incorrect submit for non-authored item "${event.itemId}"; converting agent explanation into editable retry mount with server-recomputed truth table (server reflex, R2-2)`
+    : `incorrect submit for non-authored item "${event.itemId}" produced no usable agent remediation; remounting same expression with server-recomputed truth table (server reflex, R2-2)`;
+  return retryMountForExpression(lesson, expression, recomputed, rep, prompt, rationale);
 }
 
 function remediationTextFromAction(action: Action | undefined): string | null {
@@ -1019,12 +1075,23 @@ export function deterministicAuthoredPhaseAction(input: AgentInput): Action | nu
   const next = controlledItems[idx + 1];
   if (!next) return null;
 
+  // REP-PRESERVATION (R2-3): the learner picked a representation (?rep=circuit /
+  // ?rep=pseudocode, "Skip to code", …) and is answering THIS item in it — read
+  // it back off the submit's `repSubmission`. Thread it into the NEXT item's
+  // mount so the authored per-KC walk stays in the learner's rep instead of
+  // silently snapping every subsequent item to the `authoredPracticeAction`
+  // default of `truth_table`. (The just-in-time explanation below is rep-neutral
+  // — a concept card — and `practiceAfterLatestExplanation` independently
+  // re-derives the active rep from `recentHistory` for the item it follows.)
+  const rep = repFromSubmitEvent(event);
+
   const explanation = authoredLessonPlanAction(input);
   if (explanation) return explanation;
   return authoredPracticeAction(
     input.lesson,
     next,
-    `authored lesson sequence — mounting next first-KC practice item "${next.itemId}"`,
+    `authored lesson sequence — mounting next first-KC practice item "${next.itemId}" in learner rep "${rep}"`,
+    rep,
   );
 }
 
@@ -2432,12 +2499,34 @@ export async function handleClientFrame(
   // Without this, every subsequent correct transfer (in a future where the judge is
   // wired and a learner CAN pass) loops a mastered learner back into explain-back.
   // explainBackPassed is server-derived from the full log (never a client flag).
-  const wrongSubmitFallback =
-    event.kind === 'submit' &&
-    learnerDerived.currentSubmitCorrect === false &&
-    !matchesSubmittedAuthoredItem(validatedAction, event, lesson)
-      ? wrongSubmitRemediationAction(event, lesson, learnerDerived.priorMissesByItem, validatedAction)
-      : null;
+  // R2-2: the wrong-submit remediation reflex must flow through the SAME outbound gates as the
+  // agent's own proposals (validateOutboundAction + Layer-2 + earned-it) — it never bypasses
+  // them. The recomputed `claimedTruthTable` (server-sourced) means Layer-2 always accepts; the
+  // mount is a plain editable practice item, so the earned-it gate is a no-op (it only ever
+  // refuses privileged TransferProbe/mastery surfaces). Guard the result so a (defensive)
+  // rejection collapses to null rather than forwarding an unvalidated/refused action.
+  const wrongSubmitFallback: Action | null = (() => {
+    if (
+      event.kind !== 'submit' ||
+      learnerDerived.currentSubmitCorrect !== false ||
+      matchesSubmittedAuthoredItem(validatedAction, event, lesson)
+    ) {
+      return null;
+    }
+    const candidate = wrongSubmitRemediationAction(
+      event,
+      lesson,
+      learnerDerived.priorMissesByItem,
+      validatedAction,
+    );
+    if (!candidate) return null;
+    const { action: wsShaped } = validateOutboundAction(candidate);
+    if (!validateLayer2(wsShaped).ok) return null;
+    if (rejectUnauthorizedAction(wsShaped, learnerDerived.snapshot, gateEvaluation, transferCandidates)) {
+      return null;
+    }
+    return wsShaped;
+  })();
   const authoredSequenceFallback =
     !privilegedActionRejected &&
     event.kind === 'submit' &&
@@ -2509,19 +2598,61 @@ export async function handleClientFrame(
     }
   }
 
-  // B7: lightweight, greppable per-turn decision log so a future dead-end is visible
+  // R2-2 WRONG-SUBMIT FORWARD-PROGRESS NET (belt-and-suspenders, mirrors the B7 correct-submit
+  // net above). The invariant: a `submit` in `practicing` the learner can still act on must
+  // NEVER resolve to `no_action`. The B7 net only catches a CORRECT submit; a WRONG submit on
+  // a NON-authored (LLM-generated) item whose `wrongSubmitRemediationAction` somehow still
+  // failed (e.g. an over-cap/unparseable expression slipped past) would otherwise dead-end with
+  // the workspace LOCKED on the disabled item and no retry. This last-resort arm re-mounts the
+  // SAME expression the learner just attempted, editable, with a server-recomputed truth table.
+  // It is fail-closed: it NEVER mints a privileged surface (respects privilegedActionRejected),
+  // and still flows through validateOutboundAction + Layer-2 + the earned-it gate. If even the
+  // recompute is impossible (over-cap), it leaves `no_action` (truly unactionable — nothing to
+  // re-mount) rather than fabricating a surface.
+  let wrongSubmitNetFired = false;
+  if (
+    !privilegedActionRejected &&
+    action.type === 'no_action' &&
+    event.kind === 'submit' &&
+    learnerDerived.currentSubmitCorrect === false
+  ) {
+    const candidate = wrongSubmitRemediationAction(event, lesson, learnerDerived.priorMissesByItem);
+    if (candidate) {
+      const { action: wsShaped } = validateOutboundAction(candidate);
+      const wsLayer2 = validateLayer2(wsShaped);
+      const wsRejection = rejectUnauthorizedAction(
+        wsShaped,
+        learnerDerived.snapshot,
+        gateEvaluation,
+        transferCandidates,
+      );
+      if (wsLayer2.ok && !wsRejection && isEditablePracticeMount(wsShaped)) {
+        action = wsShaped;
+        wrongSubmitNetFired = true;
+      }
+    }
+  }
+
+  // B7/R2-2: lightweight, greppable per-turn decision log so a future dead-end is visible
   // in the agent's stdout (the agent previously logged NOTHING about its decisions).
-  // Names which arm produced the wire action: deterministic per-KC / llm / a reflex
-  // fallback / the B7 forward-progress net / a terminal no_action.
-  const decisionArm = forwardProgressFired
-    ? 'forward_progress_fallback'
-    : action.type === 'no_action'
-      ? 'no_action'
-      : action !== validatedAction
-        ? 'reflex_fallback'
-        : deterministicAuthoredAction
-          ? 'deterministic'
-          : 'llm';
+  // Names which arm produced the wire action: deterministic per-KC / llm / the wrong-submit
+  // remediation reflex / a reflex fallback / the B7 correct-submit forward-progress net /
+  // the R2-2 wrong-submit forward-progress net / a terminal no_action. The wrong-submit arms
+  // are named distinctly (`wrong_submit_remediation` / `wrong_submit_forward_progress`) so a
+  // re-occurrence of the R2-2 wrong-answer dead-end is greppable in stdout.
+  const decisionArm = wrongSubmitNetFired
+    ? 'wrong_submit_forward_progress'
+    : forwardProgressFired
+      ? 'forward_progress_fallback'
+      : action.type === 'no_action'
+        ? 'no_action'
+        : action === wrongSubmitFallback
+          ? 'wrong_submit_remediation'
+          : action !== validatedAction
+            ? 'reflex_fallback'
+            : deterministicAuthoredAction
+              ? 'deterministic'
+              : 'llm';
   console.info(
     `[polymath] turn decided session=${event.sessionId} event=${event.kind} ` +
       `correct=${String(learnerDerived.currentSubmitCorrect)} gatePassed=${String(gateEvaluation.passed)} ` +

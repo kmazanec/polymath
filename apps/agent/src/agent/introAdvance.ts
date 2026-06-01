@@ -149,21 +149,50 @@ function explanationForTopic(input: AgentInput, topic: string, rationale: string
   };
 }
 
+/**
+ * REP-PRESERVATION (R2-3): recover the representation the learner is actively
+ * working in from `recentHistory`, by reading the `componentKind` of the most
+ * recent item-bearing mount. The just-in-time-explanation path
+ * (`practiceAfterLatestExplanation`) advances on an `intro_advance` turn whose
+ * event carries NO `repSubmission`, so `repFromSubmitEvent`-style recovery is
+ * impossible here — but the learner's prior practice item IS in history, and its
+ * `componentKind` IS the rep (TruthTablePractice→truth_table, CircuitBuilder→
+ * circuit, PseudocodeChallenge→pseudocode). Without this, the item that follows a
+ * mid-lesson concept card always snapped back to truth_table, dropping a learner
+ * who started in code/circuit. Defaults to truth_table when no prior item-bearing
+ * mount is in the (bounded) window — a safe, lesson-default rep, never a crash.
+ */
+function activeRepFromHistory(input: AgentInput): Rep {
+  for (const turn of [...input.recentHistory].reverse()) {
+    if (turn.actionType !== 'mount') continue;
+    switch (turn.componentKind) {
+      case 'CircuitBuilder':
+        return 'circuit';
+      case 'PseudocodeChallenge':
+        return 'pseudocode';
+      case 'TruthTablePractice':
+        return 'truth_table';
+    }
+  }
+  return 'truth_table';
+}
+
 function itemMoveFor(
   input: AgentInput,
   item: AgentInput['lesson']['content']['items'][number],
   rationale: string,
 ): TacticalMove {
+  const rep = activeRepFromHistory(input);
   return {
     move: 'next_practice_item',
     tier: item.difficultyTier,
     rationale,
     item: {
-      rep: 'truth_table',
+      rep,
       targetExpression: item.targetExpression,
       claimedTruthTable: item.truthTable,
-      visibleReps: ['truth_table'],
-      prompt: defaultItemPrompt(item.targetExpression, 'truth_table'),
+      visibleReps: [rep],
+      prompt: defaultItemPrompt(item.targetExpression, rep),
     },
   };
 }
