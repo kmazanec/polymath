@@ -85,14 +85,13 @@ export function defaultItemPrompt(targetExpression: string, rep: string): string
   }
 }
 
-/** Display Boolean expressions with the formal logic symbols learners should learn. */
+/** Display Boolean expressions with the code-like operators learners should learn. */
 export function formatLogicExpression(expression: string): string {
   return expression
-    .replace(/\bNAND\b/g, '↑')
-    .replace(/\bNOR\b/g, '↓')
-    .replace(/\bAND\b/g, '∧')
-    .replace(/\bOR\b/g, '∨')
-    .replace(/\bNOT\b/g, '¬');
+    .replace(/\bNOT\s+(?=\()/g, '!')
+    .replace(/\bNOT\s+([A-Z])\b/g, '!$1')
+    .replace(/\bAND\b/g, '&')
+    .replace(/\bOR\b/g, '||');
 }
 
 function explanationForTopic(input: AgentInput, topic: string, rationale: string): TacticalMove | null {
