@@ -94,21 +94,27 @@ function IconPseudocode(): ReactElement {
 }
 
 /** The three irreducible representations with inline SVG icons. */
-const REPS: Array<{ icon: ReactElement; label: string; blurb: string }> = [
+const REPS: Array<{ icon: ReactElement; label: string; blurb: string; to: string; cta: string }> = [
   {
     icon: <IconTruthTable />,
     label: 'Truth table',
     blurb: 'A grid of toggles — flip inputs, watch the result column light up.',
+    to: '/lesson?rep=truth_table',
+    cta: 'Start at truth tables',
   },
   {
     icon: <IconCircuit />,
-    label: 'Circuit',
+    label: 'Logic gates',
     blurb: 'Canonical gate shapes you wire together, then pulse to see the signal flow.',
+    to: '/lesson?rep=circuit',
+    cta: 'Skip to logic gates',
   },
   {
     icon: <IconPseudocode />,
-    label: 'Pseudocode',
+    label: 'Code',
     blurb: 'A friendly line of code — the same logic, written out.',
+    to: '/lesson?rep=pseudocode',
+    cta: 'Skip to code',
   },
 ];
 
@@ -148,11 +154,15 @@ export function Overview(): ReactElement {
 
         <section className="overview__reps" aria-label="The three representations">
           {REPS.map((r) => (
-            <article key={r.label} className="rep-card card card--interactive">
+            <Link key={r.label} to={r.to} className="rep-card card card--interactive">
               <span className="glyph-chip" aria-hidden="true">{r.icon}</span>
               <h2 className="rep-card__label">{r.label}</h2>
               <p className="rep-card__blurb">{r.blurb}</p>
-            </article>
+              <span className="rep-card__cta">
+                {r.cta}
+                <span aria-hidden="true">→</span>
+              </span>
+            </Link>
           ))}
         </section>
 

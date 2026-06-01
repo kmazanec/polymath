@@ -75,6 +75,12 @@ function lessonFromUrl(): number {
   return 1;
 }
 
+function startRepFromUrl(): Rep | null {
+  const raw = new URLSearchParams(window.location.search).get('rep');
+  if (raw === 'truth_table' || raw === 'circuit' || raw === 'pseudocode') return raw;
+  return null;
+}
+
 const REP_PHRASES: Record<Rep, RegExp> = {
   truth_table: /truth\s*table/i,
   circuit: /\bcircuit\b/i,
@@ -269,6 +275,7 @@ function isAdvanceable(spec: ComponentSpec): boolean {
 
 export function App(): ReactElement {
   const [lessonId, setLessonId] = useState(lessonFromUrl);
+  const startRep = useRef<Rep | null>(startRepFromUrl());
   const [phase, setPhase] = useState<PhaseName>('introducing');
   const bridgeRef = useRef<LessonBridge>({ send: null, setPhase });
   const [conn, setConn] = useState<ConnState>('connecting');
@@ -343,7 +350,12 @@ export function App(): ReactElement {
         const socket = new AgentSocket(wsUrl, {
           onOpen: () => {
             setConn('open');
-            socket.send({ kind: 'session_start', sessionId: body.sessionId, lessonId });
+            socket.send({
+              kind: 'session_start',
+              sessionId: body.sessionId,
+              lessonId,
+              ...(startRep.current ? { startRep: startRep.current } : {}),
+            });
           },
           onClose: () => {
             setAwaitingAgent(false);

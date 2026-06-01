@@ -204,6 +204,7 @@ describe('wire protocol', () => {
   const SID = '00000000-0000-4000-8000-000000000000'; // a valid UUID
   const clientEvents: ClientEvent[] = [
     { kind: 'session_start', sessionId: SID, lessonId: 1 },
+    { kind: 'session_start', sessionId: SID, lessonId: 1, startRep: 'circuit' },
     { kind: 'submit', sessionId: SID, itemId: 'i', submission: 'A AND B' },
     { kind: 'request_hint', sessionId: SID, itemId: 'i' },
     { kind: 'transfer_submitted', sessionId: SID, itemId: 'i', submission: 'A' },

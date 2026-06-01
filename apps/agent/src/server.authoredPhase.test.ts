@@ -57,6 +57,27 @@ function inputForHint(itemId: string, hintsByItem: Record<string, number> = {}):
   };
 }
 
+function inputForShortcut(startRep: 'truth_table' | 'circuit' | 'pseudocode'): AgentInput {
+  return {
+    event: {
+      kind: 'session_start',
+      sessionId: SESSION_ID,
+      lessonId: 1,
+      startRep,
+    },
+    lesson: loadLesson(1),
+    learnerState: {
+      bktByKc: {},
+      hintsUsed: 0,
+      consecutiveCorrect: 0,
+      ruleGatePassed: false,
+      explainBackPassed: false,
+      topicGuardrailClean: true,
+    },
+    recentHistory: [],
+  };
+}
+
 describe('deterministic authored lesson phase', () => {
   it('remounts the same authored item after a wrong answer before any LLM move', () => {
     const action = deterministicAuthoredPhaseAction(inputForSubmit('l1-and', false, [0, 1, 0, 0]));
@@ -98,6 +119,19 @@ describe('deterministic authored lesson phase', () => {
       if (action.component.kind === 'HintCard') {
         expect(action.component.level).toBe(2);
         expect(action.component.body).toContain('A OR B');
+      }
+    }
+  });
+
+  it('starts at the requested representation when a lesson shortcut is present', () => {
+    const action = deterministicAuthoredPhaseAction(inputForShortcut('circuit'));
+
+    expect(action?.type).toBe('mount');
+    if (action?.type === 'mount') {
+      expect(action.component.kind).toBe('CircuitBuilder');
+      if (action.component.kind === 'CircuitBuilder') {
+        expect(action.component.targetExpression).toBe('B AND A');
+        expect(action.component.visibleReps).toEqual(['circuit']);
       }
     }
   });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Action } from './action.js';
+import { Rep } from './component.js';
 
 /**
  * WebSocket message protocol (ADR-009). Carried over `wss://…/agent`.
@@ -75,6 +76,7 @@ export const ClientEvent = z.discriminatedUnion('kind', [
     kind: z.literal('session_start'),
     sessionId: SessionId,
     lessonId: z.number(),
+    startRep: Rep.optional(),
   }),
   z.object({
     kind: z.literal('submit'),

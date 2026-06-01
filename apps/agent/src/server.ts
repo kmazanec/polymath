@@ -900,18 +900,52 @@ function firstPracticeItemPerKc(lesson: Lesson): Lesson['content']['items'] {
   return items;
 }
 
-function authoredPracticeAction(lesson: Lesson, item: Lesson['content']['items'][number], rationale: string): Action {
-  return {
-    type: 'mount',
-    component: {
-      kind: 'TruthTablePractice',
-      expression: item.targetExpression,
-      claimedTruthTable: item.truthTable,
-      visibleReps: ['truth_table'],
-      prompt: defaultItemPrompt(item.targetExpression, 'truth_table'),
-    },
-    rationale,
-  };
+function authoredPracticeAction(
+  lesson: Lesson,
+  item: Lesson['content']['items'][number],
+  rationale: string,
+  rep: 'truth_table' | 'circuit' | 'pseudocode' = 'truth_table',
+): Action {
+  const prompt = defaultItemPrompt(item.targetExpression, rep);
+  switch (rep) {
+    case 'truth_table':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'TruthTablePractice',
+          expression: item.targetExpression,
+          claimedTruthTable: item.truthTable,
+          visibleReps: ['truth_table'],
+          prompt,
+        },
+        rationale,
+      };
+    case 'circuit':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'CircuitBuilder',
+          targetExpression: item.targetExpression,
+          claimedTruthTable: item.truthTable,
+          allowedGates: lesson.content.lessonId === 3 ? ['NAND'] : ['AND', 'OR', 'NOT'],
+          visibleReps: ['circuit'],
+          prompt,
+        },
+        rationale,
+      };
+    case 'pseudocode':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'PseudocodeChallenge',
+          targetExpression: item.targetExpression,
+          claimedTruthTable: item.truthTable,
+          visibleReps: ['pseudocode'],
+          prompt,
+        },
+        rationale,
+      };
+  }
 }
 
 function authoredHintAction(input: AgentInput, item: Lesson['content']['items'][number]): Action {
@@ -934,9 +968,22 @@ function authoredHintAction(input: AgentInput, item: Lesson['content']['items'][
 
 export function deterministicAuthoredPhaseAction(input: AgentInput): Action | null {
   const event = input.event;
-  if (event.kind !== 'submit' && event.kind !== 'request_hint') return null;
+  if (event.kind !== 'session_start' && event.kind !== 'submit' && event.kind !== 'request_hint') return null;
 
   const controlledItems = firstPracticeItemPerKc(input.lesson);
+  if (event.kind === 'session_start') {
+    if (!event.startRep) return null;
+    const first = controlledItems[0];
+    return first
+      ? authoredPracticeAction(
+          input.lesson,
+          first,
+          `representation shortcut — starting lesson ${input.lesson.content.lessonId} in ${event.startRep}`,
+          event.startRep,
+        )
+      : null;
+  }
+
   if (event.kind === 'request_hint') {
     const item = controlledItems.find(
       (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,

@@ -119,6 +119,7 @@ const INTRO_EXPLANATION: ComponentSpec = {
 beforeEach(() => {
   capturedHandlers = null;
   sentFrames.length = 0;
+  window.history.pushState({}, '', '/lesson');
   window.localStorage.clear();
   posthogMock.initPostHog.mockClear();
   posthogMock.capture.mockClear();
@@ -171,6 +172,22 @@ describe('App analytics consent persistence', () => {
 
     expect(document.body.textContent).not.toContain(ANALYTICS_CONSENT_TITLE);
     expect(posthogMock.initPostHog).not.toHaveBeenCalled();
+  });
+});
+
+describe('App representation shortcuts', () => {
+  it('threads the requested representation into session_start', async () => {
+    window.history.pushState({}, '', '/lesson?rep=circuit');
+
+    render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    expect(sentFrames).toContainEqual({
+      kind: 'session_start',
+      sessionId: SESSION_ID,
+      lessonId: 1,
+      startRep: 'circuit',
+    });
   });
 });
 
