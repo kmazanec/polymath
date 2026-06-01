@@ -34,6 +34,31 @@ import {
 import { FlowSkeleton } from './components/FlowSkeleton.js';
 
 type ConnState = 'connecting' | 'open' | 'closed';
+type AnalyticsConsent = boolean | null;
+
+const ANALYTICS_CONSENT_STORAGE_KEY = 'polymath.analyticsConsent.v1';
+
+function readStoredAnalyticsConsent(): AnalyticsConsent {
+  try {
+    const raw = window.localStorage.getItem(ANALYTICS_CONSENT_STORAGE_KEY);
+    if (raw === 'accepted') return true;
+    if (raw === 'declined') return false;
+  } catch {
+    // Storage can be unavailable in private browsing or blocked contexts.
+  }
+  return null;
+}
+
+function writeStoredAnalyticsConsent(consent: boolean): void {
+  try {
+    window.localStorage.setItem(
+      ANALYTICS_CONSENT_STORAGE_KEY,
+      consent ? 'accepted' : 'declined',
+    );
+  } catch {
+    // Keep the in-memory choice for this session even if persistence is unavailable.
+  }
+}
 
 /**
  * F-13 AC#8 dev seam: the lesson the SPA runs, from a `?lesson=2` URL param. Until
@@ -269,20 +294,28 @@ export function App(): ReactElement {
   const activeHiddenReps = useRef<Rep[]>([]);
   const phaseRef = useRef<string>('introducing');
 
-  const [analyticsConsent, setAnalyticsConsent] = useState<boolean | null>(null);
+  const [analyticsConsent, setAnalyticsConsent] = useState<AnalyticsConsent>(
+    readStoredAnalyticsConsent,
+  );
 
   const onAcceptAnalytics = useCallback((): void => {
+    writeStoredAnalyticsConsent(true);
     setAnalyticsConsent(true);
+  }, []);
+
+  const onDeclineAnalytics = useCallback((): void => {
+    writeStoredAnalyticsConsent(false);
+    setAnalyticsConsent(false);
+  }, []);
+
+  useEffect(() => {
+    if (analyticsConsent !== true) return;
     void initPostHog({
       key: import.meta.env.VITE_POSTHOG_KEY ?? '',
       host: import.meta.env.VITE_POSTHOG_HOST ?? '',
       consent: true,
     });
-  }, []);
-
-  const onDeclineAnalytics = useCallback((): void => {
-    setAnalyticsConsent(false);
-  }, []);
+  }, [analyticsConsent]);
 
   useEffect(() => {
     let cancelled = false;
