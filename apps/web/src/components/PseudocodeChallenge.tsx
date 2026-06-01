@@ -181,7 +181,7 @@ function PseudocodeChallengeInner({ spec, onSubmit }: Props): ReactElement {
       {spec.prompt && (
         <p id="pc-prompt" className="item-prompt">{spec.prompt}</p>
       )}
-      <h2 id={EDITOR_LABEL_ID} style={{ fontSize: '1rem', margin: 0 }}>
+      <h2 id={EDITOR_LABEL_ID} className="pseudocode-challenge__label">
         Write a Boolean expression equivalent to:{' '}
         <code className="pseudo-target">{spec.targetExpression}</code>
       </h2>

@@ -204,6 +204,22 @@
   }
 }
 
+/* B2: while the hero is in its TWO-column composition (viewport ≥ 60rem), the demo
+ * occupies only the narrow right column — too tight for the InteractiveHero's own
+ * three side-by-side panels, so the third (pseudocode) card overflowed/clipped at
+ * iPad-landscape (1024px). Stack the panels inside the hero-demo into a single column
+ * in that band. Below 60rem the hero collapses to one column and the demo regains full
+ * width, where the ihero's native 3-column layout fits — so this only applies ≥ 60rem. */
+@media (min-width: 60.01rem) {
+  .landing__hero-demo .ihero__panels {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'table'
+      'gate'
+      'code';
+  }
+}
+
 /* ── pillars ── */
 .landing__pillars {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3-5);

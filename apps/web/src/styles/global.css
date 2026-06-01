@@ -667,6 +667,22 @@ button:disabled,
   box-shadow: inset 0 0 0 2px var(--color-signal), 0 0 0 4px var(--color-signal-glow); }
 
 /* Pseudocode editor — friendly notebook (Task 6). */
+/* The challenge label ("Write a Boolean expression equivalent to: [target]") sits
+ * DIRECTLY on a surface, not inside a white card. On a light surface --color-ink reads;
+ * on the fixed-dark Signal Desk it must use --desk-text (the .thread override below) —
+ * otherwise --color-ink resolves dark-navy under a light OS theme and goes dark-on-dark
+ * (B9: contrast ~1.3:1). The label is also a flex row so the mono target chip keeps a
+ * gap from the prose and wraps instead of crowding the text. */
+.pseudocode-challenge__label {
+  font-size: 1rem;
+  margin: 0;
+  color: var(--color-ink);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.thread .pseudocode-challenge__label { color: var(--desk-text); }
 .pseudo-target { font-family: var(--font-mono); background: var(--color-lavender); color: var(--color-accent);
   padding: 0.1rem 0.5rem; border-radius: var(--radius-md); font-weight: 600; }
 

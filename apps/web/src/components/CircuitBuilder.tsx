@@ -225,6 +225,7 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             fitView
+            proOptions={{ hideAttribution: true }}
           >
             <Background />
           </ReactFlow>
