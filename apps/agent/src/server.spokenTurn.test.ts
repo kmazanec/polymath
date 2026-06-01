@@ -121,43 +121,36 @@ describe.skipIf(!canRunPg)('F-30 spoken-turn integration + adversarial', () => {
 
   // ── checklist item 9 (adversarial) ──────────────────────────────────────
   // Client sends spoken_turn with a DIFFERENT sessionId than the bound one.
-  // The server uses the WS-bound id for ALL DB operations — the forged frame
-  // sessionId does NOT write rows to the victim session.
-  it('item 9: spoken_turn forged sessionId does NOT write to the victim session', async () => {
-    const sessionA = await newSession(); // attacker (bound session)
-    const sessionB = await newSession(); // victim (forged frame sessionId)
+  // MR !11 review tightened this: a frame whose sessionId ≠ the WS-bound id is
+  // ACKED and DROPPED before any agent call (it neither answers nor writes a row).
+  // Previously it still answered the bound session's utterance; now a mismatched
+  // frame gets nothing. The victim session is, a fortiori, never written.
+  it('item 9: spoken_turn with frame sessionId ≠ bound id is acked, never answered or persisted', async () => {
+    const sessionA = await newSession(); // bound session
+    const sessionB = await newSession(); // forged frame sessionId
 
-    // Prime the utterance registry for sessionA (the attacker's bound session).
+    // Prime the utterance registry for sessionA (the bound session).
     server.learnerUtteranceRegistry.setLatest(sessionA, 'question for A');
 
-    // The frame claims sessionB (victim), but the WS is bound to sessionA.
-    // The server uses the WS-bound id (sessionA) for all DB operations:
-    //  - utterance lookup → uses sessionA → finds the primed question
-    //  - events insert → uses sessionA (NOT sessionB)
-    //  - reply sessionId → sessionA
-    // So the victim sessionB gets NO rows written.
+    // The WS is bound to sessionA; the frame claims sessionB. Mismatch → ack + drop.
     const reply = await spokenTurnRoundTrip(sessionA, {
       kind: 'spoken_turn',
-      sessionId: sessionB, // forged: frame claims victim session
+      sessionId: sessionB, // forged: frame claims a different session
     });
 
-    // The reply must target the BOUND session (sessionA), not the forged sessionB.
-    if (reply.kind === 'action') {
-      // The action came from sessionA's utterance → spoken:true
-      expect((reply as { action?: { spoken?: boolean } }).action?.spoken).toBe(true);
-    }
+    // Mismatched frame → ack (NOT an answer).
+    expect(reply.kind).toBe('ack');
+    expect((reply as { event?: string }).event).toBe('spoken_turn');
 
-    // CRITICAL: NO spoken_turn row under the victim sessionB.
+    // No spoken_turn row under EITHER session (dropped before persistence).
     const rowsB = await db.select().from(events).where(eq(events.sessionId, sessionB));
-    const spokenB = rowsB.filter((r) => r.kind === 'spoken_turn');
-    expect(spokenB).toHaveLength(0);
+    expect(rowsB.filter((r) => r.kind === 'spoken_turn')).toHaveLength(0);
+    const rowsA = await db.select().from(events).where(eq(events.sessionId, sessionA));
+    expect(rowsA.filter((r) => r.kind === 'spoken_turn')).toHaveLength(0);
 
-    // The row (if any) is under sessionA.
-    if (reply.kind === 'action') {
-      const rowsA = await db.select().from(events).where(eq(events.sessionId, sessionA));
-      const spokenA = rowsA.filter((r) => r.kind === 'spoken_turn');
-      expect(spokenA.length).toBeGreaterThan(0);
-    }
+    // And the primed utterance was NOT consumed (the mismatched frame never read it),
+    // so a legitimate matched spoken_turn could still answer it.
+    expect(server.learnerUtteranceRegistry.latestFor(sessionA)).toBe('question for A');
   });
 
   // ── checklist item 9 (adversarial, part 2) ──────────────────────────────
@@ -210,13 +203,39 @@ describe.skipIf(!canRunPg)('F-30 spoken-turn integration + adversarial', () => {
     const rows = await db.select().from(events).where(eq(events.sessionId, sessionId));
     const spokenRows = rows.filter((r) => r.kind === 'spoken_turn');
     expect(spokenRows).toHaveLength(1);
-    // The payload shape: { event: { capturedQuestion }, action: { spoken:true }, learnerSnapshot }
+    // The payload shape: { event: { kind, sessionId, capturedQuestion }, action, snapshot }
     const payload = spokenRows[0]!.payload as {
-      event?: { capturedQuestion?: string };
+      event?: { kind?: string; sessionId?: string; capturedQuestion?: string };
       action?: { spoken?: boolean };
     };
     expect(payload.event?.capturedQuestion).toBe(capturedQuestion);
     expect(payload.action?.spoken).toBe(true);
+    // MR !11 review: the persisted payload.event.sessionId is the BOUND id (here the
+    // frame matched it anyway), never a spread of a forged client frame — replay/operator
+    // tools reading payload.event.sessionId attribute the turn correctly.
+    expect(payload.event?.sessionId).toBe(sessionId);
+    expect(payload.event?.kind).toBe('spoken_turn');
+  });
+
+  // ── MR !11 review (adversarial): consume-on-read / no replay ─────────────
+  // A captured utterance answers exactly ONE spoken_turn. A second spoken_turn
+  // without speaking again fails closed (ack), so a client can't re-bill / re-pollute
+  // the off-topic counter by replaying the trigger on the same stale text.
+  it('MR!11: a captured utterance answers ONE spoken_turn; a replayed trigger acks (consume-on-read)', async () => {
+    const sessionId = await newSession();
+    server.learnerUtteranceRegistry.setLatest(sessionId, 'what is NAND?');
+
+    // First spoken_turn consumes the utterance → answered.
+    const first = await spokenTurnRoundTrip(sessionId, { kind: 'spoken_turn', sessionId });
+    expect(first.kind).toBe('action');
+    expect((first as { action?: Action }).action?.type).toBe('answer_question');
+
+    // Second spoken_turn (replay) without a new capture → ack, no answer, no extra row.
+    const second = await spokenTurnRoundTrip(sessionId, { kind: 'spoken_turn', sessionId });
+    expect(second.kind).toBe('ack');
+
+    const rows = await db.select().from(events).where(eq(events.sessionId, sessionId));
+    expect(rows.filter((r) => r.kind === 'spoken_turn')).toHaveLength(1); // exactly one
   });
 
   // ── checklist item 13 (integration) ─────────────────────────────────────

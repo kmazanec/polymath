@@ -161,11 +161,17 @@ export class VoiceBridge {
 
     if (t.role === 'learner') {
       this.turn.learnerText = t.text;
-      if (t.final) this.turn.learnerFinalAt = t.at;
-      // F-30: fire the general-utterance callback (fill-the-seam). Called on
-      // every learner chunk so the registry always holds the latest utterance.
-      // Absent callback → silently no-ops (not all sessions need spoken Q&A).
-      this.opts.onLearnerUtterance?.(t.text);
+      if (t.final) {
+        this.turn.learnerFinalAt = t.at;
+        // F-30: fire the general-utterance callback (fill-the-seam) ONLY on a
+        // FINALIZED learner segment — not on interim ASR partials. Firing on every
+        // chunk let a client send spoken_turn mid-stream and have the server answer an
+        // incomplete question ("what is" instead of "what is NAND"). Gating on `t.final`
+        // (the same signal used for learnerFinalAt / voice_turn persistence) means the
+        // captured utterance is always a complete thought. Absent callback → silently
+        // no-ops (not all sessions need spoken Q&A). (MR !11 review.)
+        this.opts.onLearnerUtterance?.(t.text);
+      }
       return;
     }
 

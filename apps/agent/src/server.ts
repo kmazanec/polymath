@@ -113,8 +113,18 @@ export interface ServerDeps {
    * F-30 (ADR-016): the general-utterance registry backing `latestLearnerUtteranceFor`.
    * This IS the integrity seam: the `spoken_turn` handler reads from here, NEVER from
    * the client frame. When not injected, `createServer` defaults a fresh registry and
-   * wires the production `VoiceBridge.onLearnerUtterance` callback to it. Tests inject
-   * either the registry (to prime it) or the getter directly.
+   * exposes it as `server.learnerUtteranceRegistry`.
+   *
+   * NOTE (MR !11 review — do not overclaim): the registry is *designed to be filled*
+   * by a server-side `VoiceBridge.onLearnerUtterance` callback, but — exactly like the
+   * sibling `explainBackCaptureRegistry` — that bridge is NOT constructed in production
+   * yet. `handleRealtimeSession` only mints a LiveKit token; connecting a server-side
+   * VoiceBridge to the LiveKit room (so a real spoken utterance reaches this registry)
+   * is the DEFERRED cross-platform voice-capture smoke (docs/voice-cross-platform-smoke.md),
+   * pending a human tester with real devices + keys. Until then the registry stays empty
+   * in production and every `spoken_turn` fails closed to an ack — the gate is built and
+   * airtight, but the legitimate fill path is deferred together with explain-back's.
+   * Tests inject either the registry (to prime it) or the getter directly.
    */
   learnerUtteranceRegistry?: LearnerUtteranceRegistry;
   /**
@@ -124,6 +134,13 @@ export interface ServerDeps {
    * undefined → the spoken-turn handler acks without answering (fail closed).
    */
   latestLearnerUtteranceFor?: (sessionId: string) => string | undefined;
+  /**
+   * F-30: the CONSUMING read of the server-captured utterance — read-and-clear, so a
+   * captured utterance answers exactly one `spoken_turn` (no replay). The production
+   * handler prefers this over `latestLearnerUtteranceFor`. When not injected,
+   * `createServer` defaults to `learnerUtteranceRegistry.takeLatest(sessionId)`. (MR !11.)
+   */
+  takeLearnerUtteranceFor?: (sessionId: string) => string | undefined;
   /** F-16 baseline chat provider (the GPT-5 chat-baseline arm). Injectable for
    *  tests (a deterministic stub; CI is offline); defaults to the key-gated GPT-5
    *  provider when `OPENAI_API_KEY` is set, else `undefined` → the `/api/baseline/*`
@@ -1619,9 +1636,11 @@ async function handleExitPlaygroundTurn(
  *
  * The client fires `spoken_turn { sessionId }` (no transcript, no question field)
  * after the learner has spoken. The server reads the captured utterance from the
- * `latestLearnerUtteranceFor` seam (backed by `LearnerUtteranceRegistry`, which is
- * populated by `VoiceBridge.onLearnerUtterance`). If no utterance was captured, the
- * handler acks and returns — NEVER answers a client-provided string.
+ * `takeLearnerUtteranceFor` seam (consume-on-read, backed by `LearnerUtteranceRegistry`,
+ * which is *designed* to be populated by a server-side `VoiceBridge.onLearnerUtterance` —
+ * that bridge wiring is the DEFERRED cross-platform voice smoke, so in production today the
+ * registry is empty and this path fails closed). If no utterance was captured, the handler
+ * acks and returns — NEVER answers a client-provided string.
  *
  * When a captured utterance exists, it builds a synthetic in-process `learner_question`
  * event (reusing the same generic Q&A turn: `proposeWithTimeout → answer_question`)
@@ -1659,7 +1678,21 @@ async function handleSpokenTurnTurn(
     send(ws, { kind: 'ack', sessionId: event.sessionId, event: event.kind });
     return;
   }
-  const utterance = deps.latestLearnerUtteranceFor?.(boundId);
+  // The comment above promised "bound ≠ frame session → ack without answering" but
+  // the code only checked boundId presence. A frame naming a DIFFERENT (valid) session
+  // would still get a full answer from the bound session's utterance. Enforce it: a
+  // mismatched frame is acked and dropped before any agent call. (MR !11 review.)
+  if (event.sessionId !== boundId) {
+    send(ws, { kind: 'ack', sessionId: boundId, event: event.kind });
+    return;
+  }
+  // Consume-on-read: a captured utterance answers exactly ONE spoken_turn. Reading
+  // via the consuming getter clears it, so a client cannot replay spoken_turn to
+  // re-answer (and re-bill / re-pollute the off-topic counter for) the same stale
+  // text without speaking again. Falls back to the non-consuming peek only if a
+  // caller injected just that getter. (MR !11 review.)
+  const utterance =
+    deps.takeLearnerUtteranceFor?.(boundId) ?? deps.latestLearnerUtteranceFor?.(boundId);
 
   if (!utterance) {
     // No server capture → fail closed (AC#2). Ack the trigger so the client knows
@@ -1724,7 +1757,11 @@ async function handleSpokenTurnTurn(
     sessionId: effectiveSessionId,
     kind: 'spoken_turn',
     payload: {
-      event: { ...event, capturedQuestion: utterance }, // record the server-captured question
+      // Persist the BOUND session id, not the client frame's `sessionId`. Spreading
+      // `...event` recorded the (possibly forged) frame sessionId inside the blob, so
+      // replay/operator tools reading `payload.event.sessionId` would mis-attribute the
+      // turn even though every real DB key uses effectiveSessionId. (MR !11 review.)
+      event: { kind: 'spoken_turn', sessionId: effectiveSessionId, capturedQuestion: utterance },
       action: spokenAction,
       learnerSnapshot: learnerDerived.snapshot,
     },
@@ -2254,14 +2291,23 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     ((sessionId: string, targetItemId: string) => captureRegistry.prosodyFor(sessionId, targetItemId));
 
   // F-30 (ADR-016): the general-utterance registry IS the integrity seam for spoken Q&A.
-  // Default a fresh registry; `createServer` wires `VoiceBridge.onLearnerUtterance` to it
-  // so the production path fills it. Tests may inject a registry pre-primed with utterances.
-  // `latestLearnerUtteranceFor` is injected into `deps` so `handleSpokenTurnTurn` can read
-  // the captured text without trusting the client frame (the server-captured-only rule).
+  // Default a fresh registry, exposed as `server.learnerUtteranceRegistry`. The production
+  // fill path — a server-side VoiceBridge calling `onLearnerUtterance → setLatest` — is the
+  // DEFERRED cross-platform voice-capture smoke (see the ServerDeps doc above and
+  // docs/voice-cross-platform-smoke.md), identical to explain-back's deferral; until then the
+  // registry stays empty in production and `spoken_turn` fails closed. Tests inject a registry
+  // pre-primed with utterances. `latestLearnerUtteranceFor` / `takeLearnerUtteranceFor` are
+  // injected into `deps` so `handleSpokenTurnTurn` reads the captured text without ever
+  // trusting the client frame (the server-captured-only rule).
   const utteranceRegistry = rawDeps.learnerUtteranceRegistry ?? new LearnerUtteranceRegistry();
   const latestLearnerUtteranceFor =
     rawDeps.latestLearnerUtteranceFor ??
     ((sessionId: string) => utteranceRegistry.latestFor(sessionId));
+  // The production handler reads via the CONSUMING getter (read-and-clear) so a
+  // captured utterance answers exactly one spoken_turn (no replay). (MR !11 review.)
+  const takeLearnerUtteranceFor =
+    rawDeps.takeLearnerUtteranceFor ??
+    ((sessionId: string) => utteranceRegistry.takeLatest(sessionId));
 
   // F-16: default the baseline chat provider from the key-gated GPT-5 impl when the
   // caller didn't inject one (tests inject a deterministic stub; production never
@@ -2284,11 +2330,13 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     explainBackCaptureRegistry: captureRegistry,
     explainBackTranscriptFor: transcriptFor,
     explainBackProsodyFor: prosodyFor,
-    // F-30: wire the utterance registry and getter so handleSpokenTurnTurn can read
-    // the server-captured utterance.  The production VoiceBridge populates the registry
-    // via its onLearnerUtterance callback (see createServer → VoiceBridge opts wiring).
+    // F-30: expose the utterance registry + the read getters so handleSpokenTurnTurn can
+    // read the server-captured utterance (never the client frame). The registry is filled
+    // by a VoiceBridge's onLearnerUtterance callback — DEFERRED to the cross-platform voice
+    // smoke (see the ServerDeps doc + docs/voice-cross-platform-smoke.md), as for explain-back.
     learnerUtteranceRegistry: utteranceRegistry,
     latestLearnerUtteranceFor,
+    takeLearnerUtteranceFor,
   };
 
   const httpServer = http.createServer((req, res) => {

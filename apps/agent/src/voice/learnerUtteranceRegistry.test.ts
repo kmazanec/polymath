@@ -57,4 +57,31 @@ describe('LearnerUtteranceRegistry', () => {
     expect(registry.latestFor('session-a')).toBe('question A');
     expect(registry.latestFor('session-b')).toBe('question B');
   });
+
+  // MR !11 review: consume-on-read. A captured utterance answers exactly one
+  // spoken_turn — a client cannot replay spoken_turn to re-answer the same stale text.
+  it('takeLatest returns the utterance AND clears it (consume-on-read, one-shot)', () => {
+    const registry = new LearnerUtteranceRegistry();
+    registry.setLatest('session-a', 'what is NAND?');
+    expect(registry.takeLatest('session-a')).toBe('what is NAND?');
+    // Consumed: a second take (a replayed spoken_turn) fails closed.
+    expect(registry.takeLatest('session-a')).toBeUndefined();
+    expect(registry.latestFor('session-a')).toBeUndefined();
+  });
+
+  it('takeLatest on an unknown/empty session → undefined (fails closed)', () => {
+    const registry = new LearnerUtteranceRegistry();
+    expect(registry.takeLatest('never-spoke')).toBeUndefined();
+    registry.setLatest('session-a', '   '); // whitespace → not stored
+    expect(registry.takeLatest('session-a')).toBeUndefined();
+  });
+
+  it('takeLatest only consumes the named session (no cross-session clear)', () => {
+    const registry = new LearnerUtteranceRegistry();
+    registry.setLatest('session-a', 'A');
+    registry.setLatest('session-b', 'B');
+    expect(registry.takeLatest('session-a')).toBe('A');
+    // session-b is untouched by consuming session-a.
+    expect(registry.latestFor('session-b')).toBe('B');
+  });
 });

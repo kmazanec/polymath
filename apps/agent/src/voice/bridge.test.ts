@@ -216,8 +216,10 @@ describe('VoiceBridge — barge-in (no DB needed)', () => {
 // ── F-30: onLearnerUtterance callback (fill-the-seam guard) ──────────────────
 // These tests verify the half of F-30 CLAUDE.md warns about:
 //   "a fail-closed input nothing fills is a gate nobody can pass"
-// The VoiceBridge must fire onLearnerUtterance on each learner transcript chunk
-// and MUST NOT fire it on tutor chunks. Absent the callback, it silently no-ops.
+// The VoiceBridge must fire onLearnerUtterance on a FINALIZED learner transcript
+// segment (not interim ASR partials) and MUST NOT fire it on tutor chunks. Absent the
+// callback, it silently no-ops. (Final-only gating added in MR !11 review — firing on
+// partials let a client answer an incomplete question via an early spoken_turn.)
 describe('VoiceBridge — F-30 onLearnerUtterance callback (no DB needed)', () => {
   beforeEach(() => resetCacheRegistry());
 
@@ -242,6 +244,38 @@ describe('VoiceBridge — F-30 onLearnerUtterance callback (no DB needed)', () =
 
     expect(received).toContain('what is NAND?');
     expect(onLearnerUtterance).toHaveBeenCalled();
+  });
+
+  it('does NOT fire onLearnerUtterance on a non-final (interim ASR partial) learner chunk; fires on final', async () => {
+    // MR !11 regression: firing on every chunk let a client send spoken_turn while the
+    // ASR was still streaming and have the server answer an incomplete question.
+    const received: string[] = [];
+    const stubDb = {
+      insert: () => ({ values: () => ({ returning: async () => [{ id: 'id' }] }) }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    } as unknown as Db;
+
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok.', audioFrames: 0 } });
+    let cb: ((t: import('./realtimeClient.js').VoiceTranscript) => void) | undefined;
+    const orig = session.onTranscript.bind(session);
+    vi.spyOn(session, 'onTranscript').mockImplementation((c) => {
+      cb = c;
+      orig(c);
+    });
+    const onLearnerUtterance = vi.fn((text: string) => received.push(text));
+    const bridge = new VoiceBridge(
+      bridgeOpts(session, stubDb, 'sess-f30-partial', { onLearnerUtterance }),
+    );
+    await bridge.start();
+
+    // Interim partial — must NOT fire the seam.
+    cb!({ role: 'learner', text: 'what is', at: 1, final: false });
+    expect(onLearnerUtterance).not.toHaveBeenCalled();
+
+    // Finalized segment — fires once, with the complete text.
+    cb!({ role: 'learner', text: 'what is NAND?', at: 2, final: true });
+    expect(received).toEqual(['what is NAND?']);
+    expect(onLearnerUtterance).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT fire onLearnerUtterance for tutor transcript chunks', async () => {
