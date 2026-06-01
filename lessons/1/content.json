@@ -1,7 +1,7 @@
 {
   "lessonId": 1,
   "title": "Basic operators",
-  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (AND/OR/NOT), and a worked example (A AND B traced four rows). Items reordered: AND → OR → NOT → review. Added l1-review-mix (kept tier 1 so L1 stays single-tier and the hardest-tier streak gate remains reachable) at the end to revisit AND/OR/NOT in one mixed expression after NOT is established (within-lesson spacing). OR explanation explicitly confronts inclusive-vs-exclusive confusion. All truthTables verified MSB-first.",
+  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (AND/OR/NOT), and a worked example (A AND B traced four rows). Items reordered: AND → OR → NOT → review. Added l1-review-mix at the end to interleave AND+NOT without composition (no parentheses, no nested sub-expression; NOT applies to a single variable, AND to two atoms, precedence unambiguous) for within-lesson spacing. OR explanation explicitly confronts inclusive-vs-exclusive confusion. All truthTables verified MSB-first. Curriculum-audit fixes (2026-06-01): (1) truth-table definition added as first explanation, before AND, covering grid structure, row count, exhaustiveness, 2^n formula, MSB-first canonical order, and how to read/build; (2) walk-through steps rewritten to explain reasoning at each row rather than asserting results; (3) circuit/pseudocode step demoted to a brief no-action preview, and workedExample.visibleReps narrowed to truth_table only; (4) l1-and varied from A AND B to B AND A (same truth table, forces retrieval rather than pattern copy); (5) l1-review-mix changed from compound (A OR B) AND NOT A to non-compound A AND NOT B (interleaves AND+NOT without nested composition).",
   "knowledgeComponents": ["AND", "OR", "NOT"],
   "intro": {
     "lessonIntro": {
@@ -9,6 +9,11 @@
       "body": "Boolean logic is the algebra of true and false. Every circuit, every conditional in code, every search filter ultimately reduces to three primitive operations: AND, OR, and NOT. In this lesson you will build and read truth tables for all three — the skill that underlies every lesson that follows."
     },
     "explanations": [
+      {
+        "topic": "Truth tables",
+        "body": "A truth table is a grid that maps every possible input combination to its output. It has one column per input variable plus one output column. Each row is a different combination of input values. The table is exhaustive: every possible combination appears exactly once — if you skip even one row, the table is incomplete.\n\nWith n variables there are 2^n rows. Why? Each variable can be 0 or 1, and each new variable doubles the number of combinations: 1 variable → 2 rows, 2 variables → 4 rows, 3 variables → 8 rows, and so on.\n\nThe rows follow a fixed canonical order called MSB-first: count up in binary from all-0s to all-1s, and treat the leftmost variable as the most significant bit (the one that changes least often). For two variables A and B the order is always: (A=0,B=0), (A=0,B=1), (A=1,B=0), (A=1,B=1).\n\nReading a truth table means reading the output column top to bottom. Building one means filling that output column correctly for every row — which is exactly what you will practice in this lesson.",
+        "visibleReps": ["truth_table"]
+      },
       {
         "topic": "AND",
         "body": "AND is written A & B. It produces true ONLY when BOTH inputs are true. If either input is false, the output is false. Think of it as a chain of requirements: A & B is satisfied only when A is met AND B is met. One broken link, the whole thing fails.",
@@ -30,22 +35,22 @@
       "steps": [
         {
           "label": "List all input combinations",
-          "detail": "With two variables A and B, there are 2² = 4 rows. List them MSB-first: (A=0,B=0), (A=0,B=1), (A=1,B=0), (A=1,B=1)."
+          "detail": "A and B are each either 0 or 1, so there are 2 × 2 = 4 possible combinations — and you must list every single one; skip any row and the table is incomplete. The canonical order is MSB-first (as defined above): A is the most significant bit, so it changes most slowly. The four rows in order are: (A=0,B=0), (A=0,B=1), (A=1,B=0), (A=1,B=1)."
         },
         {
           "label": "Apply AND to each row",
-          "detail": "Row 1: 0 & 0 = 0. Row 2: 0 & 1 = 0. Row 3: 1 & 0 = 0. Row 4: 1 & 1 = 1. AND is true only in the last row — when both inputs are 1."
+          "detail": "AND rule: output is 1 only when BOTH inputs are 1; otherwise 0. Row 1: A=0, B=0 — not both 1 (neither is 1) → 0. Row 2: A=0, B=1 — not both 1 (A is 0) → 0. Row 3: A=1, B=0 — not both 1 (B is 0) → 0. Row 4: A=1, B=1 — both are 1 → 1."
         },
         {
           "label": "Read the output column",
-          "detail": "The truth table for A AND B is [0, 0, 0, 1]. Only one 1 out of four rows — AND is demanding: both inputs must be true."
+          "detail": "Reading the output column top to bottom gives [0, 0, 0, 1] — one entry per row, in the same canonical order. Notice the pattern: only one 1, and it sits in the very last row where both inputs are 1. This single-1-at-the-bottom shape is the signature of AND. It tells you AND is demanding: every input must be true, and any single 0 anywhere kills the output."
         },
         {
-          "label": "Recognise the circuit and pseudocode forms",
-          "detail": "In a circuit this is a 2-input AND gate with A and B as inputs and the output wire carrying the result. In pseudocode: 'if A AND B then ...' — the body runs only when both flags are set."
+          "label": "Coming up: circuit and pseudocode forms",
+          "detail": "You will also meet AND as a circuit symbol (a D-shaped logic gate) and in code ('if A AND B then ...'). The same rule — both must be true — drives all three forms. No action needed now; just note that the truth table you just built is the same truth the gate enforces and the same condition the code tests. You will explore those representations in later steps."
         }
       ],
-      "visibleReps": ["truth_table", "circuit", "pseudocode"]
+      "visibleReps": ["truth_table"]
     }
   },
   "items": [
@@ -53,7 +58,7 @@
       "itemId": "l1-and",
       "kc": "AND",
       "difficultyTier": 1,
-      "targetExpression": "A AND B",
+      "targetExpression": "B AND A",
       "variables": ["A", "B"],
       "truthTable": [0, 0, 0, 1]
     },
@@ -77,9 +82,9 @@
       "itemId": "l1-review-mix",
       "kc": "AND",
       "difficultyTier": 1,
-      "targetExpression": "(A OR B) AND NOT A",
+      "targetExpression": "A AND NOT B",
       "variables": ["A", "B"],
-      "truthTable": [0, 1, 0, 0]
+      "truthTable": [0, 0, 1, 0]
     }
   ]
 }
