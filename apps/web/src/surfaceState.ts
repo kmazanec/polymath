@@ -100,6 +100,8 @@ export type Turn =
 export interface SurfaceState {
   /** The current active item — pinned in the anchored workspace. */
   mounted: ComponentSpec;
+  /** Increments on every re-anchoring server mount, even when the spec repeats. */
+  mountSeq: number;
   /** Ordered, append-only log of everything that has happened. */
   transcript: Turn[];
 }
@@ -224,7 +226,7 @@ export function applyMount(state: SurfaceState, spec: ComponentSpec): SurfaceSta
   const completed = toCompletedTurn(state.mounted);
   if (completed) newTranscript.push(completed);
 
-  return { mounted: spec, transcript: newTranscript };
+  return { mounted: spec, mountSeq: state.mountSeq + 1, transcript: newTranscript };
 }
 
 /**

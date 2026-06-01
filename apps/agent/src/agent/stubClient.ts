@@ -98,13 +98,14 @@ export class HeuristicMoveProvider implements MoveProvider {
             rationale: `detected the halfway De Morgan misconception on item "${ev.itemId}" — naming it (heuristic provider)`,
           });
         }
-        const priorWrong = (input.priorMissesByItem?.[ev.itemId] ?? 0) > 0;
+        const priorWrongCount = input.priorMissesByItem?.[ev.itemId] ?? 0;
+        const priorWrong = priorWrongCount > 0;
         const same = currentItem(input);
         if (same) {
           return Promise.resolve(
             priorWrong
-              ? { move: 'simpler_item', item: withRemediationPrompt(simplerVariant(same, input)), rationale: 'repeated miss on this item — dropping to a simpler one (heuristic provider)' }
-              : { move: 'rephrase', item: withRemediationPrompt(same), rationale: 're-presenting the item after a miss with a corrective prompt (heuristic provider)' },
+              ? { move: 'simpler_item', item: withRemediationPrompt(simplerVariant(same, input), priorWrongCount + 1), rationale: 'repeated miss on this item — dropping to a simpler one (heuristic provider)' }
+              : { move: 'rephrase', item: withRemediationPrompt(same, priorWrongCount + 1), rationale: 're-presenting the item after a miss with a corrective prompt (heuristic provider)' },
           );
         }
       }
@@ -417,10 +418,10 @@ function proposedItemFromLessonItem(input: AgentInput, item: LessonItem, rep: Re
   };
 }
 
-function withRemediationPrompt(item: ProposedItem): ProposedItem {
+function withRemediationPrompt(item: ProposedItem, attempt: number): ProposedItem {
   return {
     ...item,
-    prompt: `Try ${item.targetExpression} again. Work row by row: ask what would make the expression true, then mark 1 only for those rows.`,
+    prompt: `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: work row by row, ask what would make the expression true, then mark 1 only for those rows.`,
   };
 }
 

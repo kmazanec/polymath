@@ -331,6 +331,59 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     expect(replay.events.some((e) => e.payload.submitVerdict?.correct === false)).toBe(true);
   });
 
+  it('falls back to a remediation mount when the agent returns no_action after a wrong submit', async () => {
+    const noActionAgent: AgentClient = {
+      propose: async (): Promise<Action> => ({
+        type: 'no_action',
+        reason: 'wait_for_learner',
+        rationale: 'misbehaving provider waited after a wrong answer',
+      }),
+    };
+    const fallbackServer = createServer({ db, agent: noActionAgent });
+    await new Promise<void>((resolve) => fallbackServer.httpServer.listen(0, resolve));
+    const { port } = fallbackServer.httpServer.address() as AddressInfo;
+    const fallbackBase = `http://localhost:${port}`;
+    const fallbackWs = `ws://localhost:${port}/agent`;
+    try {
+      const { sessionId } = (await (await fetch(`${fallbackBase}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const ws = new WebSocket(fallbackWs);
+      const action = await new Promise<Action>((resolve, reject) => {
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({
+              kind: 'submit',
+              sessionId,
+              itemId: 'l1-or',
+              submission: 'A OR B',
+              repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 0] },
+              correct: false,
+            }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') resolve(Action.parse(msg.action));
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('timed out')), 8000);
+      });
+      ws.close();
+
+      expect(action.type).toBe('mount');
+      if (action.type === 'mount') {
+        expect(action.component.kind).toBe('TruthTablePractice');
+        if (action.component.kind === 'TruthTablePractice') {
+          expect(action.component.expression).toBe('A OR B');
+          expect(action.component.prompt).toMatch(/attempt/i);
+        }
+      }
+    } finally {
+      await fallbackServer.close();
+    }
+  });
+
   it('answers an on-topic question and deflects an off-topic one (criteria 4,5)', async () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;

@@ -283,7 +283,7 @@ describe('App verdict turn (F-27 AC#3)', () => {
     });
   });
 
-  it('remounts a same-expression remediation item with fresh editable cells', async () => {
+  it('remounts a repeated same-spec remediation item with fresh editable cells', async () => {
     const { container } = render(<App />);
     await waitFor(() => expect(capturedHandlers).not.toBeNull());
 
@@ -304,10 +304,7 @@ describe('App verdict turn (F-27 AC#3)', () => {
       expect(workspace?.querySelector('[data-verdict]')).not.toBeNull();
     });
 
-    pushAction({
-      ...TT_PRACTICE_2,
-      prompt: 'Try A OR B again. Work row by row.',
-    });
+    pushAction(TT_PRACTICE_2);
 
     await waitFor(() => {
       const workspace = container.querySelector('[data-testid="workspace"]');

@@ -197,6 +197,7 @@ function LessonSession({
   }, [bridge, phase]);
 
   const mounted = surface.mounted;
+  const mountSeq = surface.mountSeq;
   const transcript = surface.transcript;
 
   return (
@@ -225,7 +226,7 @@ function LessonSession({
               the foot of the conversation where the learner acts. */}
           <div className="thread__live" data-testid="workspace">
             <AnimateOrNot phase={phase}>
-              <div key={mountKey(mounted)}>
+              <div key={`${mountKey(mounted)}:${mountSeq.toString()}`}>
                 {renderComponent(mounted, {
                   onSubmit,
                   explainBackDeps,
@@ -272,6 +273,7 @@ export function App(): ReactElement {
    */
   const [surface, setSurface] = useState<SurfaceState>({
     mounted: introForLesson(lessonId),
+    mountSeq: 0,
     transcript: [],
   });
 
@@ -573,7 +575,7 @@ export function App(): ReactElement {
       // hardcoded L2 intro, which flashed the wrong lesson's intro (and logged it
       // into the fresh transcript) on L2→L3 / L3→L4 until the server's first mount
       // arrived. introForLesson() maps each lessonId to its own intro. (MR !11 review.)
-      setSurface({ mounted: introForLesson(nextLessonId), transcript: [] });
+      setSurface({ mounted: introForLesson(nextLessonId), mountSeq: 0, transcript: [] });
       setLessonId(nextLessonId);
     },
     [sessionId],

@@ -751,6 +751,64 @@ function blockerRemediationAction(blockers: MasteryGateResult['blockers']): Acti
   };
 }
 
+function wrongSubmitRemediationAction(
+  event: ClientEvent,
+  lesson: Lesson,
+  priorMissesByItem: Record<string, number>,
+): Action | null {
+  if (event.kind !== 'submit') return null;
+  const item = lesson.content.items.find(
+    (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,
+  );
+  if (!item) return null;
+  const rep = event.repSubmission?.rep ?? 'truth_table';
+  const attempt = (priorMissesByItem[event.itemId] ?? 0) + 1;
+  const prompt = `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: work row by row, ask what would make the expression true, then mark 1 only for those rows.`;
+  const visibleReps = [rep];
+  const rationale =
+    `incorrect submit for "${event.itemId}" produced no usable agent remediation; remounting same item (server reflex)`;
+
+  switch (rep) {
+    case 'truth_table':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'TruthTablePractice',
+          expression: item.targetExpression,
+          claimedTruthTable: item.truthTable,
+          visibleReps,
+          prompt,
+        },
+        rationale,
+      };
+    case 'circuit':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'CircuitBuilder',
+          targetExpression: item.targetExpression,
+          claimedTruthTable: item.truthTable,
+          allowedGates: lesson.content.lessonId === 3 ? ['NAND'] : ['AND', 'OR', 'NOT'],
+          visibleReps,
+          prompt,
+        },
+        rationale,
+      };
+    case 'pseudocode':
+      return {
+        type: 'mount',
+        component: {
+          kind: 'PseudocodeChallenge',
+          targetExpression: item.targetExpression,
+          claimedTruthTable: item.truthTable,
+          visibleReps,
+          prompt,
+        },
+        rationale,
+      };
+  }
+}
+
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
 async function proposeWithTimeout(agent: AgentClient, input: AgentInput): Promise<Action> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -2068,6 +2126,13 @@ export async function handleClientFrame(
   // Without this, every subsequent correct transfer (in a future where the judge is
   // wired and a learner CAN pass) loops a mastered learner back into explain-back.
   // explainBackPassed is server-derived from the full log (never a client flag).
+  const wrongSubmitFallback =
+    event.kind === 'submit' &&
+    learnerDerived.currentSubmitCorrect === false &&
+    validatedAction.type === 'no_action'
+      ? wrongSubmitRemediationAction(event, lesson, learnerDerived.priorMissesByItem)
+      : null;
+
   const action: Action =
     transferVerdict?.correct === true &&
     lesson.masteryConfig.requireExplainBackPass &&
@@ -2083,7 +2148,9 @@ export async function handleClientFrame(
           },
           rationale: `transfer passed for ${transferVerdict.itemId}; mounting explain-back (server reflex, F-11)`,
         }
-      : validatedAction;
+      : wrongSubmitFallback
+        ? wrongSubmitFallback
+        : validatedAction;
 
   // F-14 CROSS-LESSON RECALL REFLEX (deterministic SERVER reflex, NOT an LLM menu
   // move — it never goes through proposeMove/TacticalMove/MoveSchema). When the
