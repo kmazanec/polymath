@@ -20,6 +20,8 @@ export interface TruthTableSubmitEvent {
 
 interface TruthTableProps {
   spec: TruthTableSpec;
+  /** Suppress answer-revealing cell verdicts while the tutor response is pending. */
+  pending?: boolean;
   /** Called when the learner clicks Submit. Receives the event shape to dispatch
    *  over the WebSocket plus the pre-computed `correct` flag. */
   onSubmit?: (event: TruthTableSubmitEvent) => void;
@@ -30,9 +32,9 @@ interface TruthTableProps {
  * hiding `truth_table` must not expose it). Guards before the inner component's
  * hooks. Mirrors CircuitBuilder's visibleReps gate.
  */
-export function TruthTable({ spec, onSubmit }: TruthTableProps): ReactElement | null {
+export function TruthTable({ spec, pending, onSubmit }: TruthTableProps): ReactElement | null {
   if (!spec.visibleReps.includes('truth_table')) return null;
-  return <TruthTableInner spec={spec} onSubmit={onSubmit} />;
+  return <TruthTableInner spec={spec} pending={pending} onSubmit={onSubmit} />;
 }
 
 type CellVerdict = 'correct' | 'incorrect' | null;
@@ -51,7 +53,7 @@ type CellVerdict = 'correct' | 'incorrect' | null;
  * The coordinator wires this into registry.tsx under the TruthTablePractice case.
  * PulseContext subscriber (AC8 / T-02c) is deferred until F-03 lands PulseContext.
  */
-function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
+function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): ReactElement {
   // -----------------------------------------------------------------------
   // Parse expression and derive table
   // -----------------------------------------------------------------------
@@ -162,6 +164,7 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
         <tbody>
           {tableRows.map((inputRow, rowIdx) => {
             const verdict = verdicts[rowIdx] ?? null;
+            const displayedVerdict = pending ? null : verdict;
             const cellValue = cells[rowIdx] ?? 0;
             return (
               <tr key={rowIdx} role="row">
@@ -183,7 +186,7 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
                     type="button"
                     aria-pressed={cellValue === 1}
                     aria-label={`Row ${rowIdx + 1}, ${vars.map((v, j) => `${v}=${inputRow[j] ? '1' : '0'}`).join(', ')}: output`}
-                    data-verdict={verdict ?? undefined}
+                    data-verdict={displayedVerdict ?? undefined}
                     onClick={() => handleToggle(rowIdx)}
                     disabled={submitted}
                     style={
@@ -193,8 +196,8 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
                     }
                     className={[
                       'truth-table-output-cell',
-                      verdict === 'correct' ? 'verdict-correct' : '',
-                      verdict === 'incorrect' ? 'verdict-incorrect' : '',
+                      displayedVerdict === 'correct' ? 'verdict-correct' : '',
+                      displayedVerdict === 'incorrect' ? 'verdict-incorrect' : '',
                     ]
                       .filter(Boolean)
                       .join(' ')}

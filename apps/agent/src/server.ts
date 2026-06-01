@@ -868,7 +868,19 @@ function matchesSubmittedAuthoredItem(action: Action, event: ClientEvent, lesson
     (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,
   );
   if (!item) return false;
-  return practiceTargetExpression(action) === item.targetExpression;
+  if (practiceTargetExpression(action) !== item.targetExpression) return false;
+
+  const rep = event.repSubmission?.rep ?? 'truth_table';
+  if (action.type !== 'mount') return false;
+  const component = action.component;
+  switch (rep) {
+    case 'truth_table':
+      return component.kind === 'TruthTablePractice' && component.visibleReps.includes('truth_table');
+    case 'circuit':
+      return component.kind === 'CircuitBuilder' && component.visibleReps.includes('circuit');
+    case 'pseudocode':
+      return component.kind === 'PseudocodeChallenge' && component.visibleReps.includes('pseudocode');
+  }
 }
 
 function authoredLessonPlanAction(input: AgentInput): Action | null {

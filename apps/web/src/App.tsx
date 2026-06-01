@@ -231,6 +231,7 @@ function LessonSession({
               <div key={`${mountKey(mounted)}:${mountSeq.toString()}`}>
                 {renderComponent(mounted, {
                   onSubmit,
+                  pendingResponse: awaitingAgent,
                   explainBackDeps,
                   onExplainBackEnd,
                   onContinue,

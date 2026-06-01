@@ -84,6 +84,8 @@ export interface RenderOptions {
    * turn is read-only and has no advance affordance).
    */
   onAdvanceIntro?: () => void;
+  /** True while an agent response is in flight for the current workspace turn. */
+  pendingResponse?: boolean;
 }
 
 /** A safe no-op explain-back seam for when no real voice client is wired (tests,
@@ -143,6 +145,7 @@ export function renderComponent(spec: ComponentSpec, opts: RenderOptions = {}): 
       return (
         <TruthTable
           spec={spec}
+          pending={opts.pendingResponse}
           onSubmit={
             onSubmit &&
             ((e) =>

@@ -300,8 +300,7 @@ describe('App verdict turn (F-27 AC#3)', () => {
     fireEvent.click(submit!);
 
     await waitFor(() => {
-      const workspace = container.querySelector('[data-testid="workspace"]');
-      expect(workspace?.querySelector('[data-verdict]')).not.toBeNull();
+      expect(container.querySelector('[role="status"]')?.textContent).toContain('Tutor is thinking');
     });
 
     pushAction(TT_PRACTICE_2);
@@ -331,6 +330,11 @@ describe('App verdict turn (F-27 AC#3)', () => {
     fireEvent.click(submit!);
 
     expect(queryByRole('status')?.textContent).toContain('Tutor is thinking');
+    expect(
+      Array.from(container.querySelectorAll('.truth-table-output-cell')).every(
+        (button) => !button.hasAttribute('data-verdict'),
+      ),
+    ).toBe(true);
 
     pushAction(TT_PRACTICE_2);
     await waitFor(() => expect(queryByRole('status')).toBeNull());
