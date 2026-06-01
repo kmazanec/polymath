@@ -13,7 +13,7 @@ import type {
 } from './components/PlaygroundCanvas.js';
 import { TranscriptLog } from './components/TranscriptLog.js';
 import { transferRepRefusal } from './copy/refusals.js';
-import { introForLesson, LESSON_2_INTRO } from './lessonIntroContent.js';
+import { introForLesson } from './lessonIntroContent.js';
 import { AskTutorButton } from './voice/AskTutorButton.js';
 import { AboutSessionData } from './components/AboutSessionData.js';
 import { ConsentModal } from './observability/ConsentModal.js';
@@ -540,7 +540,11 @@ export function App(): ReactElement {
       if (!sessionId) return;
       socketRef.current?.send({ kind: 'advance_lesson', sessionId, toLessonId: nextLessonId });
       capture('lesson_transition', { toLessonId: nextLessonId });
-      setSurface({ mounted: LESSON_2_INTRO, transcript: [] });
+      // Reset the surface to the intro of the lesson we're advancing TO — not a
+      // hardcoded L2 intro, which flashed the wrong lesson's intro (and logged it
+      // into the fresh transcript) on L2→L3 / L3→L4 until the server's first mount
+      // arrived. introForLesson() maps each lessonId to its own intro. (MR !11 review.)
+      setSurface({ mounted: introForLesson(nextLessonId), transcript: [] });
       setLessonId(nextLessonId);
     },
     [sessionId],

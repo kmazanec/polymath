@@ -92,7 +92,7 @@ explain_back_live_eval:
     - >
       docker run --rm
       -v "$CI_PROJECT_DIR":/src:ro
-      -e OPENAI_API_KEY="$OPENAI_API_KEY"
+      -e OPENAI_API_KEY
       node:22-bookworm-slim
       bash -c "set -e &&
         cp -a /src /work && cd /work &&
@@ -125,7 +125,7 @@ langsmith_live_verify:
     - >
       docker run --rm
       -v "$CI_PROJECT_DIR":/src:ro
-      -e OPENAI_API_KEY="$OPENAI_API_KEY"
+      -e OPENAI_API_KEY
       -e LANGCHAIN_TRACING_V2="true"
       -e LANGCHAIN_API_KEY="$LANGCHAIN_API_KEY"
       -e LANGCHAIN_PROJECT="polymath-dev"
@@ -174,7 +174,7 @@ agent_live_eval:
     - >
       docker run --rm
       -v "$CI_PROJECT_DIR":/src:ro
-      -e OPENAI_API_KEY="$OPENAI_API_KEY"
+      -e OPENAI_API_KEY
       node:22-bookworm-slim
       bash -c "set -e &&
         cp -a /src /work && cd /work &&

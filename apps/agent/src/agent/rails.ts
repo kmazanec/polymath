@@ -64,12 +64,16 @@ function collectOperators(ast: Ast): Set<string> {
 }
 
 /** Load and parse the lesson's content.json for its `items`. Fail-soft (returns
- *  empty array) so a missing/corrupt file degrades gracefully. */
+ *  empty array) so a missing/corrupt file degrades gracefully — generation then
+ *  finds an empty operator alphabet and rejects every generated item, falling back
+ *  to authored items (NOT a crash). But a silent empty would make that degrade
+ *  invisible, so we LOG a warning: if `lessons/` is missing/unreadable in the
+ *  deployed image, the operator sees why generation stopped working. (MR !11 review.) */
 function loadLessonItems(
   lessonId: number,
 ): Array<{ targetExpression: string; variables?: string[] }> {
+  const file = path.join(lessonsRoot, String(lessonId), 'content.json');
   try {
-    const file = path.join(lessonsRoot, String(lessonId), 'content.json');
     const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as {
       items?: Array<{ targetExpression?: string; variables?: string[] }>;
     };
@@ -77,7 +81,12 @@ function loadLessonItems(
       (i): i is { targetExpression: string; variables?: string[] } =>
         typeof i.targetExpression === 'string',
     );
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[polymath] rails: could not read ${file} (${(err as Error).message}); ` +
+        `generation alphabet will be empty for lesson ${lessonId} — generated items ` +
+        `will be rejected and fall back to authored items.`,
+    );
     return [];
   }
 }
