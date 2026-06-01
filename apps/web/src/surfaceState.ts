@@ -183,17 +183,47 @@ export function toCompletedTurn(spec: ComponentSpec): Turn | null {
 }
 
 /**
- * Convert a re-anchoring spec into the initial transcript turn appended
- * when it first mounts (before it becomes the workspace).  Not all specs
- * need a transcript echo on mount — only intro/worked/explanation cards.
+ * A stable identity string for a `ComponentSpec`, used to detect when a
+ * re-anchor would push a transcript turn byte-identical to one already there.
+ *
+ * It captures the *meaningful* identity of a card — its kind plus the fields a
+ * learner would recognise as "the same card" (the worked example's
+ * expression + steps, an intro's topic + body, an item's target expression /
+ * prompt) — NOT a blanket "same kind". Two genuinely different worked examples
+ * (different expression or steps) produce different identities and both appear.
  */
-export function toInitialTurn(spec: ComponentSpec): Turn | null {
+function specIdentity(spec: ComponentSpec): string {
   switch (spec.kind) {
-    case 'LessonIntro':
-    case 'IntroExplanation':
-      return { kind: 'intro', spec: spec as IntroTurn['spec'] };
     case 'WorkedExample':
-      return { kind: 'workedExample', spec: spec as WorkedExampleTurn['spec'] };
+      return `WorkedExample:${spec.expression}:${JSON.stringify(spec.steps)}`;
+    case 'IntroExplanation':
+      return `IntroExplanation:${spec.topic}:${spec.body}`;
+    case 'LessonIntro':
+      return `LessonIntro:${spec.title}:${spec.body}`;
+    case 'TruthTablePractice':
+      return `TruthTablePractice:${spec.expression}:${spec.prompt ?? ''}`;
+    case 'CircuitBuilder':
+      return `CircuitBuilder:${spec.targetExpression}:${spec.prompt ?? ''}`;
+    case 'PseudocodeChallenge':
+      return `PseudocodeChallenge:${spec.targetExpression}:${spec.prompt ?? ''}`;
+    case 'TransferProbe':
+      return `TransferProbe:${spec.itemId}`;
+    default:
+      return spec.kind;
+  }
+}
+
+/** The spec a transcript turn carries (for identity comparison), or null for
+ *  turns that don't echo a spec (verdict, spokenTurn). */
+function turnSpec(turn: Turn): ComponentSpec | null {
+  switch (turn.kind) {
+    case 'intro':
+    case 'workedExample':
+    case 'hint':
+    case 'answer':
+    case 'recall':
+    case 'completedItem':
+      return turn.spec;
     default:
       return null;
   }
@@ -222,9 +252,27 @@ export function applyMount(state: SurfaceState, spec: ComponentSpec): SurfaceSta
   // Re-anchor: add completedItem for the prior workspace, then set new mounted.
   const newTranscript = [...state.transcript];
 
-  // Append the prior mounted item as completedItem (if it was an item-bearing spec).
+  // Append the prior mounted item as a transcript turn (if it warrants one).
   const completed = toCompletedTurn(state.mounted);
-  if (completed) newTranscript.push(completed);
+  if (completed) {
+    // DEDUPE (B4/B6 — the duplicate-worked-example / double-Completed class of bug):
+    // the server can re-emit the SAME spec across a phase transition (e.g. the
+    // WorkedExample is sent twice across introducing→practicing) and a retry
+    // re-mounts the SAME item — each re-anchor would otherwise push another
+    // identical turn, stacking byte-identical cards ("Walk-through (A & B)" twice)
+    // or two "Completed: B AND A" entries for one item. Skip the push when the
+    // prior mounted is identical (by meaningful identity) to EITHER the incoming
+    // spec OR the last spec-bearing turn already in the transcript. Genuinely
+    // distinct repeats (a different worked example / item) have different
+    // identities and are still logged.
+    const priorIdentity = specIdentity(state.mounted);
+    const lastTurnSpec = [...newTranscript].reverse().map(turnSpec).find((s) => s !== null);
+    const duplicatesIncoming = priorIdentity === specIdentity(spec);
+    const duplicatesLastTurn = lastTurnSpec !== undefined && lastTurnSpec !== null
+      ? priorIdentity === specIdentity(lastTurnSpec)
+      : false;
+    if (!duplicatesIncoming && !duplicatesLastTurn) newTranscript.push(completed);
+  }
 
   return { mounted: spec, mountSeq: state.mountSeq + 1, transcript: newTranscript };
 }

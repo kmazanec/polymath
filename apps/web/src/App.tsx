@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useMachine } from '@xstate/react';
 import { lessonMachine, type LessonEvent } from '@polymath/statechart';
 import type { PhaseName } from '@polymath/contract';
@@ -208,6 +208,35 @@ function LessonSession({
   const mountSeq = surface.mountSeq;
   const transcript = surface.transcript;
 
+  // B3: auto-scroll the thread to the live workspace when a new card mounts.
+  // On iPad the learner otherwise lands at the TOP (oldest card) and has to
+  // manually scroll past all history to reach the live item + Submit/Continue.
+  // Keyed on the re-anchor signal (mountSeq) + transcript length so it fires on
+  // EACH new item (and after side turns grow the log), not on every re-render —
+  // so it never fights the user mid-scroll on an idle re-render. Respects
+  // prefers-reduced-motion (instant jump instead of a smooth animation).
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const prefersReduced =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const behavior: ScrollBehavior = prefersReduced ? 'auto' : 'smooth';
+    // Prefer bringing the live workspace into view; fall back to scrolling the
+    // container to its foot (the workspace is anchored there). Both APIs are
+    // feature-detected so a non-DOM env (jsdom) degrades to a no-op.
+    const ws = workspaceRef.current;
+    if (ws && typeof ws.scrollIntoView === 'function') {
+      ws.scrollIntoView({ behavior, block: 'end' });
+    } else if (typeof scroller.scrollTo === 'function') {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    } else {
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+  }, [mountSeq, transcript.length]);
+
   return (
     <div className="thread">
       {/* F-31 FlowSkeleton — slim glanceable progress stepper across the top.
@@ -218,7 +247,7 @@ function LessonSession({
 
       {/* THE CONVERSATION — one single-threaded vertical stream. Past turns scroll
           up; the live workspace is anchored at the foot, just above the composer. */}
-      <div className="thread__scroll">
+      <div className="thread__scroll" ref={scrollRef}>
         <div className="thread__inner">
           {/* F-27 (AC#5): orientation banner — what mode the learner is in. Pinned to the
               top of the thread; the test queries it by data-testid/data-phase. */}
@@ -232,7 +261,7 @@ function LessonSession({
 
           {/* THE LIVE TURN — the current concept / practice item / probe, anchored at
               the foot of the conversation where the learner acts. */}
-          <div className="thread__live" data-testid="workspace">
+          <div className="thread__live" data-testid="workspace" ref={workspaceRef}>
             <AnimateOrNot phase={phase}>
               <div key={`${mountKey(mounted)}:${mountSeq.toString()}`}>
                 {renderComponent(mounted, {

@@ -35,9 +35,15 @@ export function IntroExplanation({
   const gate = gateForTopic(spec.topic);
 
   return (
-    <section className="intro-explanation" aria-labelledby="intro-explanation-topic">
+    // B5 (a11y): label the region directly with this card's own topic. The old
+    // `aria-labelledby="intro-explanation-topic"` used a HARDCODED, non-unique id;
+    // when more than one IntroExplanation is in the DOM (e.g. an AND card echoed in
+    // the transcript above a live OR card), every region resolved to the FIRST
+    // matching id — so the OR card's region was announced as "AND". A direct
+    // aria-label is per-instance and immune to duplicate-id resolution.
+    <section className="intro-explanation" aria-label={spec.topic}>
       <p className="eyebrow intro-explanation__eyebrow">Concept</p>
-      <h2 id="intro-explanation-topic" className="intro-explanation__topic">
+      <h2 className="intro-explanation__topic">
         {spec.topic}
       </h2>
       <p className="intro-explanation__body">{spec.body}</p>

@@ -559,6 +559,35 @@ describe('App F-30 spoken-turn transcript rendering (AC#3, D9)', () => {
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe('App auto-scroll to live workspace on mount (B3)', () => {
+  it('scrolls the live workspace into view when a new card mounts', async () => {
+    // jsdom does not implement scrollIntoView; provide a spy so the layout
+    // effect's scroll attempt is observable.
+    const scrollIntoView = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    // @ts-expect-error -- jsdom may not define this; we install it for the test.
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      const { container } = render(<App />);
+      await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+      scrollIntoView.mockClear();
+
+      // A new card mounts (re-anchor): the live workspace should be scrolled in.
+      pushAction(TT_PRACTICE_1);
+      await waitFor(() => {
+        const ws = container.querySelector('[data-testid="workspace"]');
+        expect(ws?.querySelector('[aria-label*="A AND B"]')).not.toBeNull();
+      });
+
+      expect(scrollIntoView).toHaveBeenCalled();
+    } finally {
+      // @ts-expect-error -- restore (may be undefined on jsdom).
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+});
+
 describe('App AC#6 regressions — recall and L1→L2 still work in transcript model', () => {
   it('recall card appends as a transcript turn and workspace survives', async () => {
     const { container } = render(<App />);
