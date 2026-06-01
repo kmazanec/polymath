@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { Action } from '@polymath/contract';
+import { truthTable } from '@polymath/booleans';
 import { createDb, type Db } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { events, learnerState, sessions } from './db/schema.js';
@@ -249,6 +250,94 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     return actions;
   }
 
+  /** Correct truth-table output cells for an expression (MSB-first), via the same
+   *  booleans engine the server recomputes with. */
+  function cellsFor(expression: string): (0 | 1)[] {
+    return truthTable(expression).out.map((b) => (b ? 1 : 0));
+  }
+
+  /** Build a CORRECT submit frame for a server-mounted practice item, in the rep the
+   *  SERVER mounted (so the server-trusted rep-gating evidence accumulates). truth_table
+   *  carries the computed cells; circuit/pseudocode carry the canonical expression
+   *  (scored by equivalence). `kc`-specific correctness isn't needed — the expression
+   *  IS the answer. */
+  function correctSubmitForMount(
+    sessionId: string,
+    rep: 'truth_table' | 'circuit' | 'pseudocode',
+    expression: string,
+  ): Record<string, unknown> {
+    const repSubmission =
+      rep === 'truth_table'
+        ? { rep, cells: cellsFor(expression) }
+        : rep === 'circuit'
+          ? { rep, expression, nodes: [], edges: [] }
+          : { rep, expression, source: expression };
+    return { kind: 'submit', sessionId, itemId: expression, submission: expression, repSubmission, correct: true, responseTimeMs: 5000 };
+  }
+
+  /** A correctness provider is unused now (the expression itself is the answer); kept
+   *  as a typed marker so the L1/L4 drivers read symmetrically. */
+  const l1CorrectFor = true;
+  const l4CorrectFor = true;
+
+  /**
+   * ADAPTIVE driver to the transfer probe. Answers whatever practice item the server
+   * mounts, in the server-MOUNTED rep (the rep-gating integrity signal), advancing past
+   * intro/worked cards with `intro_advance`, until a `TransferProbe` mounts (the rule
+   * gate passed — incl. the ≥2-distinct-rep condition, which the server's interleaving
+   * satisfies) or a turn cap is hit. Returns every action seen.
+   */
+  async function driveToTransferProbe(
+    sessionId: string,
+    url: string,
+    _marker: boolean,
+    sessionStart?: Record<string, unknown>,
+  ): Promise<Action[]> {
+    const ws = new WebSocket(url);
+    const out: Action[] = [];
+    await new Promise<void>((resolve, reject) => {
+      let turns = 0;
+      const MAX_TURNS = 40;
+      const respond = (a: Action): void => {
+        turns += 1;
+        if (turns > MAX_TURNS) {
+          reject(new Error(`driveToTransferProbe exceeded ${MAX_TURNS} turns without a probe`));
+          return;
+        }
+        if (a.type === 'mount' && a.component.kind === 'TransferProbe') {
+          resolve();
+          return;
+        }
+        if (a.type === 'mount' && a.component.kind === 'TruthTablePractice') {
+          ws.send(JSON.stringify(correctSubmitForMount(sessionId, 'truth_table', a.component.expression)));
+        } else if (a.type === 'mount' && a.component.kind === 'CircuitBuilder') {
+          ws.send(JSON.stringify(correctSubmitForMount(sessionId, 'circuit', a.component.targetExpression)));
+        } else if (a.type === 'mount' && a.component.kind === 'PseudocodeChallenge') {
+          ws.send(JSON.stringify(correctSubmitForMount(sessionId, 'pseudocode', a.component.targetExpression)));
+        } else {
+          // Intro / worked-example / hint / no_action / answer — advance the opening
+          // sequence (or nudge) without answering a challenge.
+          ws.send(JSON.stringify({ kind: 'intro_advance', sessionId }));
+        }
+      };
+      ws.on('open', () =>
+        ws.send(JSON.stringify(sessionStart ?? { kind: 'session_start', sessionId, lessonId: 1, startRep: 'truth_table' })),
+      );
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'action') {
+          const a = Action.parse(msg.action);
+          out.push(a);
+          respond(a);
+        }
+      });
+      ws.on('error', reject);
+      setTimeout(() => reject(new Error('driveToTransferProbe timed out')), 20000);
+    });
+    ws.close();
+    return out;
+  }
+
   it('drives a submit sequence through the inner loop and advances items (criteria 1,3)', async () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
@@ -436,12 +525,19 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       expect(last.type).toBe('mount'); // NOT no_action
       if (last.type === 'mount') {
         // The next unfinished authored item is l1-review-mix (A AND NOT B), which the
-        // per-KC dedupe dropped. The forward-progress fallback picks it up.
-        expect(last.component.kind).toBe('TruthTablePractice');
-        if (last.component.kind === 'TruthTablePractice') {
-          expect(last.component.expression).toBe('A AND NOT B');
-          expect(last.component.visibleReps).toContain('truth_table');
-        }
+        // per-KC dedupe dropped. The forward-progress fallback picks it up. #3/#8: the
+        // continued-practice mount now INTERLEAVES the rep (rotated off the previous
+        // truth_table mount), so it surfaces in a non-truth_table rep — the
+        // anti-dead-end invariant (a mounted next item, never no_action) is unchanged.
+        const expr =
+          last.component.kind === 'TruthTablePractice'
+            ? last.component.expression
+            : last.component.kind === 'CircuitBuilder' || last.component.kind === 'PseudocodeChallenge'
+              ? last.component.targetExpression
+              : undefined;
+        expect(expr).toBe('A AND NOT B');
+        // The rep rotated off the prior truth_table mount (cross-rep practice, #8).
+        expect(last.component.kind).not.toBe('TruthTablePractice');
       }
     } finally {
       await b7Server.close();
@@ -639,19 +735,12 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     };
     // F-09: the gate is derived from the actual event history. All lesson KCs (AND,
     // OR, NOT) must reach BKT ≥ 0.95, plus ≥ 3 consecutive correct at hardest tier
-    // and no hints. BKT crosses 0.95 after 2 corrects from prior; OR and NOT need 2
-    // corrects each to clear, then 3 AND corrects clear AND and satisfy the streak.
-    // Each submit carries an in-band responseTimeMs — the gate now requires enough
-    // timed submissions (a scripted client that omits timings is blocked).
-    const actions = await driveSequence(sessionId, [
-      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
-      { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
-      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
-      { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
-    ]);
+    // and no hints, AND (#1) the hardest-tier ladder must span ≥2 distinct reps —
+    // credited from the rep the SERVER MOUNTED, never the client label. So drive
+    // ADAPTIVELY: answer each mounted practice item in the server-mounted rep (the
+    // server's #3 interleaving rotates it), advancing past intro cards, until the
+    // probe fires.
+    const actions = await driveToTransferProbe(sessionId, wsUrl, l1CorrectFor);
     const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     expect(probe, 'a transfer probe should fire once the rule gate passes').toBeTruthy();
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
@@ -715,9 +804,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
         { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
         { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+        // #1: hardest-tier ladder must span ≥2 reps — interleave truth_table/circuit/pseudocode.
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] }, correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'circuit', expression: 'A AND B', nodes: [], edges: [] }, correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' }, correct: true, responseTimeMs: 4000 },
       ];
       const out: Action[] = [];
       let sent = 0;
@@ -821,35 +911,14 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
-    // All three L1 KCs (AND, OR, NOT) must reach BKT ≥ 0.95 (new all-KC gate).
-    // BKT crosses 0.95 after 2 corrects from prior (≈ 0.963). Clear OR and NOT first
-    // (2 each), then land 3 consecutive AND to satisfy the AND KC + hardest-tier streak.
-    const ws1 = new WebSocket(wsUrl);
-    const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
-      const frames: Record<string, unknown>[] = [
-        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
-        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
-      ];
-      const out: Action[] = [];
-      let sent = 0;
-      ws1.on('open', () => ws1.send(JSON.stringify(frames[sent++])));
-      ws1.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.kind === 'action') {
-          out.push(Action.parse(msg.action));
-          if (sent < frames.length) ws1.send(JSON.stringify(frames[sent++]));
-          else resolve(out);
-        }
-      });
-      ws1.on('error', reject);
-      setTimeout(() => reject(new Error('timed out')), 10000);
-    });
-    ws1.close();
+    // INTEGRITY (rep-gating hardening): the cross-rep evidence is now credited from the
+    // rep the SERVER MOUNTED (server-trusted), not the client's `repSubmission.rep`. So a
+    // realistic learner must ANSWER the surface the server presents, in the rep the server
+    // mounted — and the server's #3/#8 interleaving rotates that rep across the ladder.
+    // We drive ADAPTIVELY: respond to whatever practice item the server mounts with a
+    // correct submit in the MOUNTED rep, advancing past intro/worked cards, until the
+    // server fires the TransferProbe (the rule gate passed, incl. the ≥2-rep condition).
+    const upToTransfer = await driveToTransferProbe(sessionId, wsUrl, l1CorrectFor);
     const probe = upToTransfer.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
@@ -910,44 +979,16 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       sessionId: string;
     };
     const l4Ws = `${wsUrl}?lesson=4`;
-    // BIND to L4 (durable lessonProgress write), then drive the full all-KC gate.
-    // L4 KCs are de_morgan and negation. The `?lesson=4` seam is honored only on
-    // `session_start`; subsequent turns read the durable binding.
-    //
-    // NEW all-KC gate: negation KC has only tier-2 items (l4-nor-primitive, tier 2);
-    // de_morgan includes tier-4 items (maxTier=4). Strategy:
-    //   - 2 correct l4-nor-primitive (negation, tier 2) → negation BKT ≥ 0.95;
-    //     tier < maxTier so consecutiveCorrectAtHardestTier stays 0.
-    //   - 3 consecutive correct tier-4 items → de_morgan BKT ≥ 0.95 (crosses 0.95
-    //     after 2 from prior) AND consecutiveCorrectAtHardestTier = 3 ✓.
-    // Tier-4 items chosen: l4-comp-a-and-bc-trap, l4-comp-a-or-bc, l4-comp-or-and.
-    const ws1 = new WebSocket(l4Ws);
-    const upToTransfer = await new Promise<Action[]>((resolve, reject) => {
-      const frames: Record<string, unknown>[] = [
-        { kind: 'session_start', sessionId, lessonId: 4 },
-        // Clear negation KC (tier 2 — does not affect hardest-tier streak).
-        { kind: 'submit', sessionId, itemId: 'l4-nor-primitive', submission: 'A NOR B', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l4-nor-primitive', submission: 'A NOR B', correct: true, responseTimeMs: 6000 },
-        // 3 consecutive correct tier-4 de_morgan items → streak + de_morgan BKT ≥ 0.95.
-        { kind: 'submit', sessionId, itemId: 'l4-comp-a-and-bc-trap', submission: 'NOT (A AND (B OR C))', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l4-comp-a-or-bc', submission: 'NOT (A OR (B AND C))', correct: true, responseTimeMs: 6000 },
-        { kind: 'submit', sessionId, itemId: 'l4-comp-or-and', submission: 'NOT ((A OR B) AND C)', correct: true, responseTimeMs: 4000 },
-      ];
-      const out: Action[] = [];
-      let sent = 0;
-      ws1.on('open', () => ws1.send(JSON.stringify(frames[sent++])));
-      ws1.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.kind === 'action') {
-          out.push(Action.parse(msg.action));
-          if (sent < frames.length) ws1.send(JSON.stringify(frames[sent++]));
-          else resolve(out);
-        }
-      });
-      ws1.on('error', reject);
-      setTimeout(() => reject(new Error('L4 drive timed out')), 12000);
+    // BIND to L4 (durable lessonProgress write) via the `?lesson=4` seam on session_start,
+    // then drive ADAPTIVELY to the gate. As with L1, the ≥2-rep condition (#1) is credited
+    // from the rep the SERVER MOUNTED, so we answer each mounted item in its mounted rep
+    // and let the server's #3 interleaving rotate reps across the de_morgan ladder until
+    // the L4 transfer probe fires.
+    const upToTransfer = await driveToTransferProbe(sessionId, l4Ws, l4CorrectFor, {
+      kind: 'session_start',
+      sessionId,
+      lessonId: 4,
     });
-    ws1.close();
     const probe = upToTransfer.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
     const probedExpr = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
@@ -1125,9 +1166,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
         { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
         { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+        // #1: hardest-tier ladder must span ≥2 reps — interleave truth_table/circuit/pseudocode.
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] }, correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'circuit', expression: 'A AND B', nodes: [], edges: [] }, correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' }, correct: true, responseTimeMs: 4000 },
       ];
       const out: Action[] = [];
       let sent = 0;
@@ -1208,9 +1250,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
       { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
       { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+      // #1: hardest-tier ladder must span ≥2 reps — interleave truth_table/circuit/pseudocode.
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] }, correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'circuit', expression: 'A AND B', nodes: [], edges: [] }, correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' }, correct: true, responseTimeMs: 4000 },
     ]);
     const probe = upToProbe.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
@@ -1461,6 +1504,13 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const L2_EXPRESSIONS = new Set(
       loadLesson(2).content.items.map((i) => i.targetExpression),
     );
+    // Expressions that exist in L1 but NOT in L2 — the only ones whose appearance proves
+    // a fold-against-L1 leak. (Some expressions, e.g. "A AND NOT B", are legitimately in
+    // BOTH lessons' item banks; the deterministic interleaved ladder may mount L2's copy,
+    // which must NOT be flagged as a leak just because L1 also has that expression.)
+    const L1_ONLY_EXPRESSIONS = new Set(
+      [...L1_EXPRESSIONS].filter((e) => !L2_EXPRESSIONS.has(e)),
+    );
 
     function mountExpression(action: Action): string | undefined {
       if (action.type !== 'mount') return undefined;
@@ -1524,7 +1574,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       const expr = mountExpression(submitAction!);
       expect(expr, 'L2 submit must mount an L2 item').toBeDefined();
       expect(L2_EXPRESSIONS.has(expr!), `mounted ${String(expr)} — expected an L2 expression`).toBe(true);
-      expect(L1_EXPRESSIONS.has(expr!), `mounted ${String(expr)} — an L1 expression leaked (the fold-against-L1 bug)`).toBe(false);
+      expect(L1_ONLY_EXPRESSIONS.has(expr!), `mounted ${String(expr)} — an L1-only expression leaked (the fold-against-L1 bug)`).toBe(false);
     });
 
     it('FAILS CLOSED: without the ?lesson seam a forged session_start.lessonId=2 is clamped to L1', async () => {
@@ -1783,9 +1833,10 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
         { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
         { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+        // #1: hardest-tier ladder must span ≥2 reps — interleave truth_table/circuit/pseudocode.
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] }, correct: true, responseTimeMs: 5000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'circuit', expression: 'A AND B', nodes: [], edges: [] }, correct: true, responseTimeMs: 6000 },
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' }, correct: true, responseTimeMs: 4000 },
       ]);
       const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
       const probedItemId =
@@ -2446,9 +2497,10 @@ describe.skipIf(!canRunPg)('F-11 explain-back PASS path through the real fold', 
       { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
       { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
       { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+      // #1: hardest-tier ladder must span ≥2 reps — interleave truth_table/circuit/pseudocode.
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] }, correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'circuit', expression: 'A AND B', nodes: [], edges: [] }, correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' }, correct: true, responseTimeMs: 4000 },
     ]);
     const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
@@ -2576,9 +2628,10 @@ describe.skipIf(!canRunPg)('CLUSTER C — explain-back attempt-cap under concurr
       { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true, responseTimeMs: 6000 },
       { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 5000 },
       { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true, responseTimeMs: 4000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 5000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 6000 },
-      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true, responseTimeMs: 4000 },
+      // #1: hardest-tier ladder must span ≥2 reps — interleave truth_table/circuit/pseudocode.
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] }, correct: true, responseTimeMs: 5000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'circuit', expression: 'A AND B', nodes: [], edges: [] }, correct: true, responseTimeMs: 6000 },
+      { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' }, correct: true, responseTimeMs: 4000 },
     ]);
     const probe = actions.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
     const probedItemId = probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';

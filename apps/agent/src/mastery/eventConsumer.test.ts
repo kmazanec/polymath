@@ -10,6 +10,45 @@ const { content, masteryConfig } = loadLesson(1);
 // carries a non-equivalent expression. (No client `correct` flag is trusted.)
 const RIGHT = { and: 'A AND B', or: 'A OR B', not: 'NOT A' };
 const WRONG = 'A OR B'; // wrong for the AND item
+// The CANONICAL target expressions the server mounts (must match content.json so the
+// fold canonicalizes a mount's expression to the same item the submit names).
+const AND_EXPR = 'B AND A'; // l1-and.targetExpression
+
+type Rep3 = 'truth_table' | 'circuit' | 'pseudocode';
+
+/** INTEGRITY: a server practice-mount turn carrying the SERVER-TRUSTED rep for an
+ *  item — this is what the rep-gating fold credits, NOT the client `repSubmission.rep`.
+ *  Mirrors how `toLoggedEvent` projects `mountedRep`/`mountedItemExpression` from the
+ *  action the server actually emitted. Bind the trusted rep BEFORE the answering submit. */
+function mountTurn(expression: string, rep: Rep3): LoggedEvent {
+  return { kind: 'submit', mountedRep: rep, mountedItemExpression: expression };
+}
+
+/** A correct submit. `clientRep` is the (untrusted) client-declared rep label; the
+ *  fold derives the trusted rep from the preceding `mountTurn`, not this. */
+function correctSubmit(
+  itemId: string,
+  submission: string,
+  ms: number,
+  clientRep?: Rep3,
+): LoggedEvent {
+  return {
+    kind: 'submit',
+    itemId,
+    submission,
+    responseTimeMs: ms,
+    ...(clientRep
+      ? {
+          repSubmission:
+            clientRep === 'truth_table'
+              ? { rep: clientRep, cells: submission === RIGHT.and ? [0, 0, 0, 1] : [0, 0, 1, 0] }
+              : clientRep === 'circuit'
+                ? { rep: clientRep, expression: submission, nodes: [], edges: [] }
+                : { rep: clientRep, expression: submission, source: submission },
+        }
+      : {}),
+  };
+}
 
 describe('deriveState (the single learner_state writer, pure core)', () => {
   it('updates BKT per KC on each correct submit (correctness recomputed server-side)', () => {
@@ -122,30 +161,152 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
     expect(gate.blockers).toContain('bkt_below_threshold');
   });
 
-  it('clean 3-correct on ALL THREE KCs (in-band times) drives the rule gate to passed', () => {
+  it('clean 3-correct on ALL THREE KCs across TWO reps (in-band times) drives the rule gate to passed', () => {
     // The positive case: every KC must be practiced to clear the all-KC BKT check.
     // Two corrects per KC clears 0.95 from prior; the streak/timing come from the
-    // hardest-tier items. L1 is single-tier, so any correct submit counts.
-    const mk = (itemId: string, submission: string, ms: number): LoggedEvent => ({
-      kind: 'submit',
-      itemId,
-      submission,
-      responseTimeMs: ms,
-    });
+    // hardest-tier items. L1 is single-tier, so any correct submit counts. #1: the
+    // hardest-tier ladder must now span ≥2 reps, so the closing AND ladder is
+    // INTERLEAVED across truth_table / circuit / pseudocode (#3 produces exactly
+    // this rep-varying ladder).
+    // The AND ladder spans ≥2 reps because the SERVER MOUNTED different reps for the
+    // AND item across the ladder (the trusted signal) — each mount turn precedes the
+    // submit that answers it (#3 produces exactly this rep-rotating ladder).
     const events: LoggedEvent[] = [
-      mk('l1-or', RIGHT.or, 5000),
-      mk('l1-or', RIGHT.or, 5200),
-      mk('l1-not', RIGHT.not, 4800),
-      mk('l1-not', RIGHT.not, 5100),
-      mk('l1-and', RIGHT.and, 5000),
-      mk('l1-and', RIGHT.and, 6000),
-      mk('l1-and', RIGHT.and, 4000),
+      correctSubmit('l1-or', RIGHT.or, 5000),
+      correctSubmit('l1-or', RIGHT.or, 5200),
+      correctSubmit('l1-not', RIGHT.not, 4800),
+      correctSubmit('l1-not', RIGHT.not, 5100),
+      mountTurn(AND_EXPR, 'truth_table'),
+      correctSubmit('l1-and', RIGHT.and, 5000, 'truth_table'),
+      mountTurn(AND_EXPR, 'circuit'),
+      correctSubmit('l1-and', RIGHT.and, 6000, 'circuit'),
+      mountTurn(AND_EXPR, 'pseudocode'),
+      correctSubmit('l1-and', RIGHT.and, 4000, 'pseudocode'),
     ];
     const ls = toLearnerState(deriveState(events, content, masteryConfig), masteryConfig);
     expect(ls.bktByKc['AND']).toBeGreaterThanOrEqual(masteryConfig.bktMasteryThreshold);
     expect(ls.bktByKc['OR']).toBeGreaterThanOrEqual(masteryConfig.bktMasteryThreshold);
     expect(ls.bktByKc['NOT']).toBeGreaterThanOrEqual(masteryConfig.bktMasteryThreshold);
+    expect(ls.distinctRepsAtHardestTier).toBeGreaterThanOrEqual(2);
     expect(evaluateRuleGate(ls, masteryConfig).passed).toBe(true);
+  });
+
+  it('#1 tracks distinct reps from the SERVER-MOUNTED rep (not the client label)', () => {
+    // Single rep: the server mounted truth_table both times → one distinct rep.
+    const single = deriveState(
+      [
+        mountTurn(AND_EXPR, 'truth_table'),
+        correctSubmit('l1-and', RIGHT.and, 5000, 'truth_table'),
+        mountTurn(AND_EXPR, 'truth_table'),
+        correctSubmit('l1-and', RIGHT.and, 5000, 'truth_table'),
+      ],
+      content,
+      masteryConfig,
+    );
+    expect(single.repsCorrectAtHardestTier.size).toBe(1);
+    // Genuinely different MOUNTED reps (server mounted truth_table, then circuit) → two.
+    const multi = deriveState(
+      [
+        mountTurn(AND_EXPR, 'truth_table'),
+        correctSubmit('l1-and', RIGHT.and, 5000, 'truth_table'),
+        mountTurn(AND_EXPR, 'circuit'),
+        correctSubmit('l1-and', RIGHT.and, 5000, 'circuit'),
+      ],
+      content,
+      masteryConfig,
+    );
+    expect([...multi.repsCorrectAtHardestTier].sort()).toEqual(['circuit', 'truth_table']);
+  });
+
+  it('#1 INTEGRITY: a FORGED client rep label on a single server-mounted rep does NOT fake interleaving', () => {
+    // The attack (this finding): the server only ever MOUNTED truth_table for l1-and,
+    // but a scripted client cycles `repSubmission.rep` truth_table→circuit→pseudocode
+    // on the SAME correct expression. Distinct (item, CLIENT-rep) keys would (pre-fix)
+    // credit each as interleaved and reach ≥2 reps. With the server-trusted rep, all
+    // three resolve to the MOUNTED truth_table → ONE distinct rep, and the massed-repeat
+    // dedupe declines the 2nd/3rd → the ladder does not climb and single_representation
+    // still blocks.
+    const d = deriveState(
+      [
+        mountTurn(AND_EXPR, 'truth_table'),
+        correctSubmit('l1-and', RIGHT.and, 5000, 'truth_table'),
+        correctSubmit('l1-and', RIGHT.and, 5000, 'circuit'), // forged client label
+        correctSubmit('l1-and', RIGHT.and, 5000, 'pseudocode'), // forged client label
+      ],
+      content,
+      masteryConfig,
+    );
+    expect(d.repsCorrectAtHardestTier.size).toBe(1);
+    expect([...d.repsCorrectAtHardestTier]).toEqual(['truth_table']);
+    expect(d.consecutiveCorrectAtHardestTier).toBe(1); // massed repeats not credited
+    const ls = toLearnerState(d, masteryConfig);
+    expect(ls.distinctRepsAtHardestTier).toBe(1);
+    expect(evaluateRuleGate(ls, masteryConfig).blockers).toContain('single_representation');
+  });
+
+  it('#1 FAIL-CLOSED: a submit with NO known server-mounted rep defaults to single-rep (truth_table), not a new distinct rep', () => {
+    // No mount turn precedes these submits → the fold cannot prove a rep → it must NOT
+    // credit a "different" rep. Both resolve to the safe truth_table default.
+    const d = deriveState(
+      [
+        correctSubmit('l1-and', RIGHT.and, 5000, 'circuit'),
+        correctSubmit('l1-review-mix', 'A AND NOT B', 5000, 'pseudocode'),
+      ],
+      content,
+      masteryConfig,
+    );
+    expect(d.repsCorrectAtHardestTier.size).toBe(1);
+    expect([...d.repsCorrectAtHardestTier]).toEqual(['truth_table']);
+  });
+
+  it('#2 does NOT credit a massed identical (item,rep) repeat to the hardest-tier ladder', () => {
+    // Three correct submits on the IDENTICAL (l1-and, truth_table) back-to-back are a
+    // massed/blocked repeat — a memorized answer. Only the FIRST counts; the ladder
+    // stays at 1, not 3, and only one rep is demonstrated.
+    const same: LoggedEvent = {
+      kind: 'submit',
+      itemId: 'l1-and',
+      submission: RIGHT.and,
+      responseTimeMs: 5000,
+      repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] },
+    };
+    const d = deriveState([same, same, same], content, masteryConfig);
+    expect(d.consecutiveCorrectAtHardestTier).toBe(1);
+    expect(d.repsCorrectAtHardestTier.size).toBe(1);
+  });
+
+  it('#2 DOES credit interleaved correct submits (different item OR rep between repeats)', () => {
+    const tt = (itemId: string): LoggedEvent => ({
+      kind: 'submit',
+      itemId,
+      submission: itemId === 'l1-and' ? RIGHT.and : 'A AND NOT B',
+      responseTimeMs: 5000,
+      repSubmission: { rep: 'truth_table', cells: itemId === 'l1-and' ? [0, 0, 0, 1] : [0, 0, 1, 0] },
+    });
+    // l1-and and l1-review-mix are both tier-1 AND items (the hardest tier in L1):
+    // alternating between them is interleaved, so every correct submit credits.
+    const d = deriveState([tt('l1-and'), tt('l1-review-mix'), tt('l1-and')], content, masteryConfig);
+    expect(d.consecutiveCorrectAtHardestTier).toBe(3);
+  });
+
+  it('#2 a hint between two identical (item,rep) submits re-opens crediting (break in massing)', () => {
+    const same: LoggedEvent = {
+      kind: 'submit',
+      itemId: 'l1-and',
+      submission: RIGHT.and,
+      responseTimeMs: 5000,
+      repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] },
+    };
+    // A served hint resets the ladder to 0; the post-hint correct submit starts a
+    // fresh ladder at 1 (the hint cost the streak, but the repeat is no longer
+    // "massed" against a pre-hint key).
+    const d = deriveState(
+      [same, { kind: 'request_hint', itemId: 'l1-and', hintMounted: true }, same],
+      content,
+      masteryConfig,
+    );
+    expect(d.consecutiveCorrectAtHardestTier).toBe(1);
+    expect(d.repsCorrectAtHardestTier.size).toBe(1);
   });
 
   it('a sub-floor response time blocks the gate (gaming guard, ADR-011 2s floor)', () => {

@@ -78,6 +78,7 @@ import { tryHandleHandoffRoute } from './handoff/route.js';
 import type { BaselineChatProvider } from './baseline/chatProvider.js';
 import { makeOpenAiBaselineChatProvider } from './baseline/openaiChatProvider.js';
 import { buildTeacherReport } from './report/teacherReport.js';
+import { loadMisconceptions } from './hints/misconceptions.js';
 
 export interface ServerDeps {
   db: Db;
@@ -360,13 +361,41 @@ function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
     };
     transferVerdict?: { correct?: boolean };
     // F-12 extends the projection to read `topicClassification` for the
-    // topic-guardrail counter (was type + component.kind only).
-    action?: { type?: string; component?: { kind?: string }; topicClassification?: string };
+    // topic-guardrail counter (was type + component.kind only). The integrity
+    // hardening (rep-gating) additionally reads the mounted component's target
+    // expression so the fold can derive a SERVER-TRUSTED rep per item — never the
+    // client's `repSubmission.rep`.
+    action?: {
+      type?: string;
+      component?: { kind?: string; expression?: string; targetExpression?: string };
+      topicClassification?: string;
+    };
     // F-11 writes / F-12 reads F-11's persisted verdict slot (write-full /
     // read-narrow split, mirroring `transferVerdict`). Absent → undefined →
     // fail-closed (no pass).
     explainBackVerdict?: { passed?: boolean };
   };
+  // INTEGRITY HARDENING (rep-gating): map the SERVER-mounted practice component to its
+  // rep. This is the rep the server actually presented for the item — the trusted
+  // signal the rep-gating fold credits, NOT the client-declared `repSubmission.rep`.
+  // Only the three item-bearing practice mounts carry a rep; everything else → undefined.
+  const mountedComponent = p.action?.type === 'mount' ? p.action.component : undefined;
+  const mountedRep: 'truth_table' | 'circuit' | 'pseudocode' | undefined =
+    mountedComponent?.kind === 'TruthTablePractice'
+      ? 'truth_table'
+      : mountedComponent?.kind === 'CircuitBuilder'
+        ? 'circuit'
+        : mountedComponent?.kind === 'PseudocodeChallenge'
+          ? 'pseudocode'
+          : undefined;
+  // The target expression of the mounted practice item (so the fold can bind the
+  // trusted rep to the item the learner later submits against).
+  const mountedItemExpression =
+    mountedComponent?.kind === 'TruthTablePractice'
+      ? mountedComponent.expression
+      : mountedComponent?.kind === 'CircuitBuilder' || mountedComponent?.kind === 'PseudocodeChallenge'
+        ? mountedComponent.targetExpression
+        : undefined;
   return {
     kind,
     // An explain-back event names its item via `targetItemId` (not `itemId`).
@@ -375,6 +404,8 @@ function toLoggedEvent(kind: string, payload: unknown): LoggedEvent {
     repSubmission: p.event?.repSubmission,
     responseTimeMs: p.event?.responseTimeMs,
     transferCorrect: p.transferVerdict?.correct,
+    mountedRep,
+    mountedItemExpression,
     // A served hint = the logged action mounted a HintCard (a refused request is a
     // no_action). Only known for persisted events; the current turn's action isn't
     // decided yet (and doesn't count toward its own level).
@@ -836,13 +867,13 @@ export function wrongSubmitRemediationAction(
   proposedAction?: Action,
 ): Action | null {
   if (event.kind !== 'submit') return null;
-  const rep = event.repSubmission?.rep ?? 'truth_table';
+  const submittedRep = event.repSubmission?.rep ?? 'truth_table';
   const attempt = (priorMissesByItem[event.itemId] ?? 0) + 1;
   const llmExplanation = remediationTextFromAction(proposedAction);
   // B11: the default retry guidance must match the REP the learner is using. The
   // truth-table wording ("work row by row… mark 1 only for those rows") is nonsense
   // under a pseudocode editor or a circuit canvas, where there are no rows to mark.
-  const repGuidance: Record<typeof rep, string> = {
+  const repGuidance: Record<RepKind, string> = {
     truth_table:
       'work row by row, ask what would make the expression true, then mark 1 only for those rows.',
     circuit:
@@ -854,6 +885,10 @@ export function wrongSubmitRemediationAction(
   const item = lesson.content.items.find(
     (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,
   );
+
+  // #4: an L3 NAND-construction retry stays in the circuit rep (can't be assessed in
+  // a truth table); every other item retries in the rep the learner submitted in.
+  const rep: RepKind = item ? forceCircuitNandRep(lesson, item, submittedRep) : submittedRep;
 
   if (item) {
     // Authored item: use the item's own (validator-checked) truthTable.
@@ -1019,21 +1054,120 @@ function authoredPracticeAction(
   }
 }
 
-function authoredHintAction(input: AgentInput, item: Lesson['content']['items'][number]): Action {
+/** Render a single concrete truth-table row of `expression` as a worked L2 hint
+ *  fragment — e.g. "When A=1, B=1, the output is 1". Picks the FIRST row whose
+ *  output is 1 (the discriminating case for most operators); falls back to row 0
+ *  when the expression is constant-false. Honors the distinct-variable cap (DoS
+ *  guard, CLAUDE.md invariant): an over-cap or unparseable expression returns null
+ *  and the caller degrades to the generic L2 wording. */
+function concreteRowHint(expression: string): string | null {
+  try {
+    if (variables(parse(expression)).length > MAX_EQUIVALENCE_VARS) return null;
+    const tt = truthTable(expression);
+    if (tt.vars.length === 0) return null;
+    const rowIdx = tt.out.findIndex((v) => v) >= 0 ? tt.out.findIndex((v) => v) : 0;
+    const assignment = tt.vars
+      .map((v, i) => `${v}=${tt.rows[rowIdx]![i] ? 1 : 0}`)
+      .join(', ');
+    const out = tt.out[rowIdx] ? 1 : 0;
+    return `Work one row: when ${assignment}, the output of ${expression} is ${out}. Verify that row against the operator rule, then do the next.`;
+  } catch {
+    return null;
+  }
+}
+
+/** A near-complete (faded) L3 scaffold for the truth table: state how many rows are
+ *  1 and ask the learner to place the LAST one — a completion problem (Sweller's
+ *  faded worked example). Over-cap/unparseable → null (caller degrades). */
+function completionScaffoldHint(expression: string): string | null {
+  try {
+    if (variables(parse(expression)).length > MAX_EQUIVALENCE_VARS) return null;
+    const tt = truthTable(expression);
+    const ones = tt.out.filter((v) => v).length;
+    return (
+      `Almost there — the full table for ${expression} has ${ones.toString()} row(s) that output 1 ` +
+      `and ${(tt.out.length - ones).toString()} that output 0. Fill in every row you are sure of, ` +
+      `then place the single remaining row by applying the operator rule one last time.`
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * #7 GENUINE HINT FADING (ADR-010 Layer 3). A real fade, not three paraphrases:
+ *   - L1 = a strategy CUE (rep-aware: rows for truth_table, gates for circuit,
+ *     step-by-step for pseudocode). Light-touch direction, no answer content.
+ *   - L2 = work ONE concrete row/partial of THIS expression, computed correctly
+ *     server-side via @polymath/booleans (var-capped). If a misconception entry
+ *     exists for the item (`lessons/<id>/misconceptions.json`, matched by itemId),
+ *     route L2 to that misconception's specific `hintBody` — the targeted nudge for
+ *     the most common error — instead of the generic concrete-row text.
+ *   - L3 = a near-complete completion-problem scaffold (reveal the answer SHAPE and
+ *     leave the learner the last step) — the classic faded worked example.
+ *
+ * Rep-aware where it matters: the "row" language is only used for truth_table; the
+ * circuit/pseudocode variants give an analogous concrete partial. The hint LEVEL is
+ * server-derived from `hintsByItem` (the full session), never a capped window.
+ */
+export function authoredHintAction(input: AgentInput, item: Lesson['content']['items'][number]): Action {
   const event = input.event;
   const itemId = event.kind === 'request_hint' ? event.itemId : item.itemId;
   const priorHints = input.hintsByItem?.[itemId] ?? 0;
   const level = Math.min(priorHints + 1, 3) as 1 | 2 | 3;
-  const body =
-    level === 1
-      ? `Work row by row for ${item.targetExpression}. Ask what would make the expression output 1, then mark only those rows.`
-      : level === 2
-        ? `For ${item.targetExpression}, compare each row to the operator rule before touching the Output column. Leave rows that do not satisfy the rule as 0.`
-        : `Reset the table mentally: read the inputs across each row, apply ${item.kc}, and write the output. If a row fails the rule for ${item.kc}, its output is 0.`;
+
+  // The rep the learner is working THIS item in: derived from the most-recent
+  // practice mount in the bounded history (request_hint carries no rep), forced to
+  // circuit for the L3 NAND-construction items (#4).
+  const activeRep = forceCircuitNandRep(
+    input.lesson,
+    item,
+    lastPracticeMount(input)?.rep ?? 'truth_table',
+  );
+
+  let body: string;
+  if (level === 1) {
+    // L1 strategy cue, rep-aware.
+    body =
+      activeRep === 'circuit'
+        ? `Start at the output gate of ${item.targetExpression} and trace backward: which gate must produce the final value, and what inputs does it need?`
+        : activeRep === 'pseudocode'
+          ? `Write ${item.targetExpression} step by step: name each sub-result, then combine them with the operator. Check it against one input row.`
+          : `Work row by row for ${item.targetExpression}. Ask what would make the expression output 1, then mark only those rows.`;
+  } else if (level === 2) {
+    // L2: route to the item's named misconception if one exists; else a concrete
+    // worked row/partial computed server-side.
+    const misconception = loadMisconceptions(input.lesson.content.lessonId).items.find(
+      (m) => m.itemId === item.itemId,
+    );
+    if (misconception) {
+      body = misconception.hintBody;
+    } else if (activeRep === 'circuit') {
+      body = `For ${item.targetExpression}, build ONE branch first: wire the gate nearest an input and confirm its output for a single input combination before adding the rest.`;
+    } else if (activeRep === 'pseudocode') {
+      body = `For ${item.targetExpression}, write just the FIRST sub-expression as a line of code and evaluate it for one set of inputs; then add the next operator.`;
+    } else {
+      body =
+        concreteRowHint(item.targetExpression) ??
+        `For ${item.targetExpression}, compare each row to the operator rule before touching the Output column. Leave rows that do not satisfy the rule as 0.`;
+    }
+  } else {
+    // L3: a near-complete completion-problem scaffold.
+    if (activeRep === 'circuit') {
+      body = `You're one step from the full circuit for ${item.targetExpression}. Place every gate you're confident in, then add the SINGLE remaining gate by asking which connective still needs to be represented.`;
+    } else if (activeRep === 'pseudocode') {
+      body = `You're nearly done: write out all of ${item.targetExpression} except the final operator, then add that last line by reading the expression left to right.`;
+    } else {
+      body =
+        completionScaffoldHint(item.targetExpression) ??
+        `Reset the table mentally: read the inputs across each row, apply ${item.kc}, and write the output. If a row fails the rule for ${item.kc}, its output is 0.`;
+    }
+  }
+
   return {
     type: 'mount',
     component: { kind: 'HintCard', level, body },
-    rationale: `authored lesson sequence — deterministic hint for "${item.itemId}"`,
+    rationale: `authored lesson sequence — faded hint L${level.toString()} for "${item.itemId}" (rep=${activeRep})`,
   };
 }
 
@@ -1045,14 +1179,16 @@ export function deterministicAuthoredPhaseAction(input: AgentInput): Action | nu
   if (event.kind === 'session_start') {
     if (!event.startRep) return null;
     const first = controlledItems[0];
-    return first
-      ? authoredPracticeAction(
-          input.lesson,
-          first,
-          `representation shortcut — starting lesson ${input.lesson.content.lessonId} in ${event.startRep}`,
-          event.startRep,
-        )
-      : null;
+    if (!first) return null;
+    // #4: the L3 NAND-construction first item is forced to circuit even if the
+    // learner requested a different start rep.
+    const startRep = forceCircuitNandRep(input.lesson, first, event.startRep);
+    return authoredPracticeAction(
+      input.lesson,
+      first,
+      `representation shortcut — starting lesson ${input.lesson.content.lessonId} in ${startRep}`,
+      startRep,
+    );
   }
 
   if (event.kind === 'request_hint') {
@@ -1065,7 +1201,23 @@ export function deterministicAuthoredPhaseAction(input: AgentInput): Action | nu
   const idx = controlledItems.findIndex(
     (item) => item.itemId === event.itemId || item.targetExpression === event.itemId,
   );
-  if (idx < 0) return null;
+  // #1/#3 INTEGRATION: a correct submit on an item that is NOT a first-per-KC item
+  // (L1's l1-review-mix, or a re-mounted ladder item) is the CONTINUED-PRACTICE / ladder
+  // phase. The per-KC walk has nothing to advance to here, so OWN it with the
+  // deterministic INTERLEAVED forward-progress ladder (which rotates reps and prefers the
+  // next not-yet-passed authored item — always lesson-correct) rather than returning null
+  // and letting the rep-blind stub mount everything in one rep, which would make the new
+  // ≥2-rep gate (#1) unreachable. Fail-closed: forward-progress returns null when the
+  // gate is already satisfied (a privileged path owns the turn).
+  if (idx < 0) {
+    if (event.kind === 'submit' && input.currentSubmitCorrect === false) {
+      return wrongSubmitRemediationAction(event, input.lesson, input.priorMissesByItem ?? {});
+    }
+    if (event.kind === 'submit' && input.currentSubmitCorrect === true) {
+      return forwardProgressFallbackAction(input, input.learnerState.ruleGatePassed);
+    }
+    return null;
+  }
 
   if (input.currentSubmitCorrect === false) {
     return wrongSubmitRemediationAction(event, input.lesson, input.priorMissesByItem ?? {});
@@ -1073,7 +1225,10 @@ export function deterministicAuthoredPhaseAction(input: AgentInput): Action | nu
   if (input.currentSubmitCorrect !== true) return null;
 
   const next = controlledItems[idx + 1];
-  if (!next) return null;
+  // Per-KC walk exhausted (last first-KC item answered correctly): hand off to the
+  // INTERLEAVED forward-progress ladder so continued practice rotates reps on the
+  // trusted deterministic path (#3), instead of the rep-blind stub.
+  if (!next) return forwardProgressFallbackAction(input, input.learnerState.ruleGatePassed);
 
   // REP-PRESERVATION (R2-3): the learner picked a representation (?rep=circuit /
   // ?rep=pseudocode, "Skip to code", …) and is answering THIS item in it — read
@@ -1083,14 +1238,16 @@ export function deterministicAuthoredPhaseAction(input: AgentInput): Action | nu
   // default of `truth_table`. (The just-in-time explanation below is rep-neutral
   // — a concept card — and `practiceAfterLatestExplanation` independently
   // re-derives the active rep from `recentHistory` for the item it follows.)
-  const rep = repFromSubmitEvent(event);
+  // #4: force the L3 NAND-construction items into the circuit rep regardless of the
+  // learner's preserved rep (a NAND build can't be assessed in a truth table).
+  const rep = forceCircuitNandRep(input.lesson, next, repFromSubmitEvent(event));
 
   const explanation = authoredLessonPlanAction(input);
   if (explanation) return explanation;
   return authoredPracticeAction(
     input.lesson,
     next,
-    `authored lesson sequence — mounting next first-KC practice item "${next.itemId}" in learner rep "${rep}"`,
+    `authored lesson sequence — mounting next first-KC practice item "${next.itemId}" in rep "${rep}"`,
     rep,
   );
 }
@@ -1100,6 +1257,105 @@ export function deterministicAuthoredPhaseAction(input: AgentInput): Action | nu
 function repFromSubmitEvent(event: ClientEvent): 'truth_table' | 'circuit' | 'pseudocode' {
   if (event.kind === 'submit') return event.repSubmission?.rep ?? 'truth_table';
   return 'truth_table';
+}
+
+type RepKind = 'truth_table' | 'circuit' | 'pseudocode';
+
+/**
+ * #4: the genuine NAND-construction items in Lesson 3 must be practiced/assessed in
+ * the CIRCUIT representation (build the function from NAND gates). A truth table for
+ * `NOT A` cannot distinguish "constructed from NAND" from "remembered NOT's table",
+ * so these items are forced to `circuit` (the `allowedGates: ['NAND']` palette is
+ * applied by `authoredPracticeAction`/`retryMountForExpression` for lessonId === 3).
+ * Every OTHER item (incl. L3's plain `composition` items, re-tagged in f4c66b6, and
+ * `nand-universality`) is left in whatever rep the interleaver/learner chose.
+ */
+const L3_NAND_CONSTRUCTION_ITEMS: ReadonlySet<string> = new Set([
+  'l3-nand-basic',
+  'l3-not-from-nand',
+  'l3-and-from-nand',
+  'l3-or-from-nand',
+]);
+
+function forceCircuitNandRep(
+  lesson: Lesson,
+  item: Lesson['content']['items'][number],
+  rep: RepKind,
+): RepKind {
+  if (lesson.content.lessonId === 3 && L3_NAND_CONSTRUCTION_ITEMS.has(item.itemId)) {
+    return 'circuit';
+  }
+  return rep;
+}
+
+/** The rep cycle for interleaving (#3/#8): rotate truth_table → circuit → pseudocode → … */
+const REP_CYCLE: readonly RepKind[] = ['truth_table', 'circuit', 'pseudocode'];
+
+/** Map a mounted component kind back to its rep (mirrors introAdvance.activeRepFromHistory). */
+function repFromComponentKind(kind: string | undefined): RepKind | undefined {
+  switch (kind) {
+    case 'TruthTablePractice':
+      return 'truth_table';
+    case 'CircuitBuilder':
+      return 'circuit';
+    case 'PseudocodeChallenge':
+      return 'pseudocode';
+    default:
+      return undefined;
+  }
+}
+
+/** The (targetExpression, rep) of the most-recent item-bearing PRACTICE mount in the
+ *  bounded recent history, so the ladder never re-mounts the identical (item, rep)
+ *  back-to-back (#2/#3 anti-massing). Undefined when no prior practice mount is in
+ *  the window. */
+function lastPracticeMount(input: AgentInput): { expression: string; rep: RepKind } | undefined {
+  for (const turn of [...input.recentHistory].reverse()) {
+    if (turn.actionType !== 'mount') continue;
+    const rep = repFromComponentKind(turn.componentKind);
+    if (rep && turn.expression) return { expression: turn.expression, rep };
+  }
+  return undefined;
+}
+
+/**
+ * #3/#8 INTERLEAVING: choose the next ladder mount so that (a) it never re-mounts the
+ * identical (item, rep) as the immediately-preceding practice mount, and (b) the rep
+ * ROTATES across the cycle so the consecutive-correct ladder is actually built from
+ * multiple representations — which is exactly what #1's `requireDifferentRepresentation`
+ * gate now demands. Without (b) the multi-rep REQUIREMENT would face a single-rep
+ * PRACTICE loop — a gate nobody could pass.
+ *
+ * Strategy:
+ *   - Prefer a DIFFERENT hardest-tier item than the one just shown (interleaving across
+ *     items) when the lesson has ≥2 hardest-tier items (lessons 2–4); pick its rep by
+ *     advancing the rep cycle from the previous rep.
+ *   - When the lesson has only ONE hardest-tier item (L1's AND ladder has l1-and +
+ *     l1-review-mix, but a lesson with a single hardest item), rotate the REP of that
+ *     same item instead — never the identical (item, rep) twice in a row.
+ *   - The chosen (item, rep) is guaranteed distinct from the previous mount.
+ */
+function pickInterleavedLadderMount(
+  hardestItems: Lesson['content']['items'],
+  prev: { expression: string; rep: RepKind } | undefined,
+): { item: Lesson['content']['items'][number]; rep: RepKind } | null {
+  if (hardestItems.length === 0) return null;
+  const prevRep = prev?.rep ?? 'truth_table';
+  const nextRep = REP_CYCLE[(REP_CYCLE.indexOf(prevRep) + 1) % REP_CYCLE.length]!;
+
+  // Prefer a hardest-tier item that differs from the one just shown.
+  const differentItem = hardestItems.find((i) => i.targetExpression !== prev?.expression);
+  if (hardestItems.length >= 2 && differentItem) {
+    // A different item + the rotated rep is always distinct from the previous mount.
+    return { item: differentItem, rep: nextRep };
+  }
+
+  // Single hardest-tier item (or only the same item available): rotate the REP so we
+  // never re-mount the identical (item, rep). If the rotated rep somehow equals the
+  // previous rep (cycle length issue — impossible for 3 distinct reps), advance once more.
+  const item = hardestItems[0]!;
+  const rep = nextRep === prevRep ? REP_CYCLE[(REP_CYCLE.indexOf(nextRep) + 1) % REP_CYCLE.length]! : nextRep;
+  return { item, rep };
 }
 
 /**
@@ -1134,7 +1390,7 @@ function repFromSubmitEvent(event: ClientEvent): 'truth_table' | 'circuit' | 'ps
  *      re-mount the HARDEST-tier authored item so the consecutive-correct ladder
  *      can keep climbing (spaced practice), rather than dead-ending.
  */
-function forwardProgressFallbackAction(
+export function forwardProgressFallbackAction(
   input: AgentInput,
   gateSatisfied: boolean,
 ): Action | null {
@@ -1147,30 +1403,48 @@ function forwardProgressFallbackAction(
   const items = input.lesson.content.items;
   if (items.length === 0) return null;
   const passed = input.passedItemIds ?? new Set<string>();
-  const rep = repFromSubmitEvent(event);
+  // #3/#8: the continued-practice / ladder phase must INTERLEAVE representations so
+  // the cross-rep evidence #1 now gates on can actually accumulate. We never re-mount
+  // the identical (item, rep) as the immediately-preceding practice mount, and we
+  // rotate the rep across the cycle. `prev` is the last item-bearing practice mount
+  // (read from the bounded recent history); the learner's just-submitted rep is the
+  // tie-breaking default when no prior mount is in the window.
+  const prev = lastPracticeMount(input) ?? {
+    expression: '',
+    rep: repFromSubmitEvent(event),
+  };
+  const rotatedRep = REP_CYCLE[(REP_CYCLE.indexOf(prev.rep) + 1) % REP_CYCLE.length]!;
 
-  // (2) Next not-yet-passed authored item, in authored order.
+  // (2) Next not-yet-passed authored item, in authored order. Vary the rep away from
+  //     the previous mount (rotate the cycle) so the continued walk builds cross-rep
+  //     fluency rather than doing every item in one rep (#8). If the next unfinished
+  //     item is the SAME expression as the previous mount, the rotated rep guarantees
+  //     we don't re-mount the identical (item, rep).
   const nextUnfinished = items.find((item) => !passed.has(item.itemId));
   if (nextUnfinished) {
+    const repForNext = forceCircuitNandRep(input.lesson, nextUnfinished, rotatedRep);
     return authoredPracticeAction(
       input.lesson,
       nextUnfinished,
-      `B7 forward-progress fallback — mounting next unfinished authored item "${nextUnfinished.itemId}" (rep=${rep})`,
-      rep,
+      `B7 forward-progress fallback — mounting next unfinished authored item "${nextUnfinished.itemId}" interleaved in rep=${repForNext} (prev rep=${prev.rep})`,
+      repForNext,
     );
   }
 
   // (3) All authored items passed but the gate is unmet — keep the ladder going by
-  //     re-mounting the hardest-tier item (deterministic spaced practice, NEVER no_action).
+  //     re-mounting a hardest-tier item, ROTATED across items and reps so it never
+  //     repeats the identical (item, rep) back-to-back (massed practice trains a
+  //     memorized answer; #2 would not even credit it). NEVER no_action.
   const maxTier = Math.max(...items.map((i) => i.difficultyTier));
   const hardest = items.filter((i) => i.difficultyTier === maxTier);
-  const ladderItem = hardest[hardest.length - 1] ?? items[items.length - 1];
-  if (!ladderItem) return null;
+  const picked = pickInterleavedLadderMount(hardest, prev);
+  if (!picked) return null;
+  const ladderRep = forceCircuitNandRep(input.lesson, picked.item, picked.rep);
   return authoredPracticeAction(
     input.lesson,
-    ladderItem,
-    `B7 forward-progress fallback — all authored items passed but mastery gate unmet; re-mounting hardest-tier item "${ladderItem.itemId}" to continue the consecutive-correct ladder (rep=${rep})`,
-    rep,
+    picked.item,
+    `B7 forward-progress fallback — all authored items passed but mastery gate unmet; re-mounting hardest-tier item "${picked.item.itemId}" in rep=${ladderRep} (prev rep=${prev.rep}) to continue the INTERLEAVED consecutive-correct ladder`,
+    ladderRep,
   );
 }
 

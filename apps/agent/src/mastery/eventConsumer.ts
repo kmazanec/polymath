@@ -1,6 +1,6 @@
 import { type BKTConfig, type BKTParams, initBKT, updateBKT } from '@polymath/bkt';
 import { scoreEquivalence } from '@polymath/booleans';
-import type { LessonContent, MasteryConfig, RepSubmission } from '@polymath/contract';
+import type { LessonContent, MasteryConfig, Rep, RepSubmission } from '@polymath/contract';
 import type { LearnerState } from './gate.js';
 
 /**
@@ -20,8 +20,21 @@ export interface LoggedEvent {
   /** The learner's submitted canonical expression. For truth tables this echoes
    *  the target expression; the output column lives in `repSubmission.cells`. */
   submission?: string;
-  /** The learner's representation-native answer, when the client supplied one. */
+  /** The learner's representation-native answer, when the client supplied one.
+   *  WARNING: `repSubmission.rep` is a CLIENT-declared label and is NOT trusted for
+   *  the rep-gating integrity signal — see `mountedRep` below. It is still used for
+   *  truth-table cell scoring (the cells are the answer key, not an integrity claim). */
   repSubmission?: RepSubmission;
+  /** INTEGRITY (rep-gating): the rep of the practice component the SERVER mounted on
+   *  THIS turn (TruthTablePractice → truth_table, CircuitBuilder → circuit,
+   *  PseudocodeChallenge → pseudocode); undefined for any non-practice-mount turn.
+   *  This is the server's own record of what it presented — the fold binds it to the
+   *  item and credits cross-rep evidence from it, never from the client `repSubmission.rep`. */
+  mountedRep?: 'truth_table' | 'circuit' | 'pseudocode';
+  /** INTEGRITY (rep-gating): the target expression of the mounted practice item, so
+   *  the fold can bind the server-trusted `mountedRep` to the item the learner later
+   *  submits against (matched on canonical itemId / targetExpression). */
+  mountedItemExpression?: string;
   /** Server-computed transfer verdict on a `transfer_submitted`. */
   transferCorrect?: boolean;
   /** Server-computed explain-back verdict on an `explain_back_recording_ended`
@@ -51,6 +64,20 @@ export interface DerivedState {
    *  `consecutiveCorrect` (the tier-blind count) is preserved because `server.ts`
    *  reads it directly for the diagnostic snapshot. */
   consecutiveCorrectAtHardestTier: number;
+  /**
+   * #1 (requireDifferentRepresentation): the DISTINCT representations the learner
+   * has demonstrated CORRECT, UNASSISTED, hardest-tier work in WITHIN the current
+   * consecutive-correct ladder run. This is the cross-rep evidence the rule-gate
+   * reads when `requireDifferentRepresentation` is true — clearing the streak in
+   * one rep alone (e.g. truth_table) is no longer mastery-eligible.
+   *
+   * It tracks exactly the submissions that are CREDITED to
+   * `consecutiveCorrectAtHardestTier`, so it is reset by the SAME events that reset
+   * the ladder (a served hint, a wrong hardest-tier submit), and is NOT inflated by
+   * a massed identical (item,rep) repeat that #2 declines to credit. It is an
+   * INTERNAL agent/server field — it never crosses the wire.
+   */
+  repsCorrectAtHardestTier: Set<Rep>;
   hintsUsed: number;
   /** Hints requested per item this session — the authoritative hint-level source
    *  (a capped recent-history window can mis-count and reset the ladder). */
@@ -164,6 +191,7 @@ export function deriveState(
     bktByKc,
     consecutiveCorrect: 0,
     consecutiveCorrectAtHardestTier: 0,
+    repsCorrectAtHardestTier: new Set<Rep>(),
     hintsUsed: 0,
     hintsByItem: {},
     missesByItem: {},
@@ -180,7 +208,37 @@ export function deriveState(
    *  a retry; only a repeat after a miss counts against the retry ratio.) */
   const missed = new Set<string>();
 
+  // #2 (spacing / anti-massing): the (canonicalItemId, rep) of the immediately
+  // preceding submit at the HARDEST tier. A correct hardest-tier submit on the
+  // SAME (item, rep) as the one just before it — with no intervening different
+  // work — is a massed identical repeat (a memorized answer, not spaced retrieval)
+  // and is NOT credited to `consecutiveCorrectAtHardestTier` / the rep set. The
+  // ladder must be built from INTERLEAVED items/reps. Reset to undefined whenever
+  // the streak resets (a wrong hardest-tier submit or a served hint) so the next
+  // correct repeat after a break is once again creditable.
+  let lastHardestSubmitKey: string | undefined;
+
+  // INTEGRITY HARDENING (rep-gating): the SERVER-TRUSTED rep most recently mounted for
+  // each canonical item, derived from the action the server actually emitted
+  // (`mountedRep`/`mountedItemExpression` on the logged turn) — NEVER the client's
+  // `repSubmission.rep`. A scripted client can cycle the `repSubmission.rep` label on
+  // the same server-mounted item to fake interleaving; the rep-gating evidence (#1) and
+  // the #2 massed-repeat key are both credited from THIS map instead, so only the rep
+  // the server presented counts. FAIL-CLOSED: a submit whose item has no known mounted
+  // rep is treated as the safe single-rep default (truth_table) and is NOT credited a
+  // "different" rep — we never credit more reps than the server can prove it mounted.
+  const trustedRepByItem = new Map<string, Rep>();
+
   for (const ev of events) {
+    // Bind any practice mount's server-trusted rep to its canonical item BEFORE the
+    // submit that answers it (mounts are emitted on the turn preceding the submit, so
+    // by the time we process the submit the binding is already recorded).
+    if (ev.mountedRep && ev.mountedItemExpression) {
+      const canonicalMounted =
+        canonicalItemId.get(ev.mountedItemExpression) ?? ev.mountedItemExpression;
+      trustedRepByItem.set(canonicalMounted, ev.mountedRep);
+    }
+
     if (ev.kind === 'submit') {
       state.submits++;
       const correct = isCorrect(ev.itemId, ev.submission, ev.repSubmission);
@@ -223,9 +281,34 @@ export function deriveState(
       // counter behaves identically to `consecutiveCorrect` — no regression for L1.
       const itemTier = ev.itemId !== undefined ? (tierByItem.get(ev.itemId) ?? 0) : 0;
       if (itemTier === maxTier) {
-        state.consecutiveCorrectAtHardestTier = correct
-          ? state.consecutiveCorrectAtHardestTier + 1
-          : 0;
+        if (!correct) {
+          // A wrong hardest-tier submit breaks the ladder AND the cross-rep evidence.
+          state.consecutiveCorrectAtHardestTier = 0;
+          state.repsCorrectAtHardestTier = new Set<Rep>();
+          lastHardestSubmitKey = undefined;
+        } else {
+          // #2 SPACING + INTEGRITY: identify this hardest-tier submit by its canonical
+          // item + the SERVER-TRUSTED rep (the rep the server last mounted for this
+          // item), NOT the client-declared `repSubmission.rep`. A scripted client that
+          // cycles the rep label on the same server-mounted item produces the SAME
+          // trusted rep every time → the same (item, rep) key → declined as a massed
+          // repeat, and adds no new distinct rep. FAIL-CLOSED: no known mounted rep →
+          // truth_table default (the safe single-rep assumption), never a "different"
+          // rep we can't prove. A correct submit on the IDENTICAL (item, trusted-rep)
+          // as the immediately preceding one is not credited; genuinely interleaved
+          // work (a different item, or a rep the server actually mounted) is.
+          const canonical = ev.itemId ? (canonicalItemId.get(ev.itemId) ?? ev.itemId) : '';
+          const rep: Rep = trustedRepByItem.get(canonical) ?? 'truth_table';
+          const key = `${canonical}::${rep}`;
+          if (key !== lastHardestSubmitKey) {
+            state.consecutiveCorrectAtHardestTier += 1;
+            state.repsCorrectAtHardestTier.add(rep);
+            lastHardestSubmitKey = key;
+          }
+          // else: massed identical repeat — neither increments the ladder nor adds
+          // a rep; lastHardestSubmitKey stays the same so a third identical repeat
+          // is also declined.
+        }
       }
       // Lower-tier submits: leave consecutiveCorrectAtHardestTier unchanged.
     } else if (ev.kind === 'request_hint') {
@@ -241,6 +324,10 @@ export function deriveState(
         // of tier. (We do not check the item's tier here: a hint at ANY tier breaks the
         // "no hint" sub-condition of the streak, mirroring ADR-011's hint-reset rule.)
         state.consecutiveCorrectAtHardestTier = 0;
+        // A served hint also wipes the cross-rep evidence (the demonstrations in
+        // the current ladder run were hint-assisted) and the spacing tracker.
+        state.repsCorrectAtHardestTier = new Set<Rep>();
+        lastHardestSubmitKey = undefined;
       }
     } else if (ev.kind === 'transfer_submitted') {
       if (ev.transferCorrect === true) state.transferPassed = true;
@@ -276,6 +363,10 @@ export function toLearnerState(derived: DerivedState, config: MasteryConfig): Le
     // `consecutiveCorrect` is preserved on DerivedState for server.ts's diagnostic snapshot;
     // the gate reads only the hardest-tier count.
     consecutiveCorrectAtHardestTier: derived.consecutiveCorrectAtHardestTier,
+    // #1: the number of DISTINCT reps demonstrated correct+unassisted at the
+    // hardest tier within the current ladder run. The gate reads this when
+    // `requireDifferentRepresentation` is true.
+    distinctRepsAtHardestTier: derived.repsCorrectAtHardestTier.size,
     hintsUsedInLastN: derived.hintsUsed,
     responseTimesMs: derived.responseTimesMs,
     hintRatio: derived.hintsUsed / items,

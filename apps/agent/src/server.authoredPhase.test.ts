@@ -104,13 +104,24 @@ describe('deterministic authored lesson phase', () => {
     }
   });
 
-  it('releases control to generated challenges after the authored NOT item', () => {
+  it('owns the INTERLEAVED continued-practice ladder after the last per-KC item (#3) instead of releasing to the rep-blind stub', () => {
+    // After the last first-per-KC item (l1-not), there is no next KC to teach. Previously
+    // the deterministic phase returned null and the rep-blind stub mounted continued
+    // practice in one rep — which would make the new ≥2-rep gate (#1) unreachable. Now the
+    // deterministic phase OWNS the interleaved forward-progress ladder: it mounts the next
+    // not-yet-passed authored item (here l1-and, the first unfinished one) as a practice
+    // surface so continued practice can rotate reps on the trusted path.
     const action = deterministicAuthoredPhaseAction(inputForSubmit('l1-not', true, [1, 0]));
 
-    expect(action).toBeNull();
+    expect(action?.type).toBe('mount');
+    if (action?.type === 'mount') {
+      expect(
+        ['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'].includes(action.component.kind),
+      ).toBe(true);
+    }
   });
 
-  it('serves authored-phase hints without asking the LLM to advance curriculum', () => {
+  it('serves authored-phase hints without asking the LLM to advance curriculum (#7: L2 routes to the item misconception)', () => {
     const action = deterministicAuthoredPhaseAction(inputForHint('l1-or', { 'l1-or': 1 }));
 
     expect(action?.type).toBe('mount');
@@ -118,7 +129,9 @@ describe('deterministic authored lesson phase', () => {
       expect(action.component.kind).toBe('HintCard');
       if (action.component.kind === 'HintCard') {
         expect(action.component.level).toBe(2);
-        expect(action.component.body).toContain('A OR B');
+        // #7: L2 routes to l1-or's named misconception (the exclusive-or confusion),
+        // not a generic paraphrase.
+        expect(action.component.body).toContain('exclusive-or');
       }
     }
   });

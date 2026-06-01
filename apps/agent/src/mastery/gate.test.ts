@@ -9,6 +9,9 @@ function cleanState(): LearnerState {
   return {
     bktByKc: { AND: 0.97 },
     consecutiveCorrectAtHardestTier: 3,
+    // #1: the clean baseline demonstrates the ladder across two reps (L1's config
+    // sets requireDifferentRepresentation:true), so the rep condition is satisfied.
+    distinctRepsAtHardestTier: 2,
     hintsUsedInLastN: 0,
     responseTimesMs: [4000, 5000, 6000],
     hintRatio: 0.0,
@@ -51,6 +54,31 @@ describe('evaluateRuleGate', () => {
   it('fails when the median response time is below the floor (guessing)', () => {
     const r = evaluateRuleGate({ ...cleanState(), responseTimesMs: [500, 600, 700] }, masteryConfig);
     expect(r.blockers).toContain('response_time_out_of_band');
+  });
+
+  it('#1 fails with single_representation when the ladder was cleared in ONE rep (config requires different)', () => {
+    const r = evaluateRuleGate({ ...cleanState(), distinctRepsAtHardestTier: 1 }, masteryConfig);
+    expect(r.passed).toBe(false);
+    expect(r.blockers).toContain('single_representation');
+  });
+
+  it('#1 FAIL-CLOSED: zero distinct reps (no cross-rep evidence) blocks while config requires it', () => {
+    const r = evaluateRuleGate({ ...cleanState(), distinctRepsAtHardestTier: 0 }, masteryConfig);
+    expect(r.passed).toBe(false);
+    expect(r.blockers).toContain('single_representation');
+  });
+
+  it('#1 passes with two distinct reps at the hardest tier', () => {
+    const r = evaluateRuleGate({ ...cleanState(), distinctRepsAtHardestTier: 2 }, masteryConfig);
+    expect(r.blockers).not.toContain('single_representation');
+    expect(r.passed).toBe(true);
+  });
+
+  it('#1 honors requireDifferentRepresentation=false (single rep no longer blocks)', () => {
+    const cfg = { ...masteryConfig, requireDifferentRepresentation: false };
+    const r = evaluateRuleGate({ ...cleanState(), distinctRepsAtHardestTier: 1 }, cfg);
+    expect(r.blockers).not.toContain('single_representation');
+    expect(r.passed).toBe(true);
   });
 
   it('reports multiple blockers at once', () => {

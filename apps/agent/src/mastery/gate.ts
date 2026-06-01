@@ -11,6 +11,16 @@ export interface LearnerState {
   /** BKT P(mastered) per knowledge component. */
   bktByKc: Record<string, number>;
   consecutiveCorrectAtHardestTier: number;
+  /**
+   * #1 (requireDifferentRepresentation): the count of DISTINCT representations
+   * (truth_table / circuit / pseudocode) the learner demonstrated correct,
+   * unassisted, hardest-tier work in within the current consecutive-correct ladder
+   * run. The rule-gate requires ≥ 2 when `requireDifferentRepresentation` is true,
+   * so the ladder cannot be cleared from a single rep. Server-side only — derived
+   * from `DerivedState.repsCorrectAtHardestTier`; not a wire field. Defaults to 0
+   * for a hand-built state (fail-closed: 0 distinct reps blocks a rep-required gate).
+   */
+  distinctRepsAtHardestTier: number;
   hintsUsedInLastN: number;
   responseTimesMs: number[];
   /** Overall behavioral aggregates (the "poison flags"): hints/items and retries/items. */
@@ -35,7 +45,11 @@ export type RuleGateBlocker =
   | 'response_time_out_of_band'
   | 'hint_ratio_exceeded'
   | 'retry_ratio_exceeded'
-  | 'bkt_below_threshold';
+  | 'bkt_below_threshold'
+  /** #1: the hardest-tier consecutive-correct ladder was cleared in a SINGLE
+   *  representation, but `requireDifferentRepresentation` demands the evidence span
+   *  ≥ 2 distinct reps. Pattern-matching one rep is not cross-rep mastery. */
+  | 'single_representation';
 
 /** Median of a numeric list (0 for empty). */
 function median(xs: number[]): number {
@@ -68,6 +82,19 @@ export function evaluateRuleGate(state: LearnerState, config: MasteryConfig): Ru
 
   if (state.consecutiveCorrectAtHardestTier < config.consecutiveCorrectAtHardestTier) {
     blockers.push('insufficient_consecutive_correct');
+  }
+  // #1 (requireDifferentRepresentation): the hardest-tier consecutive-correct
+  // evidence must span at least TWO distinct representations. A learner who cleared
+  // the whole ladder in truth_table alone has NOT shown cross-rep fluency — the
+  // single transfer probe was the only cross-rep check before this. FAIL-CLOSED: a
+  // hand-built or pre-#1 state with `distinctRepsAtHardestTier` 0/1 BLOCKS while the
+  // config requires it; a missing input is never a pass. When the config does not
+  // require it, behave exactly as before (no rep blocker). NOTE: `>= 2` is a hard
+  // floor independent of `consecutiveCorrectAtHardestTier` — even a longer required
+  // ladder still needs ≥ 2 reps, never more, so a single-rep-by-necessity lesson is
+  // a config decision (`requireDifferentRepresentation:false`), not silently eased.
+  if (config.requireDifferentRepresentation && state.distinctRepsAtHardestTier < 2) {
+    blockers.push('single_representation');
   }
   if (state.hintsUsedInLastN > config.hintsUsedInLastN_items) {
     blockers.push('hints_used');
