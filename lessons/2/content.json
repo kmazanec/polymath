@@ -6,7 +6,7 @@
   "intro": {
     "lessonIntro": {
       "title": "Lesson 2 — Composition: Building Larger Expressions",
-      "body": "You can wire the operators from Lesson 1 together to describe any condition imaginable. Composition means the output of one operator becomes the input to another. The key skill is evaluation order: work inside parentheses first, then outward — exactly like arithmetic. In this lesson you will build truth tables for compound expressions and meet XOR ('exactly one input true'), which is not a new gate but a composition of AND, OR, and NOT."
+      "body": "You can wire the operators from Lesson 1 together to describe any condition imaginable. Composition means the output of one operator becomes the input to another. The key skill is evaluation order: work inside parentheses first, then outward — exactly like arithmetic. In this lesson you will build truth tables for compound expressions and meet XOR ('exactly one input true'), which is not a new gate but a composition of AND, OR, and NOT.\n\nBy the end you'll be able to complete the truth table for a compound expression by evaluating it in the right order — innermost group first — including XOR's signature [0,1,1,0] pattern. You've succeeded when you can fill in a two- or three-variable compound table correctly, no hints, and respect precedence (NOT, then AND, then OR) without being told."
     },
     "explanations": [
       {
@@ -63,7 +63,7 @@
     {
       "itemId": "l2-or-and-c",
       "kc": "composition",
-      "difficultyTier": 1,
+      "difficultyTier": 2,
       "targetExpression": "(A OR B) AND C",
       "variables": ["A", "B", "C"],
       "truthTable": [0, 0, 0, 1, 0, 1, 0, 1]
@@ -71,7 +71,7 @@
     {
       "itemId": "l2-a-or-bc",
       "kc": "composition",
-      "difficultyTier": 1,
+      "difficultyTier": 2,
       "targetExpression": "A OR (B AND C)",
       "variables": ["A", "B", "C"],
       "truthTable": [0, 0, 0, 1, 1, 1, 1, 1]

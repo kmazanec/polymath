@@ -6,7 +6,7 @@
   "intro": {
     "lessonIntro": {
       "title": "Lesson 1 — Logic: AND, OR, NOT",
-      "body": "In logic, every value is one of just two things: TRUE (we write 1) or FALSE (we write 0). Nothing in between. Logic is the set of rules for combining true/false values into new ones — and almost everything in computing is built from three operators that do exactly that: AND, OR, and NOT. We'll start with AND."
+      "body": "In logic, every value is one of just two things: TRUE (we write 1) or FALSE (we write 0). Nothing in between. Logic is the set of rules for combining true/false values into new ones — and almost everything in computing is built from three operators that do exactly that: AND, OR, and NOT. We'll start with AND.\n\nBy the end of this lesson you'll be able to complete the truth table for AND, OR, and NOT correctly for every input row. You've succeeded when you can fill in any of those three tables from memory, with no hints, without pausing to second-guess which rows are 1."
     },
     "openingExplanations": ["AND", "Truth tables"],
     "explanations": [

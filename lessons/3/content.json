@@ -2,11 +2,11 @@
   "lessonId": 3,
   "title": "Lesson 3 — NAND universality",
   "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (nand-construction as primitive, nand-universality as the functional-completeness claim), and a worked example (build NOT from NAND: NAND(A,A) = NOT(A AND A) = NOT A). Reordered items: l3-nand-basic moved to tier 1 as the FIRST item — establish the NAND primitive before deriving NOT/AND/OR from it. l3-not-from-nand, l3-and-from-nand, l3-or-from-nand follow as tier 1 universality derivations. Tiers 2-4 unchanged structurally. All truthTables verified MSB-first.",
-  "knowledgeComponents": ["nand-construction", "nand-universality"],
+  "knowledgeComponents": ["nand-construction", "nand-universality", "composition"],
   "intro": {
     "lessonIntro": {
       "title": "Lesson 3 — NAND and Universality",
-      "body": "NAND (Not-AND) seems like a minor variation of AND, but it turns out to be the only gate you ever need: every Boolean function — AND, OR, NOT, XOR, everything — can be built from NAND alone. This is called functional completeness, and understanding it changes how you read circuits. In this lesson you will first master the NAND truth table, then derive NOT, AND, and OR from NAND-only constructions."
+      "body": "NAND (Not-AND) seems like a minor variation of AND, but it turns out to be the only gate you ever need: every Boolean function — AND, OR, NOT, XOR, everything — can be built from NAND alone. This is called functional completeness, and understanding it changes how you read circuits. In this lesson you will first master the NAND truth table, then derive NOT, AND, and OR from NAND-only constructions.\n\nBy the end you'll be able to complete the truth table for NAND and for the NAND-built equivalents of NOT, AND, and OR, and complete tables for compound expressions that use them. (This lesson builds the Apply-level skill — filling in the right tables; the deeper 'why NAND is universal' argument is motivation here, not something the exercises test.) You've succeeded when you can fill in those tables correctly, with no hints."
     },
     "explanations": [
       {
@@ -86,7 +86,7 @@
     },
     {
       "itemId": "l3-and-or",
-      "kc": "nand-construction",
+      "kc": "composition",
       "difficultyTier": 2,
       "targetExpression": "(A AND B) OR C",
       "variables": ["A", "B", "C"],
@@ -110,7 +110,7 @@
     },
     {
       "itemId": "l3-imply",
-      "kc": "nand-construction",
+      "kc": "composition",
       "difficultyTier": 3,
       "targetExpression": "NOT A OR B",
       "variables": ["A", "B"],
@@ -126,7 +126,7 @@
     },
     {
       "itemId": "l3-and3",
-      "kc": "nand-construction",
+      "kc": "composition",
       "difficultyTier": 4,
       "targetExpression": "A AND B AND C",
       "variables": ["A", "B", "C"],
@@ -134,7 +134,7 @@
     },
     {
       "itemId": "l3-mux",
-      "kc": "nand-universality",
+      "kc": "composition",
       "difficultyTier": 4,
       "targetExpression": "(A AND C) OR (B AND NOT C)",
       "variables": ["A", "B", "C"],

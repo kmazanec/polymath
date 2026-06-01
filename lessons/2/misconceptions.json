@@ -9,6 +9,26 @@
       "itemId": "l2-bridge-and-notb",
       "halfwayTruthTable": [0, 1, 0, 0],
       "hintBody": "That's a precedence confusion: you may have evaluated NOT before AND, giving NOT(A AND B) = NOT(0) = 1 in the (A=0,B=1) row instead of A AND (NOT B) = 0 AND 0 = 0. NOT binds to its immediate right operand — here NOT B means 'flip B only', not 'flip the whole AND'. The row (A=0, B=1): NOT B = 0, then A AND 0 = 0."
+    },
+    {
+      "itemId": "l2-or-and-c",
+      "halfwayTruthTable": [0, 0, 0, 1, 1, 1, 1, 1],
+      "hintBody": "That's a grouping slip: you evaluated A OR (B AND C) instead of (A OR B) AND C. The parentheses are around A OR B, so do that FIRST, then AND the result with C. C acts as a gate — when C=0 the whole expression is 0, so every even-indexed row (C=0) must be 0. Your table is 1 wherever A=1 regardless of C, which is the unparenthesised reading."
+    },
+    {
+      "itemId": "l2-xor-canonical",
+      "halfwayTruthTable": [0, 1, 1, 1],
+      "hintBody": "That's the inclusive-OR table, not XOR. XOR is true when EXACTLY one input is true — so the (A=1, B=1) row must be 0, not 1. (A AND NOT B) OR (NOT A AND B) is 1 only in the two 'one-but-not-both' rows. The last row is where XOR and inclusive OR disagree: OR says 1, XOR says 0."
+    },
+    {
+      "itemId": "l2-xor-alt-form",
+      "halfwayTruthTable": [1, 0, 0, 1],
+      "hintBody": "That's the XNOR table (true when the inputs MATCH), not XOR. (A OR B) AND NOT(A AND B) is true when at least one input is on but not both — i.e. when they DIFFER. Rows (A=0,B=1) and (A=1,B=0) should be 1; the matching rows (0,0) and (1,1) should be 0. You have it inverted."
+    },
+    {
+      "itemId": "l2-xnor",
+      "halfwayTruthTable": [0, 1, 1, 0],
+      "hintBody": "That's the XOR table (true when the inputs DIFFER), not XNOR. (A AND B) OR (NOT A AND NOT B) is true when the inputs MATCH — both 1 or both 0. Rows (0,0) and (1,1) should be 1; the differing rows (0,1) and (1,0) should be 0. You have it inverted."
     }
   ]
 }

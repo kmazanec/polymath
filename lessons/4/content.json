@@ -6,7 +6,7 @@
   "intro": {
     "lessonIntro": {
       "title": "Lesson 4 — De Morgan's Law",
-      "body": "In Lesson 3 you built everything from NAND — and NAND is NOT(A AND B). De Morgan's law is WHY that works: it says that negating a compound expression flips each negation AND flips the connective. Two forms: NOT(A AND B) = (NOT A) OR (NOT B), and NOT(A OR B) = (NOT A) AND (NOT B). Every half-correct application misses one of those two flips — the items in this lesson are designed to catch exactly that mistake."
+      "body": "In Lesson 3 you built everything from NAND — and NAND is NOT(A AND B). De Morgan's law is WHY that works: it says that negating a compound expression flips each negation AND flips the connective. Two forms: NOT(A AND B) = (NOT A) OR (NOT B), and NOT(A OR B) = (NOT A) AND (NOT B). Every half-correct application misses one of those two flips — the items in this lesson are designed to catch exactly that mistake.\n\nBy the end you'll be able to complete the truth table for a negated compound expression by applying De Morgan correctly — flipping BOTH the negations AND the connective — without falling into the half-application trap. You've succeeded when you can fill in these tables correctly with no hints, and the trap items (where flipping only the negations gives a different table) come out right."
     },
     "explanations": [
       {

@@ -9,6 +9,16 @@
       "itemId": "l3-not-and",
       "halfwayTruthTable": [1, 0, 0, 0],
       "hintBody": "That's the NOR table — NOT(A OR B) — not NOT(A AND B). You may have applied De Morgan's law in the wrong direction. NOT(A AND B) is only 0 when BOTH inputs are 1; it is 1 in the other three rows. Check the inner expression: it's AND, not OR."
+    },
+    {
+      "itemId": "l3-xor",
+      "halfwayTruthTable": [1, 0, 0, 1],
+      "hintBody": "That's the XNOR table (true when the inputs MATCH), not XOR. (A AND NOT B) OR (NOT A AND B) is true when the inputs DIFFER — exactly one is 1. Rows (A=0,B=1) and (A=1,B=0) should be 1; the matching rows (0,0) and (1,1) should be 0. You have it inverted."
+    },
+    {
+      "itemId": "l3-xnor",
+      "halfwayTruthTable": [0, 1, 1, 0],
+      "hintBody": "That's the XOR table (true when the inputs DIFFER), not XNOR. (A AND B) OR (NOT A AND NOT B) is true when the inputs MATCH — both 1 or both 0. Rows (0,0) and (1,1) should be 1; the differing rows (0,1) and (1,0) should be 0. You have it inverted."
     }
   ]
 }
