@@ -51,6 +51,12 @@ services:
       - /etc/polymath/.env
     environment:
       PORT: '8080'
+      # Browser origins allowed to open the /agent WebSocket (CSWSH defense in
+      # apps/agent/src/server.ts verifyClient). MUST include the public origin or
+      # the agent falls back to the localhost-only default and rejects real
+      # browsers with 401, leaving the lesson's Continue button disabled. The
+      # env_file may override; this default guarantees the live origin is allowed.
+      ALLOWED_WS_ORIGINS: ${ALLOWED_WS_ORIGINS:-https://polymath.biograph.dev}
       # Compose-network DNS; password comes from the env_file above.
       POSTGRES_URL: postgres://${POSTGRES_USER:-polymath}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-polymath}
       # Point the agent's OTLP exporter at the sidecar collector (compose-network DNS).
