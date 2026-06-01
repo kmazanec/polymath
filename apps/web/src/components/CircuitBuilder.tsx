@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useMemo, useRef, useState } from 'react';
+import { type MouseEvent as ReactMouseEvent, type ReactElement, useCallback, useMemo, useRef, useState } from 'react';
 import {
   Background,
   ReactFlow,
@@ -104,6 +104,33 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
     (c: Connection) => setEdges((eds) => addEdge(c, eds)),
     [setEdges],
   );
+
+  // R2-5: tap an existing wire to remove it. iPad has no keyboard, so the
+  // desktop Backspace/Delete-on-selected-edge path (onEdgesChange) is
+  // unreachable on touch — onEdgeClick deletes the tapped edge directly, which
+  // is the most touch-friendly affordance. Both paths mutate the SAME `edges`
+  // state that toCircuit(nodes, edges) reads, so the circuit re-evaluates on the
+  // next Test it / Submit. We stop the click so React Flow's own
+  // select-the-edge default doesn't fight the removal.
+  const onEdgeClick = useCallback(
+    (event: ReactMouseEvent, edge: Edge) => {
+      event.stopPropagation();
+      setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+      // Clearing a wire invalidates the last verdict — the circuit changed.
+      setVerdict(null);
+      setFailing(null);
+      setError(null);
+    },
+    [setEdges],
+  );
+
+  // R2-5: "Clear wires" — start the wiring over without touching placed gates.
+  const clearWires = useCallback(() => {
+    setEdges([]);
+    setVerdict(null);
+    setFailing(null);
+    setError(null);
+  }, [setEdges]);
 
   const addGate = useCallback(
     (gate: GateKind) => {
@@ -223,6 +250,7 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onEdgeClick={onEdgeClick}
             nodeTypes={nodeTypes}
             fitView
             proOptions={{ hideAttribution: true }}
@@ -235,6 +263,17 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
           {/* "Test it" / "Next gate" is a secondary preview action — ghost style. */}
           <button type="button" className="btn btn--ghost" onClick={runPulse} data-action="test-it">
             {reduced ? 'Next gate →' : 'Test it'}
+          </button>
+          {/* R2-5: touch-friendly wire reset. Tapping a single wire removes it
+              (onEdgeClick); this clears them all to start the wiring over. */}
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={clearWires}
+            data-action="clear-wires"
+            disabled={edges.length === 0}
+          >
+            Clear wires
           </button>
           {/* Submit is the primary completion action — filled accent pill. */}
           <button type="button" className="btn btn--primary" onClick={submit} data-action="submit">

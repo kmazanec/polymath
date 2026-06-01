@@ -44,11 +44,25 @@
   min-height: var(--touch-target-min, 2.75rem);
 }
 
-/* Circuit canvas — calm dotted surface, ANSI gate shapes, green signal (Task 5). */
+/* Circuit canvas — calm dotted surface, ANSI gate shapes, green signal (Task 5).
+ *
+ * Theme-aware circuit-local tokens. Tokens.css is owned by the polish workstream
+ * and can't be edited from this circuit-only change, so the circuit defines its
+ * own gate/grid surface vars here and FLIPS them in the dark block below. The
+ * grid dot and the gate body both need to invert: a faint dark dot + white gate
+ * body reads on the light canvas, but on the dark canvas the dot must be a faint
+ * LIGHT dot and the gate body a LIFTED surface (not dark-on-dark). */
+.circuit-builder {
+  /* Faint dark dot on the light --color-surface-muted canvas (unchanged value). */
+  --circuit-grid-dot: rgba(32,35,68,0.10);
+  /* Gate body fill — white on light; flips to a lifted dark surface so the gate
+   * doesn't vanish into the dark canvas. */
+  --circuit-gate-fill: var(--color-surface);
+}
 .gate-shape { width: 100%; height: 100%; }
-.gate-shape__body { fill: var(--color-surface); stroke: var(--color-ink); stroke-width: 2.5; }
+.gate-shape__body { fill: var(--circuit-gate-fill); stroke: var(--color-ink); stroke-width: 2.5; }
 .gate-shape__body[data-live='true'] { fill: var(--color-signal-tint); stroke: var(--color-pass); }
-.gate-shape__bubble { fill: var(--color-surface); stroke: var(--color-ink); stroke-width: 2.5; }
+.gate-shape__bubble { fill: var(--circuit-gate-fill); stroke: var(--color-ink); stroke-width: 2.5; }
 .gate-shape__bubble[data-live='true'] { fill: var(--color-signal-tint); stroke: var(--color-pass); }
 
 .circuit-builder { display: flex; flex-direction: column; gap: 0.85rem; }
@@ -61,8 +75,8 @@
 .circuit-palette button:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
 .circuit-palette button .gate-shape { width: 26px; height: 18px; flex: 0 0 auto; }
 .circuit-canvas { border-radius: var(--radius-md); overflow: hidden;
-  background: radial-gradient(circle at 1px 1px, rgba(32,35,68,0.10) 1px, transparent 0) 0 0 / 22px 22px, var(--color-surface-muted); }
-.circuit-controls { display: flex; gap: 0.6rem; }
+  background: radial-gradient(circle at 1px 1px, var(--circuit-grid-dot) 1px, transparent 0) 0 0 / 22px 22px, var(--color-surface-muted); }
+.circuit-controls { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 /* Verdict / error status lines — match the .status-pass/.status-fail pattern in
    global.css (::before glyph + semantic color). The circuit's inline <p> elements
    can't carry the global utility class (they already carry circuit-specific selectors),
@@ -93,3 +107,30 @@
 .circuit-canvas .react-flow__edge-path { stroke: var(--color-low); stroke-width: 3; }
 .circuit-canvas .react-flow__edge.animated .react-flow__edge-path { stroke: var(--color-signal);
   filter: drop-shadow(0 0 4px var(--color-signal-glow)); }
+
+/* R2-5: edges are tap-to-delete. Signal the affordance on hover/selection — a
+ * pointer cursor + thicker, highlighted stroke so a learner sees the wire is
+ * interactive. On touch there's no hover, but tapping still removes it (handled
+ * in CircuitBuilder.onEdgeClick); the selected state gives visual confirmation. */
+.circuit-canvas .react-flow__edge { cursor: pointer; }
+.circuit-canvas .react-flow__edge:hover .react-flow__edge-path,
+.circuit-canvas .react-flow__edge.selected .react-flow__edge-path { stroke: var(--color-fail);
+  stroke-width: 4; }
+/* Widen the invisible interaction band so a finger reliably hits the wire. */
+.circuit-canvas .react-flow__edge-interaction { stroke-width: 28; }
+
+/* ─── R2-4: dark-mode legibility ─────────────────────────────────────────────
+ * In dark mode the canvas surface (--color-surface-muted = #1f2238) is dark, so:
+ *  - the grid dot must be a faint LIGHT dot (a dark dot vanishes), and
+ *  - the gate body must be a LIFTED surface, not dark-on-dark (--color-surface
+ *    is also dark in dark mode, leaving only a thin stroke visible).
+ * Light mode is untouched (values defined in the :root/.circuit-builder above). */
+@media (prefers-color-scheme: dark) {
+  .circuit-builder {
+    --circuit-grid-dot: rgba(255,255,255,0.10);
+    /* A lifted slate, distinctly lighter than the #1f2238 canvas, so the gate
+     * silhouette reads clearly while the --color-ink (now light) stroke stays
+     * crisp on it. */
+    --circuit-gate-fill: #3a3f5e;
+  }
+}

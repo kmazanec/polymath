@@ -54,6 +54,15 @@ describe('CircuitBuilder', () => {
     expect(screen.getByText('Submit')).toBeDefined();
   });
 
+  it('offers a touch-friendly "Clear wires" reset, disabled until a wire exists (R2-5)', () => {
+    render(<CircuitBuilder spec={spec} />);
+    const clear = screen.getByRole('button', { name: /Clear wires/i });
+    expect(clear).toBeDefined();
+    // No edges yet, so the reset is a no-op and is disabled.
+    expect((clear as HTMLButtonElement).disabled).toBe(true);
+    expect(clear.getAttribute('data-action')).toBe('clear-wires');
+  });
+
   it('renders a NAND palette button when allowedGates is NAND-only (Lesson 3, AC#3)', () => {
     const nandSpec: CircuitSpec = {
       kind: 'CircuitBuilder',
