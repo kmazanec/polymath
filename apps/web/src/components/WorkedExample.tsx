@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import type { ComponentSpec, Step } from '@polymath/contract';
+import { formatLogicExpression } from '../logicNotation.js';
 
 type WorkedExampleSpec = Extract<ComponentSpec, { kind: 'WorkedExample' }>;
 
@@ -40,7 +41,7 @@ export function WorkedExample({
         Walk-through
       </h2>
       <p className="worked-example__expression" aria-label={`Expression: ${spec.expression}`}>
-        <code>{spec.expression}</code>
+        <code>{formatLogicExpression(spec.expression)}</code>
       </p>
       <ol className="worked-example__steps" aria-label="Step-by-step derivation">
         {spec.steps.map((step: Step, i: number) => (

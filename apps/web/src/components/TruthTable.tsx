@@ -2,6 +2,7 @@ import { type ReactElement, useCallback, useState } from 'react';
 import type { ComponentSpec, ClientEvent } from '@polymath/contract';
 import { truthTable, variables, parse } from '@polymath/booleans';
 import { prefersReducedMotion } from '../motion/AnimateOrNot.js';
+import { formatLogicExpression } from '../logicNotation.js';
 
 type TruthTableSpec = Extract<ComponentSpec, { kind: 'TruthTablePractice' }>;
 
@@ -143,7 +144,9 @@ function TruthTableInner({ spec, onSubmit }: TruthTableProps): ReactElement {
       {/* F-27 AC#7: grounding prompt, shown above the table (aria-describedby links the
           workspace to this instruction). */}
       {spec.prompt && (
-        <p id="tt-prompt" className="item-prompt">{spec.prompt}</p>
+        <p id="tt-prompt" className="item-prompt">
+          {formatLogicExpression(spec.prompt)}
+        </p>
       )}
       <table role="table">
         <thead>

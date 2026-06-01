@@ -163,16 +163,19 @@ export function shouldReanchor(spec: ComponentSpec): boolean {
  * they become IntroTurn / WorkedExampleTurn when first appended, not
  * completedItem).
  */
-export function toCompletedTurn(spec: ComponentSpec): CompletedItemTurn | null {
+export function toCompletedTurn(spec: ComponentSpec): Turn | null {
   switch (spec.kind) {
     case 'TruthTablePractice':
     case 'CircuitBuilder':
     case 'PseudocodeChallenge':
     case 'TransferProbe':
       return { kind: 'completedItem', spec };
+    case 'IntroExplanation':
+      return { kind: 'intro', spec: spec as IntroTurn['spec'] };
+    case 'WorkedExample':
+      return { kind: 'workedExample', spec: spec as WorkedExampleTurn['spec'] };
     default:
-      // Intros/explanations/celebrations don't get a completedItem echo —
-      // they leave the transcript via the intro turn appended when first shown.
+      // Lesson intros/celebrations don't get a completedItem echo.
       return null;
   }
 }
@@ -220,10 +223,6 @@ export function applyMount(state: SurfaceState, spec: ComponentSpec): SurfaceSta
   // Append the prior mounted item as completedItem (if it was an item-bearing spec).
   const completed = toCompletedTurn(state.mounted);
   if (completed) newTranscript.push(completed);
-
-  // Append an intro/worked-example turn when the new item is one of those.
-  const initial = toInitialTurn(spec);
-  if (initial) newTranscript.push(initial);
 
   return { mounted: spec, transcript: newTranscript };
 }
