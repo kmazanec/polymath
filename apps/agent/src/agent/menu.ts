@@ -55,6 +55,9 @@ export type TacticalMove =
       topic: string;
       body: string;
       visibleReps: Rep[];
+      /** Optional concrete truth-table grid rendered inside the card (grounds an
+       *  abstract concept in a real table). Passed straight through to the spec. */
+      illustration?: { expression: string; variables: string[]; truthTable: (0 | 1)[] };
       rationale: string;
     }
   | { move: 'alt_representation'; item: ProposedItem; rep: Rep; rationale: string }
@@ -186,6 +189,7 @@ export function compileMove(move: TacticalMove): Action {
           topic: move.topic,
           body: move.body,
           visibleReps: move.visibleReps,
+          ...(move.illustration ? { illustration: move.illustration } : {}),
         },
         rationale: move.rationale,
       };

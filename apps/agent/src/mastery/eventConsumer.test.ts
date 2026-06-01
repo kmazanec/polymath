@@ -14,7 +14,7 @@ const WRONG = 'A OR B'; // wrong for the AND item
 describe('deriveState (the single learner_state writer, pure core)', () => {
   it('updates BKT per KC on each correct submit (correctness recomputed server-side)', () => {
     const events: LoggedEvent[] = [
-      { kind: 'submit', itemId: 'A AND B', submission: RIGHT.and },
+      { kind: 'submit', itemId: 'l1-and', submission: RIGHT.and },
       { kind: 'submit', itemId: 'l1-or', submission: RIGHT.or },
     ];
     const d = deriveState(events, content, masteryConfig);

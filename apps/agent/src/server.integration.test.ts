@@ -111,11 +111,18 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
 
     // F-05: a correct submit now drives the inner loop to mount the next item
     // (the key-free heuristic provider), not the F-01 `no_action` stub.
+    // Curriculum interleaving: a correct submit that completes one KC may first
+    // mount the NEXT KC's IntroExplanation (just-in-time teaching) before its
+    // practice item — so IntroExplanation is a valid advance mount too.
     expect(action.type).toBe('mount');
     if (action.type === 'mount') {
-      expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge', 'WorkedExample']).toContain(
-        action.component.kind,
-      );
+      expect([
+        'TruthTablePractice',
+        'CircuitBuilder',
+        'PseudocodeChallenge',
+        'WorkedExample',
+        'IntroExplanation',
+      ]).toContain(action.component.kind);
     }
 
     // Give the async insert a beat to land, then assert the events row exists.
@@ -251,14 +258,20 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', correct: true },
       { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', correct: true },
     ]);
-    // Every turn mounts a valid next item (pattern, not exact strings).
+    // Every turn mounts a valid next surface (pattern, not exact strings) — a
+    // practice item, or the just-in-time IntroExplanation that precedes a new
+    // KC's first item (curriculum interleaving).
     expect(actions).toHaveLength(3);
     for (const a of actions) {
       expect(a.type).toBe('mount');
       if (a.type === 'mount') {
-        expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge', 'WorkedExample']).toContain(
-          a.component.kind,
-        );
+        expect([
+          'TruthTablePractice',
+          'CircuitBuilder',
+          'PseudocodeChallenge',
+          'WorkedExample',
+          'IntroExplanation',
+        ]).toContain(a.component.kind);
       }
     }
 
@@ -277,7 +290,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;
     };
-    // The submission ("A OR B") is genuinely WRONG for l1-and ("A AND B"); the
+    // The submission ("A OR B") is genuinely WRONG for l1-and ("B AND A"); the
     // server recomputes correctness (it ignores the client `correct` flag) and
     // re-presents the item rather than advancing.
     const [action] = await driveSequence(sessionId, [
@@ -285,7 +298,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     ]);
     expect(action!.type).toBe('mount');
     if (action!.type === 'mount' && action!.component.kind === 'TruthTablePractice') {
-      expect(action!.component.expression).toBe('A AND B'); // same item, not advanced
+      expect(action!.component.expression).toBe('B AND A'); // same item (l1-and), not advanced
     }
   });
 
@@ -1125,7 +1138,11 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
   // hardcoded lessonId=1 for every non-session_start event, silently folding an L2
   // session against L1 after the first frame.
   describe('F-13 Lesson 2 lesson-binding (?lesson=2 dev seam)', () => {
-    const L1_EXPRESSIONS = new Set(['A AND B', 'A OR B', 'NOT A']);
+    // Derive from the lesson so content edits (e.g. item-0 "A AND B"→"B AND A")
+    // never silently drift this guard out of sync with the actual L1 items.
+    const L1_EXPRESSIONS = new Set(
+      loadLesson(1).content.items.map((i) => i.targetExpression),
+    );
     const L2_EXPRESSIONS = new Set(
       loadLesson(2).content.items.map((i) => i.targetExpression),
     );
@@ -1243,7 +1260,9 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
         // If it is an IntroExplanation: its topic must be an L1 KC ('AND'/'OR'/'NOT'),
         // never an L2 KC ('composition'/'XOR') — that would prove L2 content leaked.
         if (startAction!.component.kind === 'IntroExplanation') {
-          const L1_TOPICS = new Set(['AND', 'OR', 'NOT']);
+          // L1's opening concept is "Truth tables"; AND/OR/NOT are the per-KC
+          // explanations. Any of them is valid L1 intro content (never L2).
+          const L1_TOPICS = new Set(['Truth tables', 'AND', 'OR', 'NOT']);
           const L2_TOPICS = new Set(['composition', 'XOR']);
           expect(
             L1_TOPICS.has(startAction!.component.topic),

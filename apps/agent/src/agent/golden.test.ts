@@ -90,8 +90,8 @@ describe('F-28 AC#5: 5-node graph is behavior-preserving for the keyless (heuris
     );
     expect(action.type).toBe('mount');
     if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
-      // Re-presents the same item
-      expect(action.component.expression).toBe('A AND B');
+      // Re-presents the same item (l1-and, expression "B AND A")
+      expect(action.component.expression).toBe('B AND A');
     }
     expect(() => Action.parse(action)).not.toThrow();
   });

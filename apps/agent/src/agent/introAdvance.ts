@@ -28,7 +28,14 @@ import type { Rep } from '@polymath/contract';
 /** The shape of the `intro` block in `lessons/<id>/content.json`. */
 interface LessonIntroBlock {
   lessonIntro?: { title: string; body: string };
-  explanations?: Array<{ topic: string; body: string; visibleReps: string[] }>;
+  explanations?: Array<{
+    topic: string;
+    body: string;
+    visibleReps: string[];
+    /** Optional concrete grid rendered inside the card (grounds an abstract
+     *  concept). MSB-first `truthTable`, same encoding as items. */
+    illustration?: { expression: string; variables: string[]; truthTable: number[] };
+  }>;
   workedExample?: {
     expression: string;
     steps: Array<{ label: string; detail: string }>;
@@ -94,16 +101,36 @@ export function formatLogicExpression(expression: string): string {
     .replace(/\bOR\b/g, '||');
 }
 
+/**
+ * Coerce a raw illustration block from the JSON into the typed move shape.
+ * Drops it (returns undefined) if the table has any value other than 0/1 — an
+ * illustration is decorative, so a malformed one degrades to a text-only card
+ * rather than crashing the intro.
+ */
+export function toIllustration(
+  raw: { expression: string; variables: string[]; truthTable: number[] } | undefined,
+): { expression: string; variables: string[]; truthTable: (0 | 1)[] } | undefined {
+  if (!raw) return undefined;
+  if (!raw.truthTable.every((v) => v === 0 || v === 1)) return undefined;
+  return {
+    expression: raw.expression,
+    variables: raw.variables,
+    truthTable: raw.truthTable as (0 | 1)[],
+  };
+}
+
 function explanationForTopic(input: AgentInput, topic: string, rationale: string): TacticalMove | null {
   const explanation = readLessonIntro(input.lesson.content.lessonId)?.explanations?.find(
     (candidate) => candidate.topic === topic,
   );
   if (!explanation) return null;
+  const illustration = toIllustration(explanation.illustration);
   return {
     move: 'intro_explanation',
     topic: explanation.topic,
     body: explanation.body,
     visibleReps: toRepArray(explanation.visibleReps),
+    ...(illustration ? { illustration } : {}),
     rationale,
   };
 }
@@ -182,11 +209,13 @@ export function openingMove(input: AgentInput): TacticalMove {
       const firstExplanation = intro.explanations?.[0];
       if (firstExplanation) {
         const visibleReps = toRepArray(firstExplanation.visibleReps);
+        const illustration = toIllustration(firstExplanation.illustration);
         return {
           move: 'intro_explanation',
           topic: firstExplanation.topic,
           body: firstExplanation.body,
           visibleReps,
+          ...(illustration ? { illustration } : {}),
           rationale: `intro stage 0 — mounting IntroExplanation for KC "${firstExplanation.topic}" (opening move)`,
         };
       }

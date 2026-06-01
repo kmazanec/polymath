@@ -46,6 +46,22 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     topic: z.string(),
     body: z.string(),
     visibleReps: z.array(Rep),
+    // I7 (design pass): an optional concrete truth-table illustration shown
+    // INSIDE the concept card so an abstract definition (e.g. "what a truth
+    // table is") is grounded in a real grid the learner can see, not a wall of
+    // prose. Append-only optional (existing senders still validate; cards
+    // without it render text-only exactly as before). `expression` is for the
+    // caption; `truthTable` is the MSB-first 0/1 out-vector (same encoding as
+    // `claimedTruthTable`) the read-only TruthTable renders. The server does NOT
+    // gate on this (it's illustrative, not a learner-answered item), but lesson
+    // authoring should keep it consistent with @polymath/booleans.
+    illustration: z
+      .object({
+        expression: z.string(),
+        variables: z.array(z.string()),
+        truthTable: ClaimedTruthTable,
+      })
+      .optional(),
   }),
   z.object({
     kind: z.literal('TruthTablePractice'),

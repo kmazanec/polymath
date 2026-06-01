@@ -89,7 +89,7 @@ describe('inner-agent flow (heuristic, key-free)', () => {
     );
     expect(action.type).toBe('mount');
     if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
-      expect(action.component.expression).toBe('A AND B'); // lesson 1, item 0
+      expect(action.component.expression).toBe('B AND A'); // lesson 1, item 0 (l1-and)
     }
   });
 
@@ -97,21 +97,21 @@ describe('inner-agent flow (heuristic, key-free)', () => {
     // The web client knows the expression (the rep ComponentSpec carries no itemId),
     // so a submit may name the item by `submission` rather than a matching `itemId`.
     const action = await new StubAgentClient().propose(
-      input({ kind: 'submit', sessionId: SID, itemId: 'A AND B', submission: 'A AND B' }),
+      input({ kind: 'submit', sessionId: SID, itemId: 'B AND A', submission: 'B AND A' }),
     );
     expect(action.type).toBe('mount');
     if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
-      expect(action.component.expression).toBe('A OR B'); // advanced past A AND B
+      expect(action.component.expression).toBe('A OR B'); // advanced past B AND A (item 0)
     }
   });
 
   it('a wrong submit re-presents the same item (rephrase), not the next one (criterion 3)', async () => {
     const action = await new StubAgentClient().propose(
-      input({ kind: 'submit', sessionId: SID, itemId: 'l1-and', submission: 'A AND B', correct: false }),
+      input({ kind: 'submit', sessionId: SID, itemId: 'l1-and', submission: 'B AND A', correct: false }),
     );
     expect(action.type).toBe('mount');
     if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
-      expect(action.component.expression).toBe('A AND B'); // same item, not advanced
+      expect(action.component.expression).toBe('B AND A'); // same item, not advanced
     }
   });
 
@@ -120,11 +120,11 @@ describe('inner-agent flow (heuristic, key-free)', () => {
     // carries no itemId) and `submission` to the learner's (wrong) answer. The item
     // must be identified by itemId, never by the wrong submission, or it advances.
     const action = await new StubAgentClient().propose(
-      input({ kind: 'submit', sessionId: SID, itemId: 'A AND B', submission: 'A OR B', correct: false }),
+      input({ kind: 'submit', sessionId: SID, itemId: 'B AND A', submission: 'A OR B', correct: false }),
     );
     expect(action.type).toBe('mount');
     if (action.type === 'mount' && action.component.kind === 'TruthTablePractice') {
-      expect(action.component.expression).toBe('A AND B'); // re-presents the item, not the answer's item
+      expect(action.component.expression).toBe('B AND A'); // re-presents the item, not the answer's item
     }
   });
 
