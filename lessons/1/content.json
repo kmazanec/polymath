@@ -34,23 +34,24 @@
       "expression": "A AND B",
       "steps": [
         {
-          "label": "List all input combinations",
-          "detail": "A and B are each either 0 or 1, so there are 2 × 2 = 4 possible combinations — and you must list every single one; skip any row and the table is incomplete. The canonical order is MSB-first (as defined above): A is the most significant bit, so it changes most slowly. The four rows in order are: (A=0,B=0), (A=0,B=1), (A=1,B=0), (A=1,B=1)."
+          "label": "Every combination is a row",
+          "detail": "Two inputs, each 0 or 1 → 4 rows."
         },
         {
-          "label": "Apply AND to each row",
-          "detail": "AND rule: output is 1 only when BOTH inputs are 1; otherwise 0. Row 1: A=0, B=0 — not both 1 (neither is 1) → 0. Row 2: A=0, B=1 — not both 1 (A is 0) → 0. Row 3: A=1, B=0 — not both 1 (B is 0) → 0. Row 4: A=1, B=1 — both are 1 → 1."
+          "label": "Fill the output",
+          "detail": "AND is 1 only when both inputs are 1 — so just the last row is 1."
         },
         {
-          "label": "Read the output column",
-          "detail": "Reading the output column top to bottom gives [0, 0, 0, 1] — one entry per row, in the same canonical order. Notice the pattern: only one 1, and it sits in the very last row where both inputs are 1. This single-1-at-the-bottom shape is the signature of AND. It tells you AND is demanding: every input must be true, and any single 0 anywhere kills the output."
-        },
-        {
-          "label": "Coming up: circuit and pseudocode forms",
-          "detail": "You will also meet AND as a circuit symbol (a D-shaped logic gate) and in code ('if A AND B then ...'). The same rule — both must be true — drives all three forms. No action needed now; just note that the truth table you just built is the same truth the gate enforces and the same condition the code tests. You will explore those representations in later steps."
+          "label": "That column is the answer",
+          "detail": "Read top to bottom: 0, 0, 0, 1."
         }
       ],
-      "visibleReps": ["truth_table"]
+      "visibleReps": ["truth_table"],
+      "illustration": {
+        "expression": "A AND B",
+        "variables": ["A", "B"],
+        "truthTable": [0, 0, 0, 1]
+      }
     }
   },
   "items": [

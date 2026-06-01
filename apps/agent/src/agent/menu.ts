@@ -45,6 +45,7 @@ export type TacticalMove =
       expression: string;
       steps: { label: string; detail: string }[];
       visibleReps: Rep[];
+      illustration?: { expression: string; variables: string[]; truthTable: (0 | 1)[] };
       rationale: string;
     }
   | {
@@ -178,6 +179,7 @@ export function compileMove(move: TacticalMove): Action {
           expression: move.expression,
           steps: move.steps,
           visibleReps: move.visibleReps,
+          ...(move.illustration ? { illustration: move.illustration } : {}),
         },
         rationale: move.rationale,
       };

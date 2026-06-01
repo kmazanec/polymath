@@ -421,7 +421,11 @@ function pickLessonItem(input: AgentInput): TacticalMove | null {
   const ev = input.event;
   const currentId = ev.kind === 'submit' ? ev.itemId : undefined;
   const idx = items.findIndex((i) => i.itemId === currentId || i.targetExpression === currentId);
-  const next = items[(idx + 1 + items.length) % items.length]!;
+  // No wrap: once the learner clears the last practice item, there is no next one
+  // to serve — return null so the flow waits for the mastery/transfer path instead
+  // of looping back to item 0 and re-teaching the lesson.
+  const next = items[idx + 1];
+  if (!next) return null;
   const rep = ev.kind === 'submit' && ev.repSubmission ? ev.repSubmission.rep : 'truth_table';
   return {
     move: 'next_practice_item',

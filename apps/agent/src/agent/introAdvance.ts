@@ -32,14 +32,13 @@ interface LessonIntroBlock {
     topic: string;
     body: string;
     visibleReps: string[];
-    /** Optional concrete grid rendered inside the card (grounds an abstract
-     *  concept). MSB-first `truthTable`, same encoding as items. */
     illustration?: { expression: string; variables: string[]; truthTable: number[] };
   }>;
   workedExample?: {
     expression: string;
     steps: Array<{ label: string; detail: string }>;
     visibleReps: string[];
+    illustration?: { expression: string; variables: string[]; truthTable: number[] };
   };
 }
 
@@ -180,10 +179,10 @@ export function explanationBeforeNextItem(input: AgentInput): TacticalMove | nul
   const idx = items.findIndex((i) => i.itemId === ev.itemId || i.targetExpression === ev.itemId);
   if (idx < 0) return null;
   const current = items[idx];
-  const next = items[(idx + 1 + items.length) % items.length];
+  const next = items[idx + 1]; // no wrap — the last item has no "next" to teach toward
   if (!current || !next || next.kc === current.kc) return null;
   const firstItemForNextKc = items.findIndex((candidate) => candidate.kc === next.kc);
-  if (firstItemForNextKc !== ((idx + 1) % items.length)) return null;
+  if (firstItemForNextKc !== idx + 1) return null;
 
   return explanationForTopic(
     input,
@@ -225,11 +224,13 @@ export function openingMove(input: AgentInput): TacticalMove {
       const we = intro.workedExample;
       if (we) {
         const visibleReps = toRepArray(we.visibleReps, ['truth_table']);
+        const illustration = toIllustration(we.illustration);
         return {
           move: 'worked_example',
           expression: we.expression,
           steps: we.steps,
           visibleReps,
+          ...(illustration ? { illustration } : {}),
           rationale: `intro stage 1 — mounting WorkedExample for "${we.expression}" (opening move)`,
         };
       }

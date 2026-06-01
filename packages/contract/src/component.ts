@@ -34,6 +34,15 @@ export type Step = z.infer<typeof Step>;
  */
 const ClaimedTruthTable = z.array(z.union([z.literal(0), z.literal(1)]));
 
+/** An illustrative (read-only, non-gated) truth table a teaching surface can show
+ *  inside itself. `truthTable` is the MSB-first 0/1 out-vector. */
+export const Illustration = z.object({
+  expression: z.string(),
+  variables: z.array(z.string()),
+  truthTable: ClaimedTruthTable,
+});
+export type Illustration = z.infer<typeof Illustration>;
+
 export const ComponentSpec = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('LessonIntro'),
@@ -46,22 +55,7 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     topic: z.string(),
     body: z.string(),
     visibleReps: z.array(Rep),
-    // I7 (design pass): an optional concrete truth-table illustration shown
-    // INSIDE the concept card so an abstract definition (e.g. "what a truth
-    // table is") is grounded in a real grid the learner can see, not a wall of
-    // prose. Append-only optional (existing senders still validate; cards
-    // without it render text-only exactly as before). `expression` is for the
-    // caption; `truthTable` is the MSB-first 0/1 out-vector (same encoding as
-    // `claimedTruthTable`) the read-only TruthTable renders. The server does NOT
-    // gate on this (it's illustrative, not a learner-answered item), but lesson
-    // authoring should keep it consistent with @polymath/booleans.
-    illustration: z
-      .object({
-        expression: z.string(),
-        variables: z.array(z.string()),
-        truthTable: ClaimedTruthTable,
-      })
-      .optional(),
+    illustration: Illustration.optional(),
   }),
   z.object({
     kind: z.literal('TruthTablePractice'),
@@ -94,6 +88,7 @@ export const ComponentSpec = z.discriminatedUnion('kind', [
     expression: z.string(),
     steps: z.array(Step),
     visibleReps: z.array(Rep),
+    illustration: Illustration.optional(),
   }),
   z.object({
     kind: z.literal('HintCard'),

@@ -1,29 +1,10 @@
 import type { ReactElement } from 'react';
 import type { ComponentSpec, Step } from '@polymath/contract';
 import { formatLogicExpression } from '../logicNotation.js';
+import { ReadOnlyTruthTable } from './ReadOnlyTruthTable.js';
 
 type WorkedExampleSpec = Extract<ComponentSpec, { kind: 'WorkedExample' }>;
 
-/**
- * The worked-example-effect payload (Sweller): the learner studies a complete,
- * step-by-step derivation BEFORE attempting similar problems on their own. The
- * `expression` is the target — displayed prominently in monospace so it reads as
- * the thing being operated on. The `steps` are an ordered demonstration sequence:
- * each `label` names the move (e.g. "Apply De Morgan's law"), and `detail` shows
- * the result or elaboration.
- *
- * This component is READ-ONLY — no inputs, no submission, no verdict. Its whole
- * job is reducing intrinsic load before practice begins by giving the learner a
- * schema to anchor subsequent problems against.
- *
- * Structured as a `<section>` landmark with an ordered `<ol>` (step numbers are
- * load-bearing — they let a learner say "step 3 confused me" and are the correct
- * semantic for a sequence with a defined order and a last item).
- */
-/**
- * F-27 (AC#4): When `onAdvanceIntro` is provided, renders a "Got it — continue"
- * button that sends `intro_advance` to advance past the worked example.
- */
 export function WorkedExample({
   spec,
   onAdvanceIntro,
@@ -32,10 +13,7 @@ export function WorkedExample({
   onAdvanceIntro?: () => void;
 }): ReactElement {
   return (
-    <section
-      className="worked-example"
-      aria-labelledby="worked-example-heading"
-    >
+    <section className="worked-example" aria-labelledby="worked-example-heading">
       <p className="eyebrow worked-example__eyebrow">Worked example</p>
       <h2 id="worked-example-heading" className="worked-example__heading">
         Walk-through
@@ -43,6 +21,7 @@ export function WorkedExample({
       <p className="worked-example__expression" aria-label={`Expression: ${spec.expression}`}>
         <code>{formatLogicExpression(spec.expression)}</code>
       </p>
+      {spec.illustration && <ReadOnlyTruthTable illustration={spec.illustration} caption={false} />}
       <ol className="worked-example__steps" aria-label="Step-by-step derivation">
         {spec.steps.map((step: Step, i: number) => (
           <li key={i} className="worked-example__step">
@@ -52,11 +31,7 @@ export function WorkedExample({
         ))}
       </ol>
       {onAdvanceIntro && (
-        <button
-          type="button"
-          className="intro-continue-btn"
-          onClick={onAdvanceIntro}
-        >
+        <button type="button" className="intro-continue-btn" onClick={onAdvanceIntro}>
           Got it — continue
         </button>
       )}
