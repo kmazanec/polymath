@@ -270,47 +270,44 @@ describe('inner-agent: intro_advance (F-27 AC#4, menu-lockstep)', () => {
     };
   }
 
-  // Lesson 1 teaches every operator (AND, OR, NOT) and then the truth-table grid
-  // BEFORE the worked example — so the intro walks all N explanation cards in order,
-  // then the worked example at stage N, then practice. This guards that arc: the
-  // learner is never asked to fill a table before the table has been taught.
-  const introExplanationCount = readLessonIntro(1)?.explanations?.length ?? 0;
+  // Lesson 1 (Option-B arc): the OPENING walk teaches ONLY [AND, then the truth-table
+  // card] — so the learner meets AND, then learns what a truth table IS and sees AND
+  // written as one, then the worked example traces it, then they fill AND's table.
+  // OR and NOT are taught JUST-IN-TIME before their own items (not in the opening
+  // walk). The iron rule under test: the learner is never asked to fill a truth table
+  // before the truth-table representation has been taught.
+  const intro1 = readLessonIntro(1);
+  const openingTopics = intro1?.openingExplanations ?? [];
 
-  it('teaches every authored explanation card in order before the worked example', async () => {
-    // The real Lesson 1 has the operator+table explanation cards; assert the arc.
-    expect(introExplanationCount).toBeGreaterThanOrEqual(4); // AND, OR, NOT, Truth tables
-    for (let stage = 0; stage < introExplanationCount; stage++) {
-      const action = await new StubAgentClient().propose(introAdvanceInput(stage));
-      expect(action.type).toBe('mount');
-      if (action.type === 'mount') {
-        expect(action.component.kind).toBe('IntroExplanation');
-      }
+  it('the opening walk is exactly [AND, Truth tables] — operators-then-table, not all four', () => {
+    expect(openingTopics).toEqual(['AND', 'Truth tables']);
+  });
+
+  it('opening walk teaches AND first, then the truth-table card — in order', async () => {
+    const and = await new StubAgentClient().propose(introAdvanceInput(0));
+    expect(and.type).toBe('mount');
+    if (and.type === 'mount' && and.component.kind === 'IntroExplanation') {
+      expect(and.component.topic).toBe('AND');
+    }
+    const table = await new StubAgentClient().propose(introAdvanceInput(1));
+    expect(table.type).toBe('mount');
+    if (table.type === 'mount' && table.component.kind === 'IntroExplanation') {
+      expect(table.component.topic.toLowerCase()).toContain('truth table');
     }
   });
 
-  it('the LAST explanation card is the truth-table card (taught after the operators)', async () => {
-    const action = await new StubAgentClient().propose(
-      introAdvanceInput(introExplanationCount - 1),
-    );
-    expect(action.type).toBe('mount');
-    if (action.type === 'mount' && action.component.kind === 'IntroExplanation') {
-      expect(action.component.topic.toLowerCase()).toContain('truth table');
+  it('the truth-table card is taught BEFORE the worked example and the first fill-in', async () => {
+    // After the 2 opening cards (AND, Truth tables) → the worked example (AND as a table).
+    const we = await new StubAgentClient().propose(introAdvanceInput(openingTopics.length));
+    expect(we.type).toBe('mount');
+    if (we.type === 'mount') {
+      expect(we.component.kind).toBe('WorkedExample');
     }
   });
 
-  it('stage N (after all explanations): advances to the WorkedExample', async () => {
+  it('only AFTER the worked example does the first practice item (a truth-table fill-in) appear', async () => {
     const action = await new StubAgentClient().propose(
-      introAdvanceInput(introExplanationCount),
-    );
-    expect(action.type).toBe('mount');
-    if (action.type === 'mount') {
-      expect(action.component.kind).toBe('WorkedExample');
-    }
-  });
-
-  it('stage N+1+ (after the worked example): mounts the first practice item', async () => {
-    const action = await new StubAgentClient().propose(
-      introAdvanceInput(introExplanationCount + 1),
+      introAdvanceInput(openingTopics.length + 1),
     );
     if (action.type === 'mount') {
       expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge'])
@@ -318,6 +315,15 @@ describe('inner-agent: intro_advance (F-27 AC#4, menu-lockstep)', () => {
     } else {
       expect(action.type).toBe('no_action');
     }
+  });
+
+  it('OR and NOT are NOT front-loaded in the opening walk (taught just-in-time later)', () => {
+    expect(openingTopics).not.toContain('OR');
+    expect(openingTopics).not.toContain('NOT');
+    // but they remain authored so the just-in-time lookup can find them by KC
+    const topics = (intro1?.explanations ?? []).map((e) => e.topic);
+    expect(topics).toContain('OR');
+    expect(topics).toContain('NOT');
   });
 
   it('after practice has started, intro_advance is a no-op', async () => {

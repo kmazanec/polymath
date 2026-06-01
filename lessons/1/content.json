@@ -1,41 +1,42 @@
 {
   "lessonId": 1,
   "title": "Basic operators",
-  "_authoring": "Teaching arc (owner-directed, 2026-06-01): the intro teaches the three OPERATORS FIRST (AND → OR → NOT), each in three forms — its symbol, its meaning in code, and its logic-gate shape — and ONLY AFTER the operators does it teach what a TRUTH TABLE is (the grid, inputs-left/output-right, each row a situation, read-across, 2 inputs → 4 rows, the row order), then a worked example tracing A & B on that grid, then practice. Rationale: a learner cannot be shown a truth table and asked to fill it in before being told what it is; and the operators are the concepts, the table is the notation that records them. The deterministic intro stage machine (introAdvance.ts) walks EVERY explanation card in order before the worked example. Operator cards render their gate diagram + code form (IntroExplanation, keyed on `gate`); the truth-table card carries an illustrative AND grid. All truthTables verified MSB-first. Items: AND → OR → NOT → review-mix (A AND NOT B interleaves AND+NOT without nested composition); l1-and uses B AND A so the first practice forces retrieval, not a copy of the worked example's A & B.",
+  "_authoring": "Teaching arc (owner-directed, 2026-06-01): teaching ALWAYS immediately precedes use of the same representation. The OPENING walk (`openingExplanations`) is [AND, then 'Truth tables']: first teach AND (meaning/symbol/code/gate), THEN teach in full what a truth table is and how it works on a concrete grid; the worked example then COMBINES the two (AND written AS a truth table, traced row by row); only THEN does the learner fill in AND's truth table (l1-and). After that, OR is taught JUST-IN-TIME right before the OR item, and NOT right before the NOT item (explanationBeforeNextItem, keyed on KC) — so each operator is taught and then immediately practiced, and the truth-table representation is defined before its first fill-in. Rationale: you cannot ask a learner to fill in a truth table before telling them what one is — and the table must be taught at the moment the lesson first switches into that representation. OR/NOT cards stay in `explanations` (for the just-in-time lookup) but are NOT in the opening walk. Operator cards render their gate + code form (IntroExplanation keyed on `gate`); the truth-table card carries an illustrative AND grid. All truthTables MSB-first. l1-and uses B AND A so the first fill-in forces retrieval, not a copy of the worked example's A & B; l1-review-mix (A AND NOT B) interleaves AND+NOT without nested composition.",
   "knowledgeComponents": ["AND", "OR", "NOT"],
   "intro": {
     "lessonIntro": {
       "title": "Lesson 1 — Logic: AND, OR, NOT",
-      "body": "In logic, every value is one of just two things: TRUE (we write 1) or FALSE (we write 0). Nothing in between. Logic is the set of rules for combining true/false values into new ones — and almost everything in computing is built from three operators that do exactly that: AND, OR, and NOT. We'll meet all three, then learn the tool that maps out what any operator does."
+      "body": "In logic, every value is one of just two things: TRUE (we write 1) or FALSE (we write 0). Nothing in between. Logic is the set of rules for combining true/false values into new ones — and almost everything in computing is built from three operators that do exactly that: AND, OR, and NOT. We'll start with AND."
     },
+    "openingExplanations": ["AND", "Truth tables"],
     "explanations": [
       {
         "topic": "AND",
         "gate": "AND",
-        "body": "AND combines two values and is true ONLY when BOTH of them are true. If either one is false, AND is false.\n\nThink: \"it is raining AND it is cold\" — true only if both are true.\n\nSymbol:  A & B\nIn code:  a && b   (true only when a and b are both true)\nAs a gate: the D-shaped AND gate below — two wires in, one out; the output is on only when both inputs are on.",
-        "visibleReps": ["circuit"]
-      },
-      {
-        "topic": "OR",
-        "gate": "OR",
-        "body": "OR combines two values and is true when AT LEAST ONE of them is true — including when both are. The only way OR is false is when both inputs are false.\n\nWatch out: this is the INCLUSIVE or of logic. Everyday English 'or' often means 'one or the other but not both' — logic's OR says 1 OR 1 is still 1.\n\nSymbol:  A || B\nIn code:  a || b   (true if a is true, or b is true, or both)\nAs a gate: the curved OR gate below — the output is on when either input is on.",
-        "visibleReps": ["circuit"]
-      },
-      {
-        "topic": "NOT",
-        "gate": "NOT",
-        "body": "NOT takes a SINGLE value and flips it: true becomes false, false becomes true. !1 = 0 and !0 = 1. It is the one operator here that takes just one input.\n\nThink: \"it is NOT raining\" — true exactly when 'it is raining' is false.\n\nSymbol:  !A\nIn code:  !a       (true when a is false)\nAs a gate: the triangle-with-a-bubble below — the little bubble is what means 'invert'. You'll see that same bubble reused on other gates later.",
+        "body": "AND combines two values and is true ONLY when BOTH of them are true. If either one is false, AND is false.\n\nThink: \"it is raining AND it is cold\" — true only if both are true.\n\nSymbol:  A & B\nIn code:  a && b   (true only when a and b are both true)\nAs a gate: the D-shaped AND gate below — two wires in, one out; the output is on only when both inputs are on.\n\nNext we'll learn how to write down exactly what AND does, for every possible input — using a tool called a truth table.",
         "visibleReps": ["circuit"]
       },
       {
         "topic": "Truth tables",
-        "body": "Now that you know the three operators, how do we write down EXACTLY what one does? With a truth table — a small grid that lists every possible input and the result for each.\n\nHow to read the grid below (it's AND):\n• The left columns (A, B) are the INPUTS. The right column (Output) is what the operator gives back.\n• Each ROW is one possible situation. Read a row across: \"if A is this and B is this, the output is that.\"\n• With 2 inputs there are exactly 4 situations, so 4 rows — A,B = 0,0 then 0,1 then 1,0 then 1,1.\n\nLook at the AND table: only the bottom row (A=1, B=1) has output 1, because AND is true only when both inputs are true. Every other row has a 0 somewhere, so the output is 0. Reading the Output column top to bottom — 0, 0, 0, 1 — IS the definition of AND.",
+        "body": "A truth table is how we write down EXACTLY what an operator does — a small grid that lists every possible input and the result for each. Here is the truth table for AND (the operator you just met).\n\nHow to read the grid below:\n• The left columns (A, B) are the INPUTS. The right column (Output) is what the operator gives back.\n• Each ROW is one possible situation. Read a row across: \"if A is this and B is this, the output is that.\"\n• With 2 inputs there are exactly 4 situations, so the table always has 4 rows — A,B = 0,0 then 0,1 then 1,0 then 1,1.\n\nNow combine it with what you know about AND. AND is true only when both inputs are 1, so look down the rows: only the bottom row (A=1, B=1) has output 1; every other row has a 0 somewhere, so its output is 0. Reading the Output column top to bottom — 0, 0, 0, 1 — IS AND, written as a table. In a moment you'll fill one in yourself.",
         "visibleReps": ["truth_table"],
         "illustration": {
           "expression": "A AND B",
           "variables": ["A", "B"],
           "truthTable": [0, 0, 0, 1]
         }
+      },
+      {
+        "topic": "OR",
+        "gate": "OR",
+        "body": "Next operator: OR. It combines two values and is true when AT LEAST ONE of them is true — including when both are. The only way OR is false is when both inputs are false.\n\nThink: \"it is raining OR it is cold\" — true if either (or both) hold.\n\nWatch out: this is the INCLUSIVE or of logic. Everyday English 'or' often means 'one or the other but not both' — logic's OR says 1 OR 1 is still 1.\n\nSymbol:  A || B\nIn code:  a || b   (true if a is true, or b is true, or both)\nAs a gate: the curved OR gate below — the output is on when either input is on.\n\nYou already know how to read a truth table — fill in OR's next.",
+        "visibleReps": ["circuit"]
+      },
+      {
+        "topic": "NOT",
+        "gate": "NOT",
+        "body": "Last operator: NOT. It takes a SINGLE value and flips it: true becomes false, false becomes true. !1 = 0 and !0 = 1. It is the one operator here that takes just one input — so its truth table has only 2 rows.\n\nThink: \"it is NOT raining\" — true exactly when 'it is raining' is false.\n\nSymbol:  !A\nIn code:  !a       (true when a is false)\nAs a gate: the triangle-with-a-bubble below — the little bubble is what means 'invert'. You'll see that same bubble reused on other gates later.",
+        "visibleReps": ["circuit"]
       }
     ],
     "workedExample": {

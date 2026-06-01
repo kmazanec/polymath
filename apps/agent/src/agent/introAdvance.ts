@@ -34,6 +34,21 @@ interface LessonIntroBlock {
     visibleReps: string[];
     illustration?: { expression: string; variables: string[]; truthTable: number[] };
   }>;
+  /**
+   * The topics (in order) to teach in the OPENING walk — before the worked example
+   * and the first practice item. The remaining `explanations` are taught
+   * just-in-time before their own KC's first item (`explanationBeforeNextItem`).
+   *
+   * This is what lets a lesson teach a concept and then immediately practice IT,
+   * instead of front-loading every operator's card. Lesson 1: opening walk is
+   * [AND, then the truth-table card]; the worked example writes AND AS a table;
+   * the learner fills AND's table; THEN OR is taught right before the OR item, and
+   * NOT right before the NOT item — teaching always immediately precedes use.
+   *
+   * Absent → the opening walk falls back to ALL `explanations` in order (the
+   * pre-existing behaviour; lessons 2–4 are unaffected).
+   */
+  openingExplanations?: string[];
   workedExample?: {
     expression: string;
     steps: Array<{ label: string; detail: string }>;
@@ -215,9 +230,18 @@ export function openingMove(input: AgentInput): TacticalMove {
   const intro = readLessonIntro(input.lesson.content.lessonId);
 
   if (intro) {
-    const explanations = intro.explanations ?? [];
+    const allExplanations = intro.explanations ?? [];
+    // The opening walk teaches ONLY the `openingExplanations` topics (in order) —
+    // the rest are taught just-in-time before their KC's first item. Absent →
+    // walk all explanations (pre-existing behaviour, lessons 2–4 unchanged).
+    const explanations =
+      intro.openingExplanations && intro.openingExplanations.length > 0
+        ? intro.openingExplanations
+            .map((topic) => allExplanations.find((e) => e.topic === topic))
+            .filter((e): e is NonNullable<typeof e> => e !== undefined)
+        : allExplanations;
 
-    // Stages 0..E-1: teach each authored explanation card in order.
+    // Stages 0..E-1: teach each opening explanation card in order.
     if (priorMounts < explanations.length) {
       const explanation = explanations[priorMounts];
       if (explanation) {
