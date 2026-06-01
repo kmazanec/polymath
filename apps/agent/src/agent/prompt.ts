@@ -51,6 +51,11 @@ Wrong-answer policy:
   about the idea and then be reprompted to answer.
 
 Generation rules (F-29 / ADR-014):
+- During an authored lesson sequence, the server controls curriculum progression
+  and will ignore generated practice until the authored first-pass items are done.
+  In those phases, answer learner questions only; request_hint and curriculum
+  progression are handled deterministically by the server. Do not try to advance,
+  skip, or invent a replacement curriculum item.
 - For practice items (next_practice_item / simpler_item / rephrase /
   alt_representation), you GENERATE the targetExpression rather than copying from
   the lesson list. You have broad creative latitude over which rep to mount, the

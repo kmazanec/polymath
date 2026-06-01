@@ -889,6 +889,83 @@ function authoredLessonPlanAction(input: AgentInput): Action | null {
   return validateOutboundAction(compileMove(requiredExplanation)).action;
 }
 
+function firstPracticeItemPerKc(lesson: Lesson): Lesson['content']['items'] {
+  const seen = new Set<string>();
+  const items: Lesson['content']['items'] = [];
+  for (const item of lesson.content.items) {
+    if (seen.has(item.kc)) continue;
+    seen.add(item.kc);
+    items.push(item);
+  }
+  return items;
+}
+
+function authoredPracticeAction(lesson: Lesson, item: Lesson['content']['items'][number], rationale: string): Action {
+  return {
+    type: 'mount',
+    component: {
+      kind: 'TruthTablePractice',
+      expression: item.targetExpression,
+      claimedTruthTable: item.truthTable,
+      visibleReps: ['truth_table'],
+      prompt: defaultItemPrompt(item.targetExpression, 'truth_table'),
+    },
+    rationale,
+  };
+}
+
+function authoredHintAction(input: AgentInput, item: Lesson['content']['items'][number]): Action {
+  const event = input.event;
+  const itemId = event.kind === 'request_hint' ? event.itemId : item.itemId;
+  const priorHints = input.hintsByItem?.[itemId] ?? 0;
+  const level = Math.min(priorHints + 1, 3) as 1 | 2 | 3;
+  const body =
+    level === 1
+      ? `Work row by row for ${item.targetExpression}. Ask what would make the expression output 1, then mark only those rows.`
+      : level === 2
+        ? `For ${item.targetExpression}, compare each row to the operator rule before touching the Output column. Leave rows that do not satisfy the rule as 0.`
+        : `Reset the table mentally: read the inputs across each row, apply ${item.kc}, and write the output. If a row fails the rule for ${item.kc}, its output is 0.`;
+  return {
+    type: 'mount',
+    component: { kind: 'HintCard', level, body },
+    rationale: `authored lesson sequence — deterministic hint for "${item.itemId}"`,
+  };
+}
+
+export function deterministicAuthoredPhaseAction(input: AgentInput): Action | null {
+  const event = input.event;
+  if (event.kind !== 'submit' && event.kind !== 'request_hint') return null;
+
+  const controlledItems = firstPracticeItemPerKc(input.lesson);
+  if (event.kind === 'request_hint') {
+    const item = controlledItems.find(
+      (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,
+    );
+    return item ? authoredHintAction(input, item) : null;
+  }
+
+  const idx = controlledItems.findIndex(
+    (item) => item.itemId === event.itemId || item.targetExpression === event.itemId,
+  );
+  if (idx < 0) return null;
+
+  if (input.currentSubmitCorrect === false) {
+    return wrongSubmitRemediationAction(event, input.lesson, input.priorMissesByItem ?? {});
+  }
+  if (input.currentSubmitCorrect !== true) return null;
+
+  const next = controlledItems[idx + 1];
+  if (!next) return null;
+
+  const explanation = authoredLessonPlanAction(input);
+  if (explanation) return explanation;
+  return authoredPracticeAction(
+    input.lesson,
+    next,
+    `authored lesson sequence — mounting next first-KC practice item "${next.itemId}"`,
+  );
+}
+
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
 async function proposeWithTimeout(agent: AgentClient, input: AgentInput): Promise<Action> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -2132,13 +2209,15 @@ export async function handleClientFrame(
     currentSubmitCorrect: learnerDerived.currentSubmitCorrect,
   };
 
+  const deterministicAuthoredAction = deterministicAuthoredPhaseAction(input);
+
   // Propose an action (under a timeout), then validate it server-side before it
   // crosses the wire (ADR-005 / criterion 5). The agent's own flow already ran
   // Layer 2, but the wire boundary re-validates and *enforces*: a Zod-malformed
   // proposal OR an item whose claimedTruthTable fails the recompute is downgraded
   // to `no_action` rather than forwarded. The server never trusts the agent, even
   // its own — defense in depth (CLAUDE.md invariant).
-  const agentProposed = await proposeWithTimeout(deps.agent, input);
+  const agentProposed = deterministicAuthoredAction ?? await proposeWithTimeout(deps.agent, input);
   // F-12 AC#3 dev seam: `?testForce=mastered` injects a real mastery-transition
   // proposal (bypassing the agent's own choice) so the earned-it gate's refusal is
   // demoable. It still flows through validateOutboundAction → the earned-it gate, so
