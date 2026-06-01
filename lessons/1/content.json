@@ -1,7 +1,7 @@
 {
   "lessonId": 1,
   "title": "Basic operators",
-  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (AND/OR/NOT), and a worked example (A AND B traced four rows). Items reordered: AND → OR → NOT → review. Added l1-review-mix at the end to interleave AND+NOT without composition (no parentheses, no nested sub-expression; NOT applies to a single variable, AND to two atoms, precedence unambiguous) for within-lesson spacing. OR explanation explicitly confronts inclusive-vs-exclusive confusion. All truthTables verified MSB-first. Curriculum-audit fixes (2026-06-01): (1) truth-table definition added as first explanation, before AND, covering grid structure, row count, exhaustiveness, 2^n formula, MSB-first canonical order, and how to read/build; (2) walk-through steps rewritten to explain reasoning at each row rather than asserting results; (3) circuit/pseudocode step demoted to a brief no-action preview, and workedExample.visibleReps narrowed to truth_table only; (4) l1-and varied from A AND B to B AND A (same truth table, forces retrieval rather than pattern copy); (5) l1-review-mix changed from compound (A OR B) AND NOT A to non-compound A AND NOT B (interleaves AND+NOT without nested composition).",
+  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (AND/OR/NOT), and a worked example (A AND B traced four rows). Items reordered: AND → OR → NOT → review. Added l1-review-mix at the end to interleave AND+NOT without composition (no parentheses, no nested sub-expression; NOT applies to a single variable, AND to two atoms, precedence unambiguous) for within-lesson spacing. OR explanation explicitly confronts inclusive-vs-exclusive confusion. All truthTables verified MSB-first. Curriculum-audit fixes (2026-06-01): (1) the truth-table definition (what the grid is, exhaustive rows, 4 rows for 2 inputs) is folded INTO the opening AND explanation, which carries an illustrative AND truth table — so the lesson still opens on AND (not on an abstract 'Truth tables' card) but the learner sees and understands a real grid before the first table-filling challenge; (2) walk-through steps rewritten to explain reasoning at each row rather than asserting results; (3) circuit/pseudocode step demoted to a brief no-action preview, and workedExample.visibleReps narrowed to truth_table only; (4) l1-and varied from A AND B to B AND A (same truth table, forces retrieval rather than pattern copy); (5) l1-review-mix changed from compound (A OR B) AND NOT A to non-compound A AND NOT B (interleaves AND+NOT without nested composition).",
   "knowledgeComponents": ["AND", "OR", "NOT"],
   "intro": {
     "lessonIntro": {
@@ -10,19 +10,14 @@
     },
     "explanations": [
       {
-        "topic": "Truth tables",
-        "body": "A truth table lists every possible combination of the inputs (one row each) and the output for each — so it's the complete map of what an expression does. You'll read and build these all lesson; with 2 inputs there are always 4 rows.",
+        "topic": "AND",
+        "body": "AND is written A & B. It produces true ONLY when BOTH inputs are true — if either input is false, the output is false. The grid below is its truth table: every possible combination of the inputs (one row each) and the output for each, so it's the complete map of what AND does. You'll read and build these all lesson; with 2 inputs there are always 4 rows.",
         "visibleReps": ["truth_table"],
         "illustration": {
           "expression": "A AND B",
           "variables": ["A", "B"],
           "truthTable": [0, 0, 0, 1]
         }
-      },
-      {
-        "topic": "AND",
-        "body": "AND is written A & B. It produces true ONLY when BOTH inputs are true. If either input is false, the output is false. Think of it as a chain of requirements: A & B is satisfied only when A is met AND B is met. One broken link, the whole thing fails.",
-        "visibleReps": ["truth_table"]
       },
       {
         "topic": "OR",
