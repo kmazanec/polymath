@@ -55,6 +55,11 @@ export interface AgentInput {
    *  session — the heuristic's repeated-miss escalation reads this, not the client
    *  flag in recentHistory. */
   priorMissesByItem?: Record<string, number>;
+  /** Server-derived set of authored canonical itemIds the learner has submitted
+   *  CORRECTLY this session (folded over the full bounded log, INCLUDING the current
+   *  turn). The deterministic forward-progress fallback (B7) reads this to choose
+   *  the next not-yet-passed authored item — never a client flag or capped window. */
+  passedItemIds?: Set<string>;
 }
 
 /** A held-out transfer item the agent may fire as a probe. Mirrors the

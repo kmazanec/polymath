@@ -408,6 +408,7 @@ async function updateAndReadLearnerState(
   masteryState: LearnerState;
   hintsByItem: Record<string, number>;
   priorMissesByItem: Record<string, number>;
+  passedItemIds: Set<string>;
   currentSubmitCorrect: boolean | undefined;
 }> {
   // Most-recent N events (bounded), then chronological for the fold. The off-topic
@@ -468,6 +469,9 @@ async function updateAndReadLearnerState(
     masteryState: learnerState_,
     hintsByItem: derived.hintsByItem,
     priorMissesByItem: priorDerived.missesByItem,
+    // The POST-current-event fold (`derived`), so a correct submit THIS turn already
+    // marks its item passed — the B7 forward-progress fallback then advances past it.
+    passedItemIds: derived.passedItemIds,
     currentSubmitCorrect:
       current.kind === 'submit'
         ? recomputeCorrect(lesson.content, current.itemId, current.submission, current.repSubmission)
@@ -767,9 +771,20 @@ function wrongSubmitRemediationAction(
   const rep = event.repSubmission?.rep ?? 'truth_table';
   const attempt = (priorMissesByItem[event.itemId] ?? 0) + 1;
   const llmExplanation = remediationTextFromAction(proposedAction);
+  // B11: the default retry guidance must match the REP the learner is using. The
+  // truth-table wording ("work row by row… mark 1 only for those rows") is nonsense
+  // under a pseudocode editor or a circuit canvas, where there are no rows to mark.
+  const repGuidance: Record<typeof rep, string> = {
+    truth_table:
+      'work row by row, ask what would make the expression true, then mark 1 only for those rows.',
+    circuit:
+      'rebuild the circuit gate by gate, tracing how each input flows through to the output.',
+    pseudocode:
+      'rewrite the expression step by step, checking it matches the operator rule for every input.',
+  };
   const prompt =
     llmExplanation ??
-    `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: work row by row, ask what would make the expression true, then mark 1 only for those rows.`;
+    `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: ${repGuidance[rep]}`;
   const visibleReps = [rep];
   const rationale =
     llmExplanation
@@ -1010,6 +1025,85 @@ export function deterministicAuthoredPhaseAction(input: AgentInput): Action | nu
     input.lesson,
     next,
     `authored lesson sequence — mounting next first-KC practice item "${next.itemId}"`,
+  );
+}
+
+/** Pick the rep the learner is currently working in, defaulting to truth_table.
+ *  Used by the forward-progress fallback so a re-mount honors the active rep. */
+function repFromSubmitEvent(event: ClientEvent): 'truth_table' | 'circuit' | 'pseudocode' {
+  if (event.kind === 'submit') return event.repSubmission?.rep ?? 'truth_table';
+  return 'truth_table';
+}
+
+/**
+ * B7 FORWARD-PROGRESS FALLBACK (deterministic, fail-NEVER-no_action).
+ *
+ * The class of bug this fixes: on a CORRECT `submit` during `practicing`, the
+ * learner must always be handed the next thing to do. The deterministic per-KC
+ * walk (`deterministicAuthoredPhaseAction`) only iterates `firstPracticeItemPerKc`
+ * — the KC-DEDUPED list — so after the last UNIQUE-KC item it returns null and
+ * drops authored items whose KC was already seen (e.g. L1's `l1-review-mix`, a
+ * second AND item). The LLM and the existing `authoredLessonPlanAction` fallback
+ * only emit just-in-time concept explanations BEFORE a next NEW KC, so past the
+ * last new KC they too return null. Net result before this fix: `no_action` →
+ * the solved item stays mounted with a disabled Submit and the learner is
+ * STRANDED while still `practicing` and not yet eligible to advance (the mastery
+ * gate needs `consecutiveCorrectAtHardestTier` + transfer + explain-back).
+ *
+ * This is the deterministic, in-spirit safety net: it runs ONLY on a correct
+ * submit, ONLY when no earlier (privileged/transfer/wrong/per-KC/LLM) arm produced
+ * a usable forward action, and it NEVER mounts a privileged/integrity surface
+ * (MasteryCelebration / TransferProbe / ExplainBackPrompt keep their own earned-it
+ * gating). It uses the authored item's own `truthTable` (never a fabricated
+ * `claimedTruthTable`) and still flows through `validateOutboundAction` + Layer-2
+ * + the earned-it gate at the call site.
+ *
+ * Order of preference (fail-CLOSED on a satisfied gate — never advance past it):
+ *   1. If the full mastery gate is ALREADY satisfied, return null — a privileged
+ *      path (transfer/explain-back/mastery) owns this turn; do NOT mint practice.
+ *   2. Otherwise mount the next authored item (FULL `items` list, not the deduped
+ *      per-KC list) the learner has NOT yet passed — picking up `l1-review-mix`.
+ *   3. If every authored item is already passed but the gate is still unmet,
+ *      re-mount the HARDEST-tier authored item so the consecutive-correct ladder
+ *      can keep climbing (spaced practice), rather than dead-ending.
+ */
+function forwardProgressFallbackAction(
+  input: AgentInput,
+  gateSatisfied: boolean,
+): Action | null {
+  const event = input.event;
+  if (event.kind !== 'submit') return null;
+  if (input.currentSubmitCorrect !== true) return null;
+  // (1) Gate already satisfied → let a privileged path own the turn.
+  if (gateSatisfied) return null;
+
+  const items = input.lesson.content.items;
+  if (items.length === 0) return null;
+  const passed = input.passedItemIds ?? new Set<string>();
+  const rep = repFromSubmitEvent(event);
+
+  // (2) Next not-yet-passed authored item, in authored order.
+  const nextUnfinished = items.find((item) => !passed.has(item.itemId));
+  if (nextUnfinished) {
+    return authoredPracticeAction(
+      input.lesson,
+      nextUnfinished,
+      `B7 forward-progress fallback — mounting next unfinished authored item "${nextUnfinished.itemId}" (rep=${rep})`,
+      rep,
+    );
+  }
+
+  // (3) All authored items passed but the gate is unmet — keep the ladder going by
+  //     re-mounting the hardest-tier item (deterministic spaced practice, NEVER no_action).
+  const maxTier = Math.max(...items.map((i) => i.difficultyTier));
+  const hardest = items.filter((i) => i.difficultyTier === maxTier);
+  const ladderItem = hardest[hardest.length - 1] ?? items[items.length - 1];
+  if (!ladderItem) return null;
+  return authoredPracticeAction(
+    input.lesson,
+    ladderItem,
+    `B7 forward-progress fallback — all authored items passed but mastery gate unmet; re-mounting hardest-tier item "${ladderItem.itemId}" to continue the consecutive-correct ladder (rep=${rep})`,
+    rep,
   );
 }
 
@@ -2253,6 +2347,7 @@ export async function handleClientFrame(
     inTransferProbe,
     hintsByItem: learnerDerived.hintsByItem,
     priorMissesByItem: learnerDerived.priorMissesByItem,
+    passedItemIds: learnerDerived.passedItemIds,
     currentSubmitCorrect: learnerDerived.currentSubmitCorrect,
   };
 
@@ -2343,7 +2438,7 @@ export async function handleClientFrame(
       ? authoredLessonPlanAction(input)
       : null;
 
-  const action: Action =
+  const preFallbackAction: Action =
     transferVerdict?.correct === true &&
     lesson.masteryConfig.requireExplainBackPass &&
     !learnerDerived.masteryState.explainBackPassed
@@ -2363,6 +2458,56 @@ export async function handleClientFrame(
         : authoredSequenceFallback
           ? authoredSequenceFallback
         : validatedAction;
+
+  // B7 FORWARD-PROGRESS FALLBACK (last resort, deterministic). If, after every
+  // earlier arm (privileged transfer/explain-back reflex, wrong-submit remediation,
+  // authored just-in-time explanation, the validated agent/per-KC action) the turn
+  // would STILL be `no_action` on a CORRECT `practicing` submit, the learner would
+  // be stranded (B7). Hand them the next thing to do instead — the next unfinished
+  // authored item, or a hardest-tier re-mount to continue the ladder — NEVER
+  // `no_action`. The candidate is re-run through `validateOutboundAction` + Layer-2
+  // + the earned-it gate (it never bypasses them, and it never mints a privileged
+  // surface). The fallback is itself fail-closed: it returns null when the mastery
+  // gate is already satisfied (a privileged path owns that turn).
+  let action = preFallbackAction;
+  let forwardProgressFired = false;
+  if (action.type === 'no_action' && event.kind === 'submit' && learnerDerived.currentSubmitCorrect === true) {
+    const candidate = forwardProgressFallbackAction(input, gateEvaluation.passed);
+    if (candidate) {
+      const { action: fpShaped } = validateOutboundAction(candidate);
+      const fpLayer2 = validateLayer2(fpShaped);
+      const fpRejection = rejectUnauthorizedAction(
+        fpShaped,
+        learnerDerived.snapshot,
+        gateEvaluation,
+        transferCandidates,
+      );
+      if (fpLayer2.ok && !fpRejection) {
+        action = fpShaped;
+        forwardProgressFired = true;
+      }
+    }
+  }
+
+  // B7: lightweight, greppable per-turn decision log so a future dead-end is visible
+  // in the agent's stdout (the agent previously logged NOTHING about its decisions).
+  // Names which arm produced the wire action: deterministic per-KC / llm / a reflex
+  // fallback / the B7 forward-progress net / a terminal no_action.
+  const decisionArm = forwardProgressFired
+    ? 'forward_progress_fallback'
+    : action.type === 'no_action'
+      ? 'no_action'
+      : action !== validatedAction
+        ? 'reflex_fallback'
+        : deterministicAuthoredAction
+          ? 'deterministic'
+          : 'llm';
+  console.info(
+    `[polymath] turn decided session=${event.sessionId} event=${event.kind} ` +
+      `correct=${String(learnerDerived.currentSubmitCorrect)} gatePassed=${String(gateEvaluation.passed)} ` +
+      `arm=${decisionArm} action=${action.type}` +
+      (action.type === 'mount' ? `:${action.component.kind}` : ''),
+  );
 
   // F-14 CROSS-LESSON RECALL REFLEX (deterministic SERVER reflex, NOT an LLM menu
   // move — it never goes through proposeMove/TacticalMove/MoveSchema). When the

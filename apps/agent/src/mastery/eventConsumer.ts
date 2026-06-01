@@ -58,6 +58,12 @@ export interface DerivedState {
   /** Server-recomputed wrong submissions per item this session (the heuristic's
    *  repeated-miss escalation reads this, not the client flag). */
   missesByItem: Record<string, number>;
+  /** Server-recomputed set of authored itemIds the learner has submitted CORRECTLY
+   *  at least once this session (keyed by the lesson's canonical `itemId`). The
+   *  deterministic forward-progress fallback (B7) reads this to find the next
+   *  not-yet-passed authored item — it is the single source of truth for "which
+   *  items are done", never a client flag or a capped history window. */
+  passedItemIds: Set<string>;
   submits: number;
   retries: number;
   responseTimesMs: number[];
@@ -114,11 +120,17 @@ export function deriveState(
   const cfg = bktConfig(config);
   const kcByItem = new Map<string, string>();
   const tierByItem = new Map<string, number>();
+  // Canonicalize either an itemId OR a targetExpression (the web names items by
+  // expression) back to the lesson's canonical `itemId` — so `passedItemIds` is
+  // keyed consistently regardless of how the client referenced the item.
+  const canonicalItemId = new Map<string, string>();
   for (const item of lesson.items) {
     kcByItem.set(item.itemId, item.kc);
     kcByItem.set(item.targetExpression, item.kc); // the web names items by expression
     tierByItem.set(item.itemId, item.difficultyTier);
     tierByItem.set(item.targetExpression, item.difficultyTier);
+    canonicalItemId.set(item.itemId, item.itemId);
+    canonicalItemId.set(item.targetExpression, item.itemId);
   }
 
   // The hardest difficulty tier in the lesson. Used to gate `consecutiveCorrectAtHardestTier`.
@@ -155,6 +167,7 @@ export function deriveState(
     hintsUsed: 0,
     hintsByItem: {},
     missesByItem: {},
+    passedItemIds: new Set<string>(),
     submits: 0,
     retries: 0,
     responseTimesMs: [],
@@ -188,6 +201,9 @@ export function deriveState(
           state.missesByItem[ev.itemId] = (state.missesByItem[ev.itemId] ?? 0) + 1;
         } else {
           missed.delete(ev.itemId); // a correct attempt clears the miss
+          // Record the canonical itemId as passed (B7 forward-progress source).
+          const canonical = canonicalItemId.get(ev.itemId);
+          if (canonical) state.passedItemIds.add(canonical);
         }
       }
       if (typeof ev.responseTimeMs === 'number') state.responseTimesMs.push(ev.responseTimeMs);

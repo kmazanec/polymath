@@ -384,6 +384,123 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     }
   });
 
+  it('B7: a correct submit on the last per-KC item never dead-ends — the server mounts the next unfinished authored item even when the agent returns no_action', async () => {
+    // Reproduction of B7: the deterministic per-KC walk dedupes by KC and so is
+    // EXHAUSTED after l1-not (the 3rd unique-KC item); a misbehaving/quiet provider
+    // then returns no_action and the learner is stranded (solved item stays mounted,
+    // Submit disabled, no next item). With the forward-progress fallback, the correct
+    // l1-not submit must instead mount the next UNFINISHED authored item (l1-review-mix,
+    // kc=AND — dropped by the per-KC dedupe), never no_action.
+    const quietAgent: AgentClient = {
+      propose: async (): Promise<Action> => ({
+        type: 'no_action',
+        reason: 'wait_for_learner',
+        rationale: 'provider stayed quiet on the last per-KC turn (B7 reproduction)',
+      }),
+    };
+    const b7Server = createServer({ db, agent: quietAgent });
+    await new Promise<void>((resolve) => b7Server.httpServer.listen(0, resolve));
+    const { port } = b7Server.httpServer.address() as AddressInfo;
+    const b7Base = `http://localhost:${port}`;
+    const b7Ws = `ws://localhost:${port}/agent`;
+    try {
+      const { sessionId } = (await (await fetch(`${b7Base}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      // Walk the three per-KC items correctly (truth-table cells), collecting every action.
+      const frames: Record<string, unknown>[] = [
+        { kind: 'submit', sessionId, itemId: 'l1-and', submission: 'B AND A', repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 1] } },
+        { kind: 'submit', sessionId, itemId: 'l1-or', submission: 'A OR B', repSubmission: { rep: 'truth_table', cells: [0, 1, 1, 1] } },
+        { kind: 'submit', sessionId, itemId: 'l1-not', submission: 'NOT A', repSubmission: { rep: 'truth_table', cells: [1, 0] } },
+      ];
+      const ws = new WebSocket(b7Ws);
+      const actions: Action[] = [];
+      await new Promise<void>((resolve, reject) => {
+        let sent = 0;
+        ws.on('open', () => ws.send(JSON.stringify(frames[sent++])));
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            actions.push(Action.parse(msg.action));
+            if (sent < frames.length) ws.send(JSON.stringify(frames[sent++]));
+            else resolve();
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('B7 sequence timed out')), 12000);
+      });
+      ws.close();
+
+      // The LAST turn (l1-not correct) is the one that previously dead-ended.
+      const last = actions[actions.length - 1]!;
+      expect(last.type).toBe('mount'); // NOT no_action
+      if (last.type === 'mount') {
+        // The next unfinished authored item is l1-review-mix (A AND NOT B), which the
+        // per-KC dedupe dropped. The forward-progress fallback picks it up.
+        expect(last.component.kind).toBe('TruthTablePractice');
+        if (last.component.kind === 'TruthTablePractice') {
+          expect(last.component.expression).toBe('A AND NOT B');
+          expect(last.component.visibleReps).toContain('truth_table');
+        }
+      }
+    } finally {
+      await b7Server.close();
+    }
+  });
+
+  it('B11: a wrong PSEUDOCODE submit gets rep-appropriate retry guidance (no truth-table row language)', async () => {
+    const quietAgent: AgentClient = {
+      propose: async (): Promise<Action> => ({
+        type: 'no_action',
+        reason: 'wait_for_learner',
+        rationale: 'provider quiet so the server default retry prompt is exercised',
+      }),
+    };
+    const b11Server = createServer({ db, agent: quietAgent });
+    await new Promise<void>((resolve) => b11Server.httpServer.listen(0, resolve));
+    const { port } = b11Server.httpServer.address() as AddressInfo;
+    const b11Base = `http://localhost:${port}`;
+    const b11Ws = `ws://localhost:${port}/agent`;
+    try {
+      const { sessionId } = (await (await fetch(`${b11Base}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const ws = new WebSocket(b11Ws);
+      const action = await new Promise<Action>((resolve, reject) => {
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({
+              kind: 'submit',
+              sessionId,
+              itemId: 'l1-or',
+              submission: 'A AND B', // wrong for A OR B
+              repSubmission: { rep: 'pseudocode', expression: 'A AND B', source: 'a and b' },
+            }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') resolve(Action.parse(msg.action));
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('timed out')), 8000);
+      });
+      ws.close();
+
+      expect(action.type).toBe('mount');
+      if (action.type === 'mount') {
+        expect(action.component.kind).toBe('PseudocodeChallenge');
+        if (action.component.kind === 'PseudocodeChallenge') {
+          // Rep-aware: must NOT instruct the learner to mark truth-table rows.
+          expect(action.component.prompt).not.toMatch(/row|mark 1/i);
+          expect(action.component.prompt).toMatch(/rewrite the expression/i);
+        }
+      }
+    } finally {
+      await b11Server.close();
+    }
+  });
+
   it('converts an agent hint after a wrong submit into an editable retry mount', async () => {
     const hintAgent: AgentClient = {
       propose: async (): Promise<Action> => ({
