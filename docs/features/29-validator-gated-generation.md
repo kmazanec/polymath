@@ -1,6 +1,6 @@
 # Feature: Validator-gated challenge generation
 
-**ID:** F-29 · **Iteration:** I7 · **Status:** Not started
+**ID:** F-29 · **Iteration:** I7 · **Status:** Built — shippable (kmaz-build-iteration, 2026-05-31). Opus review: **ship** (safety core, no gating findings). Engine-owns-key overwrite (computeItemKey, var-capped); Layer-2 byte-for-byte unchanged; content-derived rails; regenerate-on-reject. Adversarial suite green: wrong-key overwritten, over-cap never enumerated, unparseable/out-of-alphabet/prompt-less rejected, generated streak cannot reach mastery.
 
 ## What this delivers (before → after)
 **Before:** The agent selects the next practice item from a fixed pre-authored array (`items[(idx+1) % len]`); it never invents a challenge.

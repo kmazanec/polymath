@@ -1,6 +1,6 @@
 # Feature: Tablet-first touch UI + locked flow skeleton
 
-**ID:** F-31 · **Iteration:** I7 · **Status:** Not started
+**ID:** F-31 · **Iteration:** I7 · **Status:** Built — shippable (kmaz-build-iteration, 2026-05-31). Opus review: **fix-then-ship**; 3 gating fixes (F31-1/3/4); skeptic refuted 1 of 2 high-sev findings. 44px touch contract + view-only FlowSkeleton in the reserved rail; size assertions real-browser Playwright only. Tablet Playwright drive performed. Web suite green.
 
 ## What this delivers (before → after)
 **Before:** The UI assumes mouse/keyboard with desktop-sized controls; there is no orientation showing where the learner is in the lesson arc.

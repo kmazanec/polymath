@@ -1,6 +1,6 @@
 # Feature: Stateful agent deliberation flow + live LLM provider
 
-**ID:** F-28 · **Iteration:** I7 · **Status:** Not started
+**ID:** F-28 · **Iteration:** I7 · **Status:** Built — shippable (kmaz-build-iteration, 2026-05-31). Opus review: **ship** (no gating findings). 5-node deliberation graph + `makeAgentClient()` factory closing the production wiring gap. Keyless behavior-preservation proved by an 11-turn golden snapshot; agent suite green isolated. Live-LLM path wired but not drive-tested (no key in build env).
 
 ## What this delivers (before → after)
 **Before:** The inner agent is a single LangGraph `propose → emit` node with no memory ("instantiated fresh per turn"), and production hardcodes the keyless heuristic provider, so "Ask the tutor" returns one canned string.

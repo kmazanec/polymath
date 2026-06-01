@@ -1,6 +1,6 @@
 # Feature: Spoken responses as first-class tutoring input
 
-**ID:** F-30 · **Iteration:** I7 · **Status:** Not started
+**ID:** F-30 · **Iteration:** I7 · **Status:** Built — shippable (kmaz-build-iteration, 2026-05-31). Opus review: **ship** (no gating findings). LearnerUtterance capture/registry seam; spoken_turn keys off the bound session id and answers ONLY the server-captured utterance (fails closed); off-topic folds into countOffTopicAnswers; degrades cleanly without LiveKit env. Agent suite green isolated.
 
 ## What this delivers (before → after)
 **Before:** The student's spoken feedback is used nowhere outside the explain-back gate — the "Ask the tutor" voice channel opens but no general spoken turn is transcribed, fed to the agent, or shown anywhere.

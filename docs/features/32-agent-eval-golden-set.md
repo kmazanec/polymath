@@ -1,6 +1,6 @@
 # Feature: Agent eval — golden set + labeled scenario banks
 
-**ID:** F-32 · **Iteration:** I7 · **Status:** Not started
+**ID:** F-32 · **Iteration:** I7 · **Status:** Built — shippable (kmaz-build-iteration, 2026-05-31). Opus review: **ship** (no gating findings). Named golden set gating MRs offline at 100% + meta-check; existing banks re-run in place; new agent_live_eval protected-main job (allow_failure initially per D13) — first place the inner-agent live ≥95% gate ever fires. Secret isolation verified.
 
 ## What this delivers (before → after)
 **Before:** Agent evals exist but ad-hoc (an inner-agent scenario bank + an explain-back bank), with no named "golden set we always run" and no coverage of the new I7 surfaces (generation, spoken turns, prompt-on-every-challenge).

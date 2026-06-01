@@ -1,6 +1,6 @@
 # Feature: Coherent learning surface (anchored workspace + transcript)
 
-**ID:** F-27 · **Iteration:** I7 · **Status:** Not started
+**ID:** F-27 · **Iteration:** I7 · **Status:** Built — shippable (kmaz-build-iteration, 2026-05-31). Opus review: **fix-then-ship**; 1 gating fix (F27-1: prompt on the L1→L2 advance reflex mount). Live browser drive against the Docker stack confirmed all 8 ACs. On `build/i7-coherent-surface`; assembled suite green.
 
 ## What this delivers (before → after)
 **Before:** The web client renders the agent's output through a single mutable slot — every action overwrites the last, so there is no history, the intro has no "continue", a submit shows no verdict, and advances feel random.
