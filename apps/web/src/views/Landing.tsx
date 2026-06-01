@@ -40,20 +40,19 @@ export function Landing(): ReactElement {
 
       <main className="landing__main">
         {/* ── Hero: the headline + the live demo are ONE composition ── */}
-        <section className="landing__hero" aria-label="Polymath — one idea, three forms">
+        <section className="landing__hero" aria-label="Polymath — master Boolean logic">
           <div className="landing__hero-copy">
             <p className="eyebrow landing__eyebrow">Mastery-grade Boolean logic</p>
             <h1 className="landing__headline">
-              One&nbsp;idea,
+              The&nbsp;logic&nbsp;behind
               <br />
-              <span className="landing__headline-accent">three&nbsp;forms.</span>
+              <span className="landing__headline-accent">everything.</span>
             </h1>
             <p className="landing__sub">
-              AND, OR and NOT are the whole alphabet of logic. You truly know a
-              concept only when you&rsquo;re fluent across all three of its faces — a{' '}
-              <strong>truth table</strong>, a <strong>circuit</strong> you can wire and
-              pulse, and a line of <strong>code</strong>. Polymath makes you fluent in
-              every one.
+              AND, OR and NOT are the whole alphabet of logic — the foundation of
+              every circuit, condition, and line of code. Master them for real across{' '}
+              <strong>truth tables</strong>, <strong>circuits</strong> you can wire and
+              pulse, and <strong>code</strong>.
             </p>
             <div className="landing__cta-row">
               <Link to="/learn" className="btn btn--cta">

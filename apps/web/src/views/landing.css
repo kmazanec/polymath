@@ -211,6 +211,10 @@
  * in that band. Below 60rem the hero collapses to one column and the demo regains full
  * width, where the ihero's native 3-column layout fits — so this only applies ≥ 60rem. */
 @media (min-width: 60.01rem) {
+  /* The demo is now the tall element in this band; trim the hero's decorative
+   * top padding so the compacted instrument clears the fold. */
+  .landing__hero { padding-top: var(--space-3); }
+
   .landing__hero-demo .ihero__panels {
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -218,6 +222,34 @@
       'gate'
       'code';
   }
+
+  /* Stacked, the three panels are tall enough to push the page well past one
+   * screen. Compact them so the whole instrument fits without much scrolling:
+   * the circuit shrinks a LOT (it's mostly whitespace), the truth table a
+   * little, and the cards/gap tighten. Scoped to the landing hero only — the
+   * in-lesson rendering of these same components is untouched. */
+  .landing__hero-demo .ihero { gap: var(--space-3); }
+  .landing__hero-demo .ihero__panels { gap: var(--space-2-5); }
+  .landing__hero-demo .ihero__card {
+    padding: var(--space-3) var(--space-3-5);
+    border-radius: var(--radius-md);
+  }
+  .landing__hero-demo .ihero__tag { margin-bottom: var(--space-2); }
+
+  /* Circuit: shrink a lot — cap its height and the gate's width so it reads as
+   * a compact diagram, not a half-screen panel. */
+  .landing__hero-demo .ihero__card--gate .ihero__svg-wrap {
+    min-height: 3.5rem;
+  }
+  .landing__hero-demo .ihero__svg {
+    max-width: 14rem;
+    margin-inline: auto;
+  }
+
+  /* Truth table: shrink a little — tighter row spacing, cells, and bit chips. */
+  .landing__hero-demo .ihero__tt { border-spacing: 0 0.18rem; }
+  .landing__hero-demo .ihero__tt td { padding: 0.2rem var(--space-1); }
+  .landing__hero-demo .ihero__bit { width: 1.5rem; height: 1.5rem; }
 }
 
 /* ── pillars ── */
