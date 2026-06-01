@@ -99,36 +99,50 @@ describe('TruthTable rendering (Chunk 1)', () => {
 // Chunk 1 — Toggle behavior
 // -------------------------------------------------------------------
 
-describe('TruthTable toggle behavior (Chunk 1)', () => {
-  it('output cells start with aria-pressed="false"', () => {
+describe('TruthTable toggle behavior — tri-state ? → 0 → 1 → ? (Chunk 1)', () => {
+  it('output cells start as "?" (undecided), aria-pressed="false"', () => {
     const spec = makeSpec('A AND B');
     const { getAllByRole } = render(<TruthTable spec={spec} />);
     const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
     expect(outputBtns.length).toBe(4);
     outputBtns.forEach((btn) => {
+      expect(btn.textContent).toBe('?');
       expect(btn.getAttribute('aria-pressed')).toBe('false');
+      expect(btn.hasAttribute('data-unset')).toBe(true);
     });
   });
 
-  it('clicking an output cell toggles it from false to true', () => {
+  it('cycles ? → 0 → 1 → ? on successive clicks', () => {
     const spec = makeSpec('A AND B');
     const { getAllByRole } = render(<TruthTable spec={spec} />);
-    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    const firstBtn = outputBtns[0]!;
-    expect(firstBtn.getAttribute('aria-pressed')).toBe('false');
-    fireEvent.click(firstBtn);
-    expect(firstBtn.getAttribute('aria-pressed')).toBe('true');
+    const btn = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null)[0]!;
+    expect(btn.textContent).toBe('?');
+    fireEvent.click(btn);
+    expect(btn.textContent).toBe('0');
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(btn);
+    expect(btn.textContent).toBe('1');
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn);
+    expect(btn.textContent).toBe('?');
+    expect(btn.hasAttribute('data-unset')).toBe(true);
   });
+});
 
-  it('clicking an output cell twice toggles it back to false', () => {
-    const spec = makeSpec('A AND B');
-    const { getAllByRole } = render(<TruthTable spec={spec} />);
+describe('TruthTable submit gating (Chunk 1)', () => {
+  it('Submit is disabled until every cell is set (no "?" remaining)', () => {
+    const spec = makeSpec('A AND B', [0, 0, 0, 1]);
+    const { getAllByRole, getByRole } = render(<TruthTable spec={spec} />);
+    const submitBtn = getByRole('button', { name: /submit/i }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true); // all cells start "?"
     const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    const firstBtn = outputBtns[0]!;
-    fireEvent.click(firstBtn);
-    expect(firstBtn.getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(firstBtn);
-    expect(firstBtn.getAttribute('aria-pressed')).toBe('false');
+    // Set rows 0-2 to 0 (one click each: ? → 0); row 3 left as "?"
+    fireEvent.click(outputBtns[0]!);
+    fireEvent.click(outputBtns[1]!);
+    fireEvent.click(outputBtns[2]!);
+    expect(submitBtn.disabled).toBe(true); // row 3 still "?"
+    fireEvent.click(outputBtns[3]!); // row 3 → 0; now all set
+    expect(submitBtn.disabled).toBe(false);
   });
 });
 
@@ -137,18 +151,22 @@ describe('TruthTable toggle behavior (Chunk 1)', () => {
 // -------------------------------------------------------------------
 
 describe('TruthTable submit handler (Chunk 2)', () => {
+  // Helpers for the tri-state model: ? → 0 (1 click), ? → 1 (2 clicks).
+  const setTo0 = (btn: HTMLElement) => fireEvent.click(btn);
+  const setTo1 = (btn: HTMLElement) => { fireEvent.click(btn); fireEvent.click(btn); };
+  const outputs = (getAllByRole: (r: string) => HTMLElement[]) =>
+    getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
+
   it('calls onSubmit with correct event shape when all cells match (AC3)', () => {
     const spec = makeSpec('A AND B', [0, 0, 0, 1]);
     const onSubmit = vi.fn();
     const { getAllByRole, getByRole } = render(
       <TruthTable spec={spec} onSubmit={onSubmit} />,
     );
-    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    // A=0,B=0→0; A=0,B=1→0; A=1,B=0→0; A=1,B=1→1
-    // Toggle row 3 (index 3) to 1
-    fireEvent.click(outputBtns[3]!);
-    const submitBtn = getByRole('button', { name: /submit/i });
-    fireEvent.click(submitBtn);
+    const btns = outputs(getAllByRole);
+    // A AND B = [0,0,0,1]: rows 0-2 → 0, row 3 → 1
+    setTo0(btns[0]!); setTo0(btns[1]!); setTo0(btns[2]!); setTo1(btns[3]!);
+    fireEvent.click(getByRole('button', { name: /submit/i }));
     expect(onSubmit).toHaveBeenCalledOnce();
     const event = onSubmit.mock.calls[0]![0] as {
       kind: string;
@@ -166,10 +184,11 @@ describe('TruthTable submit handler (Chunk 2)', () => {
   it('calls onSubmit with correct: false when cells are wrong (AC4)', () => {
     const spec = makeSpec('A AND B', [0, 0, 0, 1]);
     const onSubmit = vi.fn();
-    const { getByRole } = render(
+    const { getAllByRole, getByRole } = render(
       <TruthTable spec={spec} onSubmit={onSubmit} />,
     );
-    // Don't toggle anything — all 0s, wrong (should be [0,0,0,1])
+    // Set every row to 0 → [0,0,0,0], wrong (should be [0,0,0,1])
+    outputs(getAllByRole).forEach((b) => setTo0(b));
     fireEvent.click(getByRole('button', { name: /submit/i }));
     const event = onSubmit.mock.calls[0]![0] as { correct: boolean };
     expect(event.correct).toBe(false);
@@ -178,13 +197,10 @@ describe('TruthTable submit handler (Chunk 2)', () => {
   it('marks all cells green (data-verdict="correct") after fully correct submit (AC3)', () => {
     const spec = makeSpec('A AND B', [0, 0, 0, 1]);
     const { getAllByRole, getByRole } = render(<TruthTable spec={spec} />);
-    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    // Toggle row 3 to 1 (correct for A AND B)
-    fireEvent.click(outputBtns[3]!);
+    const btns = outputs(getAllByRole);
+    setTo0(btns[0]!); setTo0(btns[1]!); setTo0(btns[2]!); setTo1(btns[3]!);
     fireEvent.click(getByRole('button', { name: /submit/i }));
-    // Re-query after state change
-    const updatedBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    updatedBtns.forEach((btn) => {
+    outputs(getAllByRole).forEach((btn) => {
       expect(btn.getAttribute('data-verdict')).toBe('correct');
     });
   });
@@ -192,21 +208,22 @@ describe('TruthTable submit handler (Chunk 2)', () => {
   it('marks incorrect cells red after incorrect submit (AC4)', () => {
     const spec = makeSpec('A AND B', [0, 0, 0, 1]);
     const { getAllByRole, getByRole } = render(<TruthTable spec={spec} />);
-    // All 0s submitted — rows 0-2 correct, row 3 wrong
+    // Set every row to 0 → rows 0-2 correct, row 3 wrong
+    outputs(getAllByRole).forEach((b) => setTo0(b));
     fireEvent.click(getByRole('button', { name: /submit/i }));
-    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    expect(outputBtns[0]?.getAttribute('data-verdict')).toBe('correct');
-    expect(outputBtns[1]?.getAttribute('data-verdict')).toBe('correct');
-    expect(outputBtns[2]?.getAttribute('data-verdict')).toBe('correct');
-    expect(outputBtns[3]?.getAttribute('data-verdict')).toBe('incorrect');
+    const btns = outputs(getAllByRole);
+    expect(btns[0]?.getAttribute('data-verdict')).toBe('correct');
+    expect(btns[1]?.getAttribute('data-verdict')).toBe('correct');
+    expect(btns[2]?.getAttribute('data-verdict')).toBe('correct');
+    expect(btns[3]?.getAttribute('data-verdict')).toBe('incorrect');
   });
 
   it('output cells are disabled after submit (locks state)', () => {
     const spec = makeSpec('A AND B', [0, 0, 0, 1]);
     const { getAllByRole, getByRole } = render(<TruthTable spec={spec} />);
+    outputs(getAllByRole).forEach((b) => setTo0(b)); // all set so Submit is enabled
     fireEvent.click(getByRole('button', { name: /submit/i }));
-    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    outputBtns.forEach((btn) => {
+    outputs(getAllByRole).forEach((btn) => {
       expect((btn as HTMLButtonElement).disabled).toBe(true);
     });
   });
@@ -217,11 +234,9 @@ describe('TruthTable submit handler (Chunk 2)', () => {
     const { getAllByRole, getByRole } = render(
       <TruthTable spec={spec} onSubmit={onSubmit} />,
     );
-    const outputBtns = getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') !== null);
-    // Toggle rows 1, 2, 3 to match A OR B = [0,1,1,1]
-    fireEvent.click(outputBtns[1]!);
-    fireEvent.click(outputBtns[2]!);
-    fireEvent.click(outputBtns[3]!);
+    const btns = outputs(getAllByRole);
+    // A OR B = [0,1,1,1]: row 0 → 0, rows 1-3 → 1
+    setTo0(btns[0]!); setTo1(btns[1]!); setTo1(btns[2]!); setTo1(btns[3]!);
     fireEvent.click(getByRole('button', { name: /submit/i }));
     const event = onSubmit.mock.calls[0]![0] as {
       repSubmission: { cells: number[] };
@@ -279,10 +294,12 @@ describe('TruthTable keyboard navigation (Chunk 3)', () => {
     // Key events alone (no synthesised click in jsdom) — state must NOT change
     fireEvent.keyDown(firstBtn, { key: ' ', code: 'Space' });
     fireEvent.keyUp(firstBtn, { key: ' ', code: 'Space' });
-    // jsdom doesn't synthesise click, so aria-pressed is still false
-    expect(firstBtn.getAttribute('aria-pressed')).toBe('false');
+    // jsdom doesn't synthesise click, so the cell is still "?" (undecided)
+    expect(firstBtn.textContent).toBe('?');
 
-    // Now verify click (what a real browser would synthesise) does toggle
+    // Click (what a real browser synthesises) cycles ? → 0 → 1
+    fireEvent.click(firstBtn);
+    expect(firstBtn.textContent).toBe('0');
     fireEvent.click(firstBtn);
     expect(firstBtn.getAttribute('aria-pressed')).toBe('true');
   });
@@ -292,12 +309,18 @@ describe('TruthTable keyboard navigation (Chunk 3)', () => {
     // Also verifies the button is wired: click triggers onSubmit.
     const spec = makeSpec('A AND B', [0, 0, 0, 1]);
     const onSubmit = vi.fn();
-    const { getByRole } = render(<TruthTable spec={spec} onSubmit={onSubmit} />);
+    const { getAllByRole, getByRole } = render(<TruthTable spec={spec} onSubmit={onSubmit} />);
     const submitBtn = getByRole('button', { name: /submit/i });
 
     // Must be a native button (guarantees Enter activation)
     expect(submitBtn.tagName).toBe('BUTTON');
     expect((submitBtn as HTMLButtonElement).type).toBe('button');
+
+    // Set every output cell so Submit is enabled (gated until no "?" remain).
+    getAllByRole('button')
+      .filter((b) => b.getAttribute('aria-pressed') !== null)
+      .forEach((b) => fireEvent.click(b)); // ? → 0
+
     // Focus + Enter key alone must NOT call onSubmit in jsdom (no key→click synthesis),
     // confirming we depend on native browser behaviour rather than a JS keydown handler
     submitBtn.focus();

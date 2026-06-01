@@ -94,6 +94,15 @@ const TT_PRACTICE_2: ComponentSpec = {
   prompt: 'Now fill in the truth table for A OR B.',
 };
 
+/** TruthTable output cells start as "?" and Submit is gated until each row is
+ *  set. Click every output cell once (? → 0) so a submission can be dispatched. */
+function setAllOutputCells(container: HTMLElement): void {
+  const cells = Array.from(
+    container.querySelectorAll('[data-testid="workspace"] .truth-table-output-cell'),
+  ) as HTMLButtonElement[];
+  cells.forEach((c) => fireEvent.click(c));
+}
+
 const HINT: ComponentSpec = {
   kind: 'HintCard',
   level: 1,
@@ -279,18 +288,12 @@ describe('App verdict turn (F-27 AC#3)', () => {
     pushAction(TT_PRACTICE_1);
     await waitFor(() => expect(container.querySelector('[data-testid="workspace"]')).not.toBeNull());
 
-    // Submit (simulate clicking submit — the truth table hasn't been filled so
-    // correct will be false, but we just need any verdict to appear).
-    const submitBtn = container.querySelector('button[type="submit"]') as HTMLButtonElement | null;
-    if (submitBtn && !submitBtn.disabled) {
-      fireEvent.click(submitBtn);
-    } else {
-      // The table's default cells might be all-0; trigger submit a different way.
-      // Find and click the Submit button inside the truth table workspace.
-      const allButtons = Array.from(container.querySelectorAll('button'));
-      const sub = allButtons.find((b) => b.textContent?.toLowerCase().includes('submit'));
-      if (sub) fireEvent.click(sub);
-    }
+    // Set every output cell (they start as "?"), then submit. Correct will be
+    // false (all 0s vs [0,0,0,1]) — we just need a verdict to appear.
+    setAllOutputCells(container);
+    const allButtons = Array.from(container.querySelectorAll('button'));
+    const sub = allButtons.find((b) => b.textContent?.toLowerCase().includes('submit'));
+    if (sub) fireEvent.click(sub);
 
     // A verdict turn should appear in the transcript.
     await waitFor(() => {
@@ -310,6 +313,7 @@ describe('App verdict turn (F-27 AC#3)', () => {
       expect(workspace?.querySelector('[aria-label*="A OR B"]')).not.toBeNull();
     });
 
+    setAllOutputCells(container);
     const submit = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.toLowerCase().includes('submit'),
     );
@@ -340,6 +344,7 @@ describe('App verdict turn (F-27 AC#3)', () => {
     pushAction(TT_PRACTICE_1);
     await waitFor(() => expect(container.querySelector('[data-testid="workspace"]')).not.toBeNull());
 
+    setAllOutputCells(container);
     const submit = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.toLowerCase().includes('submit'),
     );

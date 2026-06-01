@@ -78,14 +78,21 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
   }
 
   // -----------------------------------------------------------------------
-  // State: learner output cells (0 = false, 1 = true) + post-submit verdicts
+  // State: learner output cells + post-submit verdicts
+  // Cells are TRI-STATE: null = "?" (untouched, the learner hasn't decided this
+  // row yet), 0, or 1. Each cell starts as "?" and cycles ? → 0 → 1 → ? on tap.
+  // Submit is blocked until every cell is set (no "?" left) — see `allSet`.
   // -----------------------------------------------------------------------
+  type Cell = 0 | 1 | null;
   const rowCount = tableRows.length;
-  const [cells, setCells] = useState<(0 | 1)[]>(() => new Array(rowCount).fill(0) as (0 | 1)[]);
+  const [cells, setCells] = useState<Cell[]>(() => new Array(rowCount).fill(null) as Cell[]);
   const [verdicts, setVerdicts] = useState<CellVerdict[]>(() =>
     new Array(rowCount).fill(null) as CellVerdict[],
   );
   const [submitted, setSubmitted] = useState(false);
+
+  // Every row decided? Submit is gated on this so a "?" can never be graded.
+  const allSet = cells.length === rowCount && cells.every((c) => c !== null);
 
   // -----------------------------------------------------------------------
   // Handlers
@@ -94,8 +101,10 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
     (rowIdx: number) => {
       if (submitted) return; // lock after submit
       setCells((prev) => {
-        const next = [...prev] as (0 | 1)[];
-        next[rowIdx] = next[rowIdx] === 0 ? 1 : 0;
+        const next = [...prev] as Cell[];
+        // Cycle: ? → 0 → 1 → ?
+        const cur = next[rowIdx] ?? null;
+        next[rowIdx] = cur === null ? 0 : cur === 0 ? 1 : null;
         return next;
       });
     },
@@ -103,9 +112,11 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
   );
 
   const handleSubmit = useCallback(() => {
-    if (submitted || parseError !== null) return;
+    if (submitted || parseError !== null || !allSet) return;
+    // All cells are decided here (allSet guard) — narrow to (0|1) for grading.
+    const answered = cells.map((c) => (c === 1 ? 1 : 0));
     // Client-side verdict (ADR-008: correctness never touches the network)
-    const newVerdicts: CellVerdict[] = cells.map((cell, i) => {
+    const newVerdicts: CellVerdict[] = answered.map((cell, i) => {
       const expected = expectedOut[i] ? 1 : 0;
       return cell === expected ? 'correct' : 'incorrect';
     });
@@ -116,10 +127,10 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
     onSubmit?.({
       kind: 'submit',
       submission: spec.expression,
-      repSubmission: { rep: 'truth_table', cells },
+      repSubmission: { rep: 'truth_table', cells: answered },
       correct,
     });
-  }, [submitted, parseError, cells, expectedOut, spec.expression, onSubmit]);
+  }, [submitted, parseError, allSet, cells, expectedOut, spec.expression, onSubmit]);
 
   // -----------------------------------------------------------------------
   // Reduced-motion flag (AC7)
@@ -158,14 +169,15 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
                 {v}
               </th>
             ))}
-            <th scope="col">Output</th>
+            {/* tt-out-col draws the vertical divider between the inputs and Output. */}
+            <th scope="col" className="tt-out-col">Output</th>
           </tr>
         </thead>
         <tbody>
           {tableRows.map((inputRow, rowIdx) => {
             const verdict = verdicts[rowIdx] ?? null;
             const displayedVerdict = pending ? null : verdict;
-            const cellValue = cells[rowIdx] ?? 0;
+            const cellValue = cells[rowIdx] ?? null; // null = "?" (undecided)
             return (
               <tr key={rowIdx} role="row">
                 {/* Input columns — static, non-interactive text. A native <td>
@@ -181,12 +193,13 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
                 {/* Output cell — interactive button. The aria-label includes the row
                     index and each input variable's value so screen readers announce
                     meaningful context (axe 4.1.2 — "0, toggle button" is not enough). */}
-                <td role="cell">
+                <td role="cell" className="tt-out-col">
                   <button
                     type="button"
                     aria-pressed={cellValue === 1}
-                    aria-label={`Row ${rowIdx + 1}, ${vars.map((v, j) => `${v}=${inputRow[j] ? '1' : '0'}`).join(', ')}: output`}
+                    aria-label={`Row ${rowIdx + 1}, ${vars.map((v, j) => `${v}=${inputRow[j] ? '1' : '0'}`).join(', ')}: output ${cellValue === null ? 'unset' : cellValue.toString()}`}
                     data-verdict={displayedVerdict ?? undefined}
+                    data-unset={cellValue === null ? '' : undefined}
                     onClick={() => handleToggle(rowIdx)}
                     disabled={submitted}
                     style={
@@ -196,13 +209,14 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
                     }
                     className={[
                       'truth-table-output-cell',
+                      cellValue === null ? 'truth-table-output-cell--unset' : '',
                       displayedVerdict === 'correct' ? 'verdict-correct' : '',
                       displayedVerdict === 'incorrect' ? 'verdict-incorrect' : '',
                     ]
                       .filter(Boolean)
                       .join(' ')}
                   >
-                    {cellValue === 1 ? '1' : '0'}
+                    {cellValue === null ? '?' : cellValue === 1 ? '1' : '0'}
                   </button>
                 </td>
               </tr>
@@ -213,7 +227,7 @@ function TruthTableInner({ spec, pending = false, onSubmit }: TruthTableProps): 
       <button
         type="button"
         onClick={handleSubmit}
-        disabled={submitted || parseError !== null}
+        disabled={submitted || parseError !== null || !allSet}
         className="truth-table-submit"
       >
         Submit

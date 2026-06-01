@@ -694,6 +694,32 @@ button:disabled,
 .truth-table-output-cell[aria-pressed='true']:not([data-verdict]) { background: var(--color-signal-tint); color: var(--color-pass);
   box-shadow: inset 0 0 0 2px var(--color-signal), 0 0 0 4px var(--color-signal-glow); }
 
+/* Undecided ("?") output cell — distinct from a deliberate 0. Dashed accent ring
+ * + muted glyph says "you haven't answered this row yet". Submit stays disabled
+ * until none remain (TruthTable `allSet`). */
+.truth-table-output-cell--unset { background: transparent; color: var(--color-text-muted);
+  box-shadow: inset 0 0 0 2px var(--color-accent); border: 2px dashed transparent; }
+
+/* Vertical divider between the input columns and the Output column — a left
+ * border on the Output cells/header. Applies to BOTH the interactive practice
+ * table and the read-only walk-through/illustration table. The row pills have
+ * spacing-y between them, so the divider is drawn per-cell as a left border with
+ * a little inset padding so it reads as one continuous rule down the column. */
+.truth-table .tt-out-col { border-left: 1px solid var(--color-border); padding-left: 0.7rem; }
+.truth-table thead th.tt-out-col { padding-left: 0.7rem; }
+
+/* Operator glyph repeated between input columns on the WALK-THROUGH table only
+ * (ReadOnlyTruthTable operatorBetweenInputs). A muted mono glyph that reads as
+ * the connective ("0 & 1"), not as data. */
+.truth-table .tt-op-col { padding-inline: 0.15rem; }
+.truth-table thead th.tt-op-col { color: var(--color-text-muted); font-family: var(--font-mono);
+  text-transform: none; letter-spacing: 0; font-size: 0.95rem; }
+.tt-op { display: inline-flex; align-items: center; justify-content: center; min-width: 1.2rem;
+  font-family: var(--font-mono); font-weight: 600; color: var(--color-text-muted); }
+/* The op cells sit mid-row, so don't let the first/last-child pill radius rules
+ * (which assume input | output only) round an operator cell. */
+.truth-table tbody td.tt-op-col { padding-block: 0.35rem; }
+
 /* Pseudocode editor — friendly notebook (Task 6). */
 /* The challenge label ("Write a Boolean expression equivalent to: [target]") sits
  * DIRECTLY on a surface, not inside a white card. On a light surface --color-ink reads;

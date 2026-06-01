@@ -24,7 +24,7 @@ export function WorkedExample({
       <div className={spec.illustration ? 'worked-example__layout worked-example__layout--illustrated' : 'worked-example__layout'}>
         {spec.illustration && (
           <div className="worked-example__visual">
-            <ReadOnlyTruthTable illustration={spec.illustration} caption={false} />
+            <ReadOnlyTruthTable illustration={spec.illustration} caption={false} operatorBetweenInputs />
           </div>
         )}
         <ol className="worked-example__steps" aria-label="Step-by-step derivation">

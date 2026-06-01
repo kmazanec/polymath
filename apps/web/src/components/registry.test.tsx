@@ -144,9 +144,14 @@ describe('renderComponent', () => {
       // F-27 AC#7: prompt required.
       prompt: 'Fill in the truth table for NOT A.',
     };
-    const { getByRole } = render(
+    const { getByRole, getAllByRole } = render(
       renderComponent(spec, { onSubmit: (p) => calls.push({ submission: p.submission, correct: p.correct }) }),
     );
+    // Output cells start as "?" and Submit is gated until every cell is set; set
+    // each one (one click: ? → 0) so the submission is dispatchable.
+    getAllByRole('button')
+      .filter((b) => b.getAttribute('aria-pressed') !== null)
+      .forEach((b) => fireEvent.click(b));
     fireEvent.click(getByRole('button', { name: /submit/i }));
     expect(calls).toHaveLength(1);
     expect(calls[0]!.submission).toBe('NOT A');
