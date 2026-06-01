@@ -1,6 +1,6 @@
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
-import { makeAgentClient } from './agent/makeAgentClient.js';
+import { makeAgentClient, selectedAgentProviderName } from './agent/makeAgentClient.js';
 import { createServer } from './server.js';
 import { startSessionDeletionSweep } from './privacy/sessionDeletion.js';
 import { registerOtel } from './voice/otelSdk.js';
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
   // selected; otherwise the heuristic StubAgentClient is used unchanged. The boot log
   // line from makeAgentClient confirms which provider was selected.
   const agent = makeAgentClient();
-  const server = createServer({ db, agent, allowedOrigins });
+  const server = createServer({ db, agent, allowedOrigins, agentProviderName: selectedAgentProviderName() });
 
   // Privacy posture (ADR-012, AC#9): periodically hard-delete the events +
   // learner_state of sessions whose deletion grace has expired (sessions are scheduled

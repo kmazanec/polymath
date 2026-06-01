@@ -316,6 +316,25 @@ describe('App verdict turn (F-27 AC#3)', () => {
       expect(outputButtons.every((button) => !button.hasAttribute('data-verdict'))).toBe(true);
     });
   });
+
+  it('shows a tutor loading state after submit and clears it on the next action', async () => {
+    const { container, queryByRole } = render(<App />);
+    await waitFor(() => expect(capturedHandlers).not.toBeNull());
+
+    pushAction(TT_PRACTICE_1);
+    await waitFor(() => expect(container.querySelector('[data-testid="workspace"]')).not.toBeNull());
+
+    const submit = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.toLowerCase().includes('submit'),
+    );
+    expect(submit).toBeDefined();
+    fireEvent.click(submit!);
+
+    expect(queryByRole('status')?.textContent).toContain('Tutor is thinking');
+
+    pushAction(TT_PRACTICE_2);
+    await waitFor(() => expect(queryByRole('status')).toBeNull());
+  });
 });
 
 describe('App intro_advance (F-27 AC#4)', () => {

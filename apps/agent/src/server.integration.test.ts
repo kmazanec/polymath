@@ -384,6 +384,122 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     }
   });
 
+  it('converts an agent hint after a wrong submit into an editable retry mount', async () => {
+    const hintAgent: AgentClient = {
+      propose: async (): Promise<Action> => ({
+        type: 'mount',
+        component: {
+          kind: 'HintCard',
+          level: 1,
+          body: 'OR is true when at least one input is 1. Check each row against that rule before marking the output.',
+        },
+        rationale: 'agent supplied remediation explanation',
+      }),
+    };
+    const hintServer = createServer({ db, agent: hintAgent });
+    await new Promise<void>((resolve) => hintServer.httpServer.listen(0, resolve));
+    const { port } = hintServer.httpServer.address() as AddressInfo;
+    const hintBase = `http://localhost:${port}`;
+    const hintWs = `ws://localhost:${port}/agent`;
+    try {
+      const { sessionId } = (await (await fetch(`${hintBase}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const ws = new WebSocket(hintWs);
+      const action = await new Promise<Action>((resolve, reject) => {
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({
+              kind: 'submit',
+              sessionId,
+              itemId: 'l1-or',
+              submission: 'A OR B',
+              repSubmission: { rep: 'truth_table', cells: [0, 0, 0, 0] },
+              correct: false,
+            }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') resolve(Action.parse(msg.action));
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('timed out')), 8000);
+      });
+      ws.close();
+
+      expect(action.type).toBe('mount');
+      if (action.type === 'mount') {
+        expect(action.component.kind).toBe('TruthTablePractice');
+        if (action.component.kind === 'TruthTablePractice') {
+          expect(action.component.expression).toBe('A OR B');
+          expect(action.component.prompt).toContain('OR is true when at least one input is 1');
+        }
+      }
+    } finally {
+      await hintServer.close();
+    }
+  });
+
+  it('keeps wrong-submit remediation on the submitted authored item when the agent proposes another expression', async () => {
+    const outOfOrderAgent: AgentClient = {
+      propose: async (): Promise<Action> => ({
+        type: 'mount',
+        component: {
+          kind: 'TruthTablePractice',
+          expression: 'A OR NOT B',
+          claimedTruthTable: [1, 0, 1, 1],
+          visibleReps: ['truth_table'],
+          prompt: 'Light hint: use OR with NOT B.',
+        },
+        rationale: 'agent proposed a generated review item too early',
+      }),
+    };
+    const guardedServer = createServer({ db, agent: outOfOrderAgent });
+    await new Promise<void>((resolve) => guardedServer.httpServer.listen(0, resolve));
+    const { port } = guardedServer.httpServer.address() as AddressInfo;
+    const guardedBase = `http://localhost:${port}`;
+    const guardedWs = `ws://localhost:${port}/agent`;
+    try {
+      const { sessionId } = (await (await fetch(`${guardedBase}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const ws = new WebSocket(guardedWs);
+      const action = await new Promise<Action>((resolve, reject) => {
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({
+              kind: 'submit',
+              sessionId,
+              itemId: 'l1-and',
+              submission: 'B AND A',
+              repSubmission: { rep: 'truth_table', cells: [0, 1, 0, 0] },
+              correct: false,
+            }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') resolve(Action.parse(msg.action));
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('timed out')), 8000);
+      });
+      ws.close();
+
+      expect(action.type).toBe('mount');
+      if (action.type === 'mount') {
+        expect(action.component.kind).toBe('TruthTablePractice');
+        if (action.component.kind === 'TruthTablePractice') {
+          expect(action.component.expression).toBe('B AND A');
+          expect(action.component.prompt).toContain('Light hint');
+        }
+      }
+    } finally {
+      await guardedServer.close();
+    }
+  });
+
   it('answers an on-topic question and deflects an off-topic one (criteria 4,5)', async () => {
     const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
       sessionId: string;

@@ -3,6 +3,12 @@ import { FlowAgentClient } from './flowClient.js';
 import { OpenAIMoveProvider } from './openaiClient.js';
 import { StubAgentClient } from './stubClient.js';
 
+export type AgentProviderName = 'openai' | 'heuristic';
+
+export function selectedAgentProviderName(): AgentProviderName {
+  return process.env['OPENAI_API_KEY'] ? 'openai' : 'heuristic';
+}
+
 /**
  * Self-gating factory for the production `AgentClient` (F-28 / ADR-006 / D2).
  *
@@ -20,10 +26,11 @@ import { StubAgentClient } from './stubClient.js';
  * pipelines (CLAUDE.md: never inject a provider secret into MR-reachable CI jobs).
  */
 export function makeAgentClient(): AgentClient {
-  const apiKey = process.env['OPENAI_API_KEY'];
-  if (apiKey) {
+  const provider = selectedAgentProviderName();
+  if (provider === 'openai') {
+    const apiKey = process.env['OPENAI_API_KEY'];
     console.log('[polymath] agent provider: OpenAI (OPENAI_API_KEY set)');
-    return new FlowAgentClient(new OpenAIMoveProvider({ apiKey }));
+    return new FlowAgentClient(new OpenAIMoveProvider({ apiKey: apiKey! }));
   }
   console.log('[polymath] agent provider: heuristic (no OPENAI_API_KEY — keyless path)');
   return new StubAgentClient();

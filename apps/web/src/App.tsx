@@ -162,6 +162,7 @@ function LessonSession({
   bridge,
   surface,
   conn,
+  awaitingAgent,
   onSubmit,
   explainBackDeps,
   onExplainBackEnd,
@@ -174,6 +175,7 @@ function LessonSession({
   bridge: LessonBridge;
   surface: SurfaceState;
   conn: ConnState;
+  awaitingAgent: boolean;
   onSubmit: (payload: RepSubmitPayload) => void;
   explainBackDeps: import('./components/registry.js').RenderOptions['explainBackDeps'];
   onExplainBackEnd: (payload: { targetItemId: string; transcript: string; durationMs: number }) => void;
@@ -242,6 +244,12 @@ function LessonSession({
               </div>
             </AnimateOrNot>
           </div>
+          {awaitingAgent && (
+            <div className="thread__thinking" role="status" aria-live="polite">
+              <span className="thread__thinking-dot" aria-hidden="true" />
+              Tutor is thinking
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -292,6 +300,7 @@ export function App(): ReactElement {
   const currentItemId = useRef<string>('l1-and');
   const itemMountedAt = useRef<number>(Date.now());
   const socketRef = useRef<AgentSocket | null>(null);
+  const [awaitingAgent, setAwaitingAgent] = useState(false);
   const [question, setQuestion] = useState('');
   const currentProbeItemId = useRef<string | null>(null);
   const activeHiddenReps = useRef<Rep[]>([]);
@@ -335,9 +344,19 @@ export function App(): ReactElement {
             setConn('open');
             socket.send({ kind: 'session_start', sessionId: body.sessionId, lessonId });
           },
-          onClose: () => setConn('closed'),
+          onClose: () => {
+            setAwaitingAgent(false);
+            setConn('closed');
+          },
           onMessage: (msg: ServerMessage) => {
             // ADR-013: mount playground ONLY on the server's earned-it ack.
+            if (
+              msg.kind === 'action' ||
+              msg.kind === 'error' ||
+              (msg.kind === 'ack' && msg.event !== 'ui_mount' && msg.event !== 'intelligibility_response')
+            ) {
+              setAwaitingAgent(false);
+            }
             if (msg.kind === 'ack' && msg.event === 'enter_playground') {
               setPlayground({
                 kind: 'PlaygroundCanvas',
@@ -413,7 +432,10 @@ export function App(): ReactElement {
         socket.connect();
         socketRef.current = socket;
       })
-      .catch(() => setConn('closed'));
+      .catch(() => {
+        setAwaitingAgent(false);
+        setConn('closed');
+      });
 
     return () => {
       cancelled = true;
@@ -465,7 +487,7 @@ export function App(): ReactElement {
 
   const onSubmit = useCallback(
     (payload: RepSubmitPayload): void => {
-      if (!sessionId) return;
+      if (!sessionId || awaitingAgent) return;
       const mounted = surface.mounted;
 
       // F-27 AC#3: append a verdict turn BEFORE sending the WS frame.
@@ -481,6 +503,7 @@ export function App(): ReactElement {
       setSurface((prev) => appendVerdict(prev, payload.correct, expression));
 
       if (mounted.kind === 'TransferProbe' && currentProbeItemId.current) {
+        setAwaitingAgent(true);
         socketRef.current?.send({
           kind: 'transfer_submitted',
           sessionId,
@@ -490,6 +513,7 @@ export function App(): ReactElement {
         });
         return;
       }
+      setAwaitingAgent(true);
       socketRef.current?.send({
         kind: 'submit',
         sessionId,
@@ -500,12 +524,12 @@ export function App(): ReactElement {
         responseTimeMs: Date.now() - itemMountedAt.current,
       });
     },
-    [sessionId, surface.mounted],
+    [awaitingAgent, sessionId, surface.mounted],
   );
 
   const onAskQuestion = useCallback((): void => {
     const q = question.trim();
-    if (!sessionId || q.length === 0) return;
+    if (!sessionId || awaitingAgent || q.length === 0) return;
     if (phaseRef.current === 'transferring' && activeHiddenReps.current.length > 0) {
       const asked = wantsHiddenRep(q, activeHiddenReps.current);
       if (asked) {
@@ -520,27 +544,30 @@ export function App(): ReactElement {
         return;
       }
     }
+    setAwaitingAgent(true);
     socketRef.current?.send({ kind: 'learner_question', sessionId, question: q });
     setQuestion('');
-  }, [question, sessionId]);
+  }, [awaitingAgent, question, sessionId]);
 
   // F-27 AC#4: send `intro_advance` (not `session_start`) to deterministically
   // advance the opening sequence.  Both providers branch on this event kind
   // (menu-lockstep per the build plan).
   const onAdvanceIntro = useCallback((): void => {
-    if (!sessionId) return;
+    if (!sessionId || awaitingAgent) return;
+    setAwaitingAgent(true);
     socketRef.current?.send({ kind: 'intro_advance', sessionId });
-  }, [sessionId]);
+  }, [awaitingAgent, sessionId]);
 
   const onRequestHint = useCallback((): void => {
-    if (!sessionId) return;
+    if (!sessionId || awaitingAgent) return;
+    setAwaitingAgent(true);
     socketRef.current?.send({
       kind: 'request_hint',
       sessionId,
       itemId: currentItemId.current,
     });
     capture('hint_request', { itemId: currentItemId.current });
-  }, [sessionId]);
+  }, [awaitingAgent, sessionId]);
 
   const onIntelligibilityAnswer = useCallback(
     (answer: IntelligibilityAnswer): void => {
@@ -554,7 +581,8 @@ export function App(): ReactElement {
 
   const onExplainBackEnd = useCallback(
     (payload: { targetItemId: string; transcript: string; durationMs: number }): void => {
-      if (!sessionId) return;
+      if (!sessionId || awaitingAgent) return;
+      setAwaitingAgent(true);
       socketRef.current?.send({
         kind: 'explain_back_recording_ended',
         sessionId,
@@ -563,12 +591,13 @@ export function App(): ReactElement {
         durationMs: payload.durationMs,
       });
     },
-    [sessionId],
+    [awaitingAgent, sessionId],
   );
 
   const onContinue = useCallback(
     (nextLessonId: number): void => {
-      if (!sessionId) return;
+      if (!sessionId || awaitingAgent) return;
+      setAwaitingAgent(true);
       socketRef.current?.send({ kind: 'advance_lesson', sessionId, toLessonId: nextLessonId });
       capture('lesson_transition', { toLessonId: nextLessonId });
       // Reset the surface to the intro of the lesson we're advancing TO — not a
@@ -578,17 +607,19 @@ export function App(): ReactElement {
       setSurface({ mounted: introForLesson(nextLessonId), mountSeq: 0, transcript: [] });
       setLessonId(nextLessonId);
     },
-    [sessionId],
+    [awaitingAgent, sessionId],
   );
 
   const onTryPlayground = useCallback((): void => {
-    if (!sessionId) return;
+    if (!sessionId || awaitingAgent) return;
+    setAwaitingAgent(true);
     socketRef.current?.send({ kind: 'enter_playground', sessionId });
-  }, [sessionId]);
+  }, [awaitingAgent, sessionId]);
 
   const onPlaygroundSubmit = useCallback(
     (payload: PlaygroundSubmitPayload): void => {
-      if (!sessionId) return;
+      if (!sessionId || awaitingAgent) return;
+      setAwaitingAgent(true);
       socketRef.current?.send({
         kind: 'playground_submit',
         sessionId,
@@ -596,12 +627,13 @@ export function App(): ReactElement {
         submissions: payload.submissions,
       });
     },
-    [sessionId],
+    [awaitingAgent, sessionId],
   );
 
   const onPlaygroundRequestScaffold = useCallback(
     (payload: PlaygroundRequestScaffoldPayload): void => {
-      if (!sessionId) return;
+      if (!sessionId || awaitingAgent) return;
+      setAwaitingAgent(true);
       socketRef.current?.send({
         kind: 'playground_request_scaffold',
         sessionId,
@@ -609,13 +641,14 @@ export function App(): ReactElement {
         ...(payload.learnerQuestion ? { learnerQuestion: payload.learnerQuestion } : {}),
       });
     },
-    [sessionId],
+    [awaitingAgent, sessionId],
   );
 
   const onExitPlayground = useCallback((): void => {
-    if (!sessionId) return;
+    if (!sessionId || awaitingAgent) return;
+    setAwaitingAgent(true);
     socketRef.current?.send({ kind: 'exit_playground', sessionId });
-  }, [sessionId]);
+  }, [awaitingAgent, sessionId]);
 
   // F-27: appendTurn seam — exported for F-30 spoken turns (F-30 calls this to
   // append a spokenTurn without needing to re-architect App again).
@@ -657,8 +690,9 @@ export function App(): ReactElement {
   const hasQuestion = question.trim().length > 0;
   const canAdvance = !hasQuestion && !playground && isAdvanceable(surface.mounted);
   const primaryLabel = hasQuestion ? 'Send' : canAdvance ? 'Continue' : 'Send';
-  const primaryDisabled = conn !== 'open' || (!hasQuestion && !canAdvance);
+  const primaryDisabled = conn !== 'open' || awaitingAgent || (!hasQuestion && !canAdvance);
   const onPrimary = useCallback((): void => {
+    if (awaitingAgent) return;
     if (question.trim().length > 0) {
       onAskQuestion();
       return;
@@ -666,7 +700,7 @@ export function App(): ReactElement {
     if (!playground && isAdvanceable(surface.mounted)) {
       onAdvanceIntro();
     }
-  }, [question, playground, surface.mounted, onAskQuestion, onAdvanceIntro]);
+  }, [awaitingAgent, question, playground, surface.mounted, onAskQuestion, onAdvanceIntro]);
 
   // The Hint affordance is a CLEARLY-SECONDARY control during practice only, and is
   // disabled during a transfer probe (probe-integrity boundary — preserved).
@@ -712,6 +746,7 @@ export function App(): ReactElement {
           bridge={bridgeRef.current}
           surface={surface}
           conn={conn}
+          awaitingAgent={awaitingAgent}
           onSubmit={onSubmit}
           explainBackDeps={explainBackDeps}
           onExplainBackEnd={onExplainBackEnd}
@@ -742,7 +777,7 @@ export function App(): ReactElement {
               type="button"
               className="hint-button composer__hint"
               onClick={onRequestHint}
-              disabled={conn !== 'open' || phase === 'transferring'}
+              disabled={conn !== 'open' || awaitingAgent || phase === 'transferring'}
               aria-label="Request a hint"
               data-phase={phase}
             >
@@ -758,8 +793,8 @@ export function App(): ReactElement {
               type="text"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              disabled={conn !== 'open'}
-              placeholder="Ask the tutor anything…"
+              disabled={conn !== 'open' || awaitingAgent}
+              placeholder={awaitingAgent ? 'Waiting for the tutor…' : 'Ask the tutor anything…'}
             />
           </div>
 

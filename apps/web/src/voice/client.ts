@@ -1,26 +1,14 @@
 /**
  * Browser-side voice client.
  *
- * The LiveKit SDK (`livekit-client`) is NOT statically imported here. Instead,
- * `createDefaultConnector()` lazy-loads it at connect-time via a dynamic import.
- * This means:
- *  1. The module loads cleanly when `livekit-client` is absent (tests inject a
- *     mock connector and never reach the dynamic import).
- *  2. TypeScript only sees the local `RoomConnector` interface — no type dep on
- *     the external package.
- *
- * To wire the real SDK: add `livekit-client` to apps/web/package.json and run
- * `pnpm install`. `createDefaultConnector()` will pick it up automatically.
- *
- * The specifier is assembled at runtime (not a static string literal) so Vite's
- * import-analysis plugin does not attempt to resolve it at build/transform time.
- * This is the correct pattern for optional peer dependencies.
+ * The LiveKit SDK (`livekit-client`) is a required dependency. The default
+ * connector lazy-loads it at connect time so the main lesson bundle does not pay
+ * the cost until voice is used, but the import specifier stays static so Vite can
+ * analyze and bundle it normally.
  */
 
 import { TokenRefresher } from './tokenRefresh.js';
-
-// Assembled at runtime — keeps Vite from resolving the package statically.
-const LIVEKIT_PKG = ['livekit', 'client'].join('-');
+import type { Room as LiveKitRoom } from 'livekit-client';
 
 export interface RoomConnector {
   connect(opts: {
@@ -59,9 +47,7 @@ type VoiceState = 'idle' | 'requesting-permission' | 'connecting' | 'connected' 
  * is invoked; in tests, inject a mock connector instead.
  */
 function createDefaultConnector(): RoomConnector {
-  let roomInstance:
-    | { disconnect: () => Promise<void>; connect: (u: string, t: string) => Promise<void> }
-    | null = null;
+  let roomInstance: LiveKitRoom | null = null;
   let lastUrl: string | null = null;
   // Audio element managed by the connector for remote playback.
   let audioEl: HTMLAudioElement | null = null;
@@ -69,11 +55,7 @@ function createDefaultConnector(): RoomConnector {
   return {
     async connect({ url, token, micStream, onRemoteAudio }) {
       lastUrl = url;
-      // Dynamic import via the runtime-assembled specifier — Vite cannot resolve
-      // a non-literal, so this silently skips static analysis. The package must be
-      // installed before this code path is reached in production.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { Room, RoomEvent } = (await import(LIVEKIT_PKG)) as any;
+      const { Room, RoomEvent } = await import('livekit-client');
       const room = new Room();
       roomInstance = room;
 

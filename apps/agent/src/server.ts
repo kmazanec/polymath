@@ -45,7 +45,7 @@ import {
 } from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
 import { compileMove, type TacticalMove } from './agent/menu.js';
-import { defaultItemPrompt } from './agent/introAdvance.js';
+import { defaultItemPrompt, explanationBeforeNextItem } from './agent/introAdvance.js';
 import { computeRecall } from './agent/recallReflex.js';
 import { loadLesson, loadLessonIfExists, type Lesson } from './lessons/loader.js';
 import { mintRealtimeToken } from './voice/token.js';
@@ -82,6 +82,8 @@ import { buildTeacherReport } from './report/teacherReport.js';
 export interface ServerDeps {
   db: Db;
   agent: AgentClient;
+  /** Human/debug-visible provider selected at boot (`openai`, `heuristic`, or test-injected). */
+  agentProviderName?: string;
   /** Browser origins allowed to open the WebSocket (CSWSH defense). A request
    *  with no `Origin` header (non-browser clients: the smoke test, the
    *  integration harness, `wscat`) is always allowed. Defaults to localhost. */
@@ -755,6 +757,7 @@ function wrongSubmitRemediationAction(
   event: ClientEvent,
   lesson: Lesson,
   priorMissesByItem: Record<string, number>,
+  proposedAction?: Action,
 ): Action | null {
   if (event.kind !== 'submit') return null;
   const item = lesson.content.items.find(
@@ -763,10 +766,15 @@ function wrongSubmitRemediationAction(
   if (!item) return null;
   const rep = event.repSubmission?.rep ?? 'truth_table';
   const attempt = (priorMissesByItem[event.itemId] ?? 0) + 1;
-  const prompt = `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: work row by row, ask what would make the expression true, then mark 1 only for those rows.`;
+  const llmExplanation = remediationTextFromAction(proposedAction);
+  const prompt =
+    llmExplanation ??
+    `Try ${item.targetExpression} again. Attempt ${attempt.toString()}: work row by row, ask what would make the expression true, then mark 1 only for those rows.`;
   const visibleReps = [rep];
   const rationale =
-    `incorrect submit for "${event.itemId}" produced no usable agent remediation; remounting same item (server reflex)`;
+    llmExplanation
+      ? `incorrect submit for "${event.itemId}"; converting agent explanation into editable retry mount (server reflex)`
+      : `incorrect submit for "${event.itemId}" produced no usable agent remediation; remounting same item (server reflex)`;
 
   switch (rep) {
     case 'truth_table':
@@ -807,6 +815,66 @@ function wrongSubmitRemediationAction(
         rationale,
       };
   }
+}
+
+function remediationTextFromAction(action: Action | undefined): string | null {
+  if (!action) return null;
+  if (action.type === 'mount') {
+    const component = action.component;
+    if (component.kind === 'HintCard') return component.body.trim() || null;
+    if (component.kind === 'WorkedExample') {
+      const steps = component.steps
+        .map((step) => `${step.label}: ${step.detail}`)
+        .join(' ');
+      return steps.trim().length > 0
+        ? `Review this idea, then try again. ${steps}`
+        : null;
+    }
+    if (
+      (component.kind === 'TruthTablePractice' ||
+        component.kind === 'CircuitBuilder' ||
+        component.kind === 'PseudocodeChallenge') &&
+      component.prompt
+    ) {
+      return component.prompt.trim() || null;
+    }
+  }
+  if (action.type === 'answer_question') return action.answer.trim() || null;
+  return null;
+}
+
+function isEditablePracticeMount(action: Action): boolean {
+  return (
+    action.type === 'mount' &&
+    (action.component.kind === 'TruthTablePractice' ||
+      action.component.kind === 'CircuitBuilder' ||
+      action.component.kind === 'PseudocodeChallenge')
+  );
+}
+
+function practiceTargetExpression(action: Action): string | null {
+  if (action.type !== 'mount') return null;
+  const component = action.component;
+  if (component.kind === 'TruthTablePractice') return component.expression;
+  if (component.kind === 'CircuitBuilder' || component.kind === 'PseudocodeChallenge') {
+    return component.targetExpression;
+  }
+  return null;
+}
+
+function matchesSubmittedAuthoredItem(action: Action, event: ClientEvent, lesson: Lesson): boolean {
+  if (event.kind !== 'submit') return false;
+  const item = lesson.content.items.find(
+    (candidate) => candidate.itemId === event.itemId || candidate.targetExpression === event.itemId,
+  );
+  if (!item) return false;
+  return practiceTargetExpression(action) === item.targetExpression;
+}
+
+function authoredLessonPlanAction(input: AgentInput): Action | null {
+  const requiredExplanation = explanationBeforeNextItem(input);
+  if (!requiredExplanation) return null;
+  return validateOutboundAction(compileMove(requiredExplanation)).action;
 }
 
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
@@ -2129,8 +2197,12 @@ export async function handleClientFrame(
   const wrongSubmitFallback =
     event.kind === 'submit' &&
     learnerDerived.currentSubmitCorrect === false &&
-    validatedAction.type === 'no_action'
-      ? wrongSubmitRemediationAction(event, lesson, learnerDerived.priorMissesByItem)
+    !matchesSubmittedAuthoredItem(validatedAction, event, lesson)
+      ? wrongSubmitRemediationAction(event, lesson, learnerDerived.priorMissesByItem, validatedAction)
+      : null;
+  const authoredSequenceFallback =
+    event.kind === 'submit' && learnerDerived.currentSubmitCorrect === true
+      ? authoredLessonPlanAction(input)
       : null;
 
   const action: Action =
@@ -2150,6 +2222,8 @@ export async function handleClientFrame(
         }
       : wrongSubmitFallback
         ? wrongSubmitFallback
+        : authoredSequenceFallback
+          ? authoredSequenceFallback
         : validatedAction;
 
   // F-14 CROSS-LESSON RECALL REFLEX (deterministic SERVER reflex, NOT an LLM menu
@@ -2432,7 +2506,10 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     const url = new URL(req.url ?? '/', 'http://localhost');
 
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      sendJson(res, 200, { status: 'ok' });
+      sendJson(res, 200, {
+        status: 'ok',
+        agentProvider: deps.agentProviderName ?? rawDeps.agent.constructor.name,
+      });
       return;
     }
 
