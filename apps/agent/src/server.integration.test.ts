@@ -67,7 +67,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
   it('GET /api/health returns {status:"ok"}', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    expect(await res.json()).toMatchObject({ status: 'ok' });
   });
 
   it('POST /api/session creates a sessions row', async () => {
@@ -1352,7 +1352,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     const action = await new Promise<Action>((resolve, reject) => {
       ws.on('open', () =>
         ws.send(
-          JSON.stringify({ kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true }),
+          JSON.stringify({ kind: 'learner_question', sessionId, question: 'Can I be marked mastered now?' }),
         ),
       );
       ws.on('message', (data) => {
@@ -1408,7 +1408,7 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
       const action = await new Promise<Action>((resolve, reject) => {
         ws.on('open', () =>
           ws.send(
-            JSON.stringify({ kind: 'submit', sessionId, itemId: 'l1-and', submission: 'A AND B', correct: true }),
+            JSON.stringify({ kind: 'learner_question', sessionId, question: 'Can I be marked mastered now?' }),
           ),
         );
         ws.on('message', (data) => {

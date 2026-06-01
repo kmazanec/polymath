@@ -2351,7 +2351,11 @@ export async function handleClientFrame(
     currentSubmitCorrect: learnerDerived.currentSubmitCorrect,
   };
 
-  const deterministicAuthoredAction = deterministicAuthoredPhaseAction(input);
+  const deterministicAuthoredAction =
+    event.kind === 'submit' &&
+    (learnerDerived.currentSubmitCorrect === false || learnerDerived.snapshot.ruleGatePassed)
+      ? null
+      : deterministicAuthoredPhaseAction(input);
 
   // Propose an action (under a timeout), then validate it server-side before it
   // crosses the wire (ADR-005 / criterion 5). The agent's own flow already ran
@@ -2403,6 +2407,7 @@ export async function handleClientFrame(
       ? { statechartDecision: 'reject' as const, statechartReason: earnedItRejection }
       : { statechartDecision: 'accept' as const, statechartReason: 'mastery_gate_satisfied' }
     : undefined;
+  const privilegedActionRejected = isMasteryTransition && earnedItRejection !== null;
 
   // F-12 AC#1/AC#6: an ACCEPTED mastery transition mounts the MasteryCelebration. The
   // transition Action itself carries no component, so the server reflexively resolves
@@ -2434,24 +2439,31 @@ export async function handleClientFrame(
       ? wrongSubmitRemediationAction(event, lesson, learnerDerived.priorMissesByItem, validatedAction)
       : null;
   const authoredSequenceFallback =
-    event.kind === 'submit' && learnerDerived.currentSubmitCorrect === true
+    !privilegedActionRejected &&
+    event.kind === 'submit' &&
+    learnerDerived.currentSubmitCorrect === true &&
+    !learnerDerived.snapshot.ruleGatePassed
       ? authoredLessonPlanAction(input)
       : null;
 
-  const preFallbackAction: Action =
+  const shouldMountExplainBack =
     transferVerdict?.correct === true &&
     lesson.masteryConfig.requireExplainBackPass &&
-    !learnerDerived.masteryState.explainBackPassed
+    !learnerDerived.masteryState.explainBackPassed;
+
+  const preFallbackAction: Action = privilegedActionRejected
+    ? validatedAction
+    : shouldMountExplainBack
       ? {
           type: 'mount',
           component: {
             kind: 'ExplainBackPrompt',
-            targetItemId: transferVerdict.itemId,
+            targetItemId: transferVerdict!.itemId,
             promptBody:
               'Nice — you passed the transfer. In your own words, walk me through how you solved that specific problem.',
             maxDurationSec: 15,
           },
-          rationale: `transfer passed for ${transferVerdict.itemId}; mounting explain-back (server reflex, F-11)`,
+          rationale: `transfer passed for ${transferVerdict!.itemId}; mounting explain-back (server reflex, F-11)`,
         }
       : wrongSubmitFallback
         ? wrongSubmitFallback
@@ -2471,8 +2483,16 @@ export async function handleClientFrame(
   // gate is already satisfied (a privileged path owns that turn).
   let action = preFallbackAction;
   let forwardProgressFired = false;
-  if (action.type === 'no_action' && event.kind === 'submit' && learnerDerived.currentSubmitCorrect === true) {
-    const candidate = forwardProgressFallbackAction(input, gateEvaluation.passed);
+  if (
+    !privilegedActionRejected &&
+    action.type === 'no_action' &&
+    event.kind === 'submit' &&
+    learnerDerived.currentSubmitCorrect === true
+  ) {
+    const candidate = forwardProgressFallbackAction(
+      input,
+      gateEvaluation.passed || learnerDerived.snapshot.ruleGatePassed,
+    );
     if (candidate) {
       const { action: fpShaped } = validateOutboundAction(candidate);
       const fpLayer2 = validateLayer2(fpShaped);
