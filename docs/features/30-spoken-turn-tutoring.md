@@ -84,6 +84,13 @@ LiveKit env (`LIVEKIT_API_KEY`/`SECRET`/`URL`) + `OPENAI_API_KEY` for the live v
 
 ## Implementation notes (filled in by the building agent)
 
+### MR !11 review fixes (post-build)
+- **Consume-on-read** (`LearnerUtteranceRegistry.takeLatest`): a captured utterance answers exactly one `spoken_turn`; replaying the trigger after one utterance now fails closed. (`spoken_turn` is client-fired, so a non-consuming read was replayable.)
+- **Final-only capture**: `VoiceBridge.onLearnerUtterance` fires only on `t.final`, never interim ASR partials (an early trigger could otherwise answer an incomplete question).
+- **Persist the bound id**: the `spoken_turn` event row records `{ kind, sessionId: effectiveSessionId, capturedQuestion }`, not a spread of the (possibly forged) client frame.
+- **Frame-match gate**: a `spoken_turn` whose frame `sessionId` ≠ the WS-bound id is acked and dropped before any agent call (previously it still answered).
+- **Honest seam docs / deferred wiring**: the comments no longer claim `createServer` "wires" a `VoiceBridge` — it doesn't. Constructing the server-side `VoiceBridge` that fills the registry from a live LiveKit room is the **deferred cross-platform voice-capture smoke** (`docs/voice-cross-platform-smoke.md`), deferred identically for the sibling explain-back registry. Until then the registry is empty in production and `spoken_turn` fails closed; the web `VoiceClient` exposes no per-utterance signal, so the client `spoken_turn` send is part of that same deferred bridge work. The gate is built and airtight — only the live fill path is deferred.
+
 ### Resolved decisions
 
 **D9 (spoken flag):** `answer_question.spoken` is forwarded through `actionAdapter.ts` in the `AdapterResult.answer` shape. App.tsx calls `appendSpokenTurn(prev, 'learner', question)` before `applyMount(answerSpec)` when `r.answer.spoken` is true — this gives the learner-bubble-then-agent-reply interleaving in order. Absent `spoken` → no learner bubble (typed path unchanged).
