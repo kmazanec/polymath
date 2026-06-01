@@ -673,7 +673,9 @@ export function App(): ReactElement {
     <main className="lesson-shell">
       <h1 className="visually-hidden">Polymath — Boolean logic lesson</h1>
       <header className="app-shell-top">
-        <div className="app-logo"><span className="app-logo__mark" aria-hidden="true">◑</span> Polymath</div>
+        <a className="app-logo" href="/" aria-label="Polymath home">
+          <span className="app-logo__mark" aria-hidden="true">◑</span> Polymath
+        </a>
         <div className="app-shell-progress">
           {/* Legacy phase-chip retained for existing tests that query data-phase */}
           <span className="phase-chip" data-phase={phase}>{phase}</span>

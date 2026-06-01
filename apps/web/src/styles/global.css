@@ -62,6 +62,8 @@ main {
  * generic centered `main` above.
  * ════════════════════════════════════════════════════════════════════════════ */
 main.lesson-shell {
+  --lesson-thread-max: 52rem;
+  --lesson-shell-x: clamp(1rem, 4vw, 2.5rem);
   max-width: none;
   width: 100%;
   margin: 0;
@@ -573,9 +575,28 @@ button:disabled,
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.worked-example__layout {
+  display: block;
+}
+.worked-example__layout--illustrated {
+  display: grid;
+  grid-template-columns: minmax(12rem, 17rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.worked-example__visual {
+  min-width: 0;
+}
+.worked-example__visual .readonly-tt {
+  margin-top: 0;
+}
+.worked-example__visual .truth-table {
+  width: 100%;
+}
 .worked-example__steps {
   list-style: decimal; padding-left: 1.4rem; margin: 0;
   display: flex; flex-direction: column; gap: var(--space-3, 1rem);
+  min-width: 0;
 }
 .worked-example__step {
   display: flex; flex-direction: column; gap: 0.2rem;
@@ -586,6 +607,15 @@ button:disabled,
 .worked-example__step-detail {
   color: var(--color-text-muted); font-family: var(--font-mono); font-size: 0.95rem;
   line-height: 1.5;
+}
+
+@media (max-width: 46rem) {
+  .worked-example__layout--illustrated {
+    grid-template-columns: 1fr;
+  }
+  .worked-example__visual {
+    max-width: 17rem;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -643,7 +673,9 @@ button:disabled,
 /* Lesson shell header (Task 7). */
 .app-shell-top { display: flex; align-items: center; gap: 1rem; padding: 0.9rem var(--space-5); margin-bottom: 0.5rem;
   border-bottom: 1px solid var(--color-border); }
-.app-logo { display: flex; align-items: center; gap: 0.55rem; font-family: var(--font-display); font-weight: 700; color: var(--color-ink); }
+.app-logo { display: flex; align-items: center; gap: 0.55rem; font-family: var(--font-display); font-weight: 700; color: var(--color-ink); text-decoration: none; }
+.app-logo:hover { color: var(--color-ink); text-decoration: none; }
+.app-logo:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 4px; border-radius: var(--radius-md); }
 .app-logo__mark { width: 1.85rem; height: 1.85rem; border-radius: 8px; background: var(--gradient-primary);
   display: flex; align-items: center; justify-content: center; color: #fff; box-shadow: var(--shadow-sm); }
 .app-shell-progress { margin-left: auto; }
@@ -777,7 +809,7 @@ button:disabled,
   overflow: hidden;
 }
 .thread__stepper {
-  padding: var(--space-2-5) clamp(1rem, 4vw, 2.5rem) var(--space-2);
+  padding: var(--space-2-5) var(--lesson-shell-x) var(--space-2);
   border-bottom: 1px solid var(--desk-hairline);
 }
 .thread__scroll {
@@ -795,9 +827,9 @@ button:disabled,
    thread is short, and scrolls naturally once it fills the viewport. */
 .thread__inner {
   width: 100%;
-  max-width: 52rem;
+  max-width: var(--lesson-thread-max);
   margin: auto auto 0;
-  padding: var(--space-4) clamp(1rem, 4vw, 2.5rem) var(--space-5);
+  padding: var(--space-4) var(--lesson-shell-x) var(--space-5);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -948,7 +980,7 @@ button:disabled,
 }
 .composer__bar {
   width: 100%;
-  max-width: 52rem;
+  max-width: var(--lesson-thread-max);
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -1063,7 +1095,7 @@ button:disabled,
  * ════════════════════════════════════════════════════════════════════════════ */
 .lesson-shell .app-shell-top {
   margin: 0;
-  padding: var(--space-2-5) clamp(1rem, 4vw, 2.5rem);
+  padding: var(--space-2-5) var(--lesson-shell-x);
   border-bottom: 1px solid var(--desk-hairline);
   background: transparent;
 }
@@ -1140,6 +1172,84 @@ button:disabled,
 }
 .intro-continue-btn:hover { background: #4f46e5; }
 .intro-continue-btn:focus-visible { outline: 2px solid var(--color-accent, #6366f1); outline-offset: 2px; }
+
+/* Tablet density: iPad-class screens have enough horizontal room for a wider
+   thread, but not enough vertical room for desktop-sized gutters. */
+@media (min-width: 48rem) and (max-width: 80rem) {
+  main.lesson-shell {
+    --lesson-thread-max: 68rem;
+    --lesson-shell-x: clamp(.75rem, 2vw, 1.5rem);
+  }
+
+  .lesson-shell .app-shell-top {
+    padding-block: .65rem;
+  }
+
+  .thread__stepper {
+    padding-block: .65rem .55rem;
+  }
+
+  .thread__inner {
+    padding-block: var(--space-2-5) var(--space-3);
+    padding-left: calc(var(--lesson-shell-x) + var(--space-3));
+    gap: var(--space-2-5);
+  }
+
+  .thread__inner::before {
+    left: var(--space-2);
+    top: var(--space-3);
+    bottom: var(--space-3);
+  }
+
+  .thread .lesson-intro,
+  .thread .hint-card,
+  .thread .agent-answer,
+  .thread .transfer-probe,
+  .thread .explain-back,
+  .thread .cross-lesson-recall,
+  .thread .circuit-builder,
+  .thread .truth-table,
+  .thread .intro-explanation,
+  .thread .worked-example,
+  .thread .mastery-celebration,
+  .thread .playground-canvas {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .thread .intro-explanation__body {
+    max-width: 84ch;
+    margin-top: var(--space-3);
+    line-height: 1.5;
+  }
+
+  .thread .intro-explanation__topic {
+    margin-bottom: var(--space-2);
+  }
+
+  .thread .intro-explanation__gate {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-1-5);
+  }
+
+  .thread .intro-explanation__wire-stack {
+    gap: .8rem;
+  }
+
+  .thread .intro-explanation__wire,
+  .thread .intro-explanation__wire--out {
+    width: 1.8rem;
+  }
+
+  .thread .intro-explanation__gate-body {
+    width: 4.8rem;
+    height: 3.3rem;
+  }
+
+  .composer {
+    padding-block: var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  }
+}
 
 /* Item grounding prompt (AC#7 / F-27) — rendered above rep components */
 .item-prompt {

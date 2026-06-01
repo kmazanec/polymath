@@ -21,15 +21,21 @@ export function WorkedExample({
       <p className="worked-example__expression" aria-label={`Expression: ${spec.expression}`}>
         <code>{formatLogicExpression(spec.expression)}</code>
       </p>
-      {spec.illustration && <ReadOnlyTruthTable illustration={spec.illustration} caption={false} />}
-      <ol className="worked-example__steps" aria-label="Step-by-step derivation">
-        {spec.steps.map((step: Step, i: number) => (
-          <li key={i} className="worked-example__step">
-            <span className="worked-example__step-label">{step.label}</span>
-            <span className="worked-example__step-detail">{step.detail}</span>
-          </li>
-        ))}
-      </ol>
+      <div className={spec.illustration ? 'worked-example__layout worked-example__layout--illustrated' : 'worked-example__layout'}>
+        {spec.illustration && (
+          <div className="worked-example__visual">
+            <ReadOnlyTruthTable illustration={spec.illustration} caption={false} />
+          </div>
+        )}
+        <ol className="worked-example__steps" aria-label="Step-by-step derivation">
+          {spec.steps.map((step: Step, i: number) => (
+            <li key={i} className="worked-example__step">
+              <span className="worked-example__step-label">{step.label}</span>
+              <span className="worked-example__step-detail">{step.detail}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
       {onAdvanceIntro && (
         <button type="button" className="intro-continue-btn" onClick={onAdvanceIntro}>
           Got it — continue
