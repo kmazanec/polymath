@@ -59,7 +59,7 @@ describe('F-28 AC#5: 5-node graph is behavior-preserving for the keyless (heuris
     expect(() => Action.parse(action)).not.toThrow();
   });
 
-  it('correct submit → mounts next practice item', async () => {
+  it('correct submit → mounts the next curriculum step', async () => {
     const action = await client.propose(
       input({
         kind: 'submit',
@@ -71,7 +71,7 @@ describe('F-28 AC#5: 5-node graph is behavior-preserving for the keyless (heuris
     );
     expect(action.type).toBe('mount');
     if (action.type === 'mount') {
-      expect(['TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge']).toContain(
+      expect(['IntroExplanation', 'TruthTablePractice', 'CircuitBuilder', 'PseudocodeChallenge']).toContain(
         action.component.kind,
       );
     }

@@ -3,7 +3,11 @@ import { z } from 'zod';
 import type { AgentInput, MoveProvider } from './client.js';
 import { F26_MENU, type ProposedItem, type TacticalMove } from './menu.js';
 import { SYSTEM_PROMPT, buildUserPrompt } from './prompt.js';
-import { openingMove } from './introAdvance.js';
+import {
+  openingMove,
+  practiceAfterLatestExplanation,
+  explanationBeforeNextItem,
+} from './introAdvance.js';
 
 /**
  * The OpenAI `MoveProvider` (ADR-006). Uses LangChain structured output against a
@@ -177,6 +181,8 @@ export class OpenAIMoveProvider implements MoveProvider {
         (t) => t.eventKind === 'submit' || t.eventKind === 'request_hint' || t.eventKind === 'transfer_submitted',
       );
       if (alreadyStarted) {
+        const nextPractice = practiceAfterLatestExplanation(input);
+        if (nextPractice) return nextPractice;
         return {
           move: 'no_action',
           reason: 'wait_for_learner',
@@ -185,6 +191,9 @@ export class OpenAIMoveProvider implements MoveProvider {
       }
       return openingMove(input);
     }
+
+    const requiredExplanation = explanationBeforeNextItem(input);
+    if (requiredExplanation) return requiredExplanation;
 
     const model = needsStrongModel(input) ? this.strong : this.fast;
     const structured = model.withStructuredOutput(MoveSchema, { name: 'tactical_move' });

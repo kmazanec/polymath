@@ -122,7 +122,16 @@ describe('keyless path — pickLessonItem carries a prompt (checklist 8)', () =>
     // Dynamic import to avoid circular dep issues
     const { HeuristicMoveProvider } = await import('./stubClient.js');
     const provider = new HeuristicMoveProvider();
-    const move = await provider.proposeMove(baseInput());
+    const move = await provider.proposeMove(
+      baseInput({
+        event: {
+          kind: 'submit',
+          sessionId: '00000000-0000-0000-0000-000000000000',
+          itemId: 'l1-not',
+          submission: 'NOT A',
+        },
+      }),
+    );
     // The heuristic returns a next_practice_item move after a submit
     expect(move.move).toBe('next_practice_item');
     if (

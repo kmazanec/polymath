@@ -88,6 +88,12 @@ export interface TurnSummary {
   eventKind: string;
   actionType: string;
   rationale: string;
+  /** For prior mount actions: the mounted component kind. */
+  componentKind?: string;
+  /** For prior IntroExplanation mounts: the taught topic/KC. */
+  topic?: string;
+  /** For prior item-bearing mounts: the expression shown to the learner. */
+  expression?: string;
   /** For a `submit` turn: the client-computed correctness verdict, if it was
    *  supplied. Lets the agent see a run of wrong attempts on an item. */
   correct?: boolean;

@@ -501,13 +501,25 @@ async function readRecentHistory(db: Db, sessionId: string, limit = 5): Promise<
     .reverse()
     .map((r) => {
       const p = (r.payload ?? {}) as {
-        action?: { type?: string; rationale?: string };
+        action?: {
+          type?: string;
+          rationale?: string;
+          component?: {
+            kind?: string;
+            topic?: string;
+            expression?: string;
+            targetExpression?: string;
+          };
+        };
         event?: { itemId?: string; submission?: string; correct?: boolean };
       };
       return {
         eventKind: r.kind,
         actionType: p.action?.type ?? 'unknown',
         rationale: p.action?.rationale ?? '',
+        componentKind: p.action?.component?.kind,
+        topic: p.action?.component?.topic,
+        expression: p.action?.component?.expression ?? p.action?.component?.targetExpression,
         correct: p.event?.correct,
         itemId: p.event?.itemId ?? p.event?.submission,
       };

@@ -74,14 +74,96 @@ export function toRepArray(raw: string[] | undefined, fallback: Rep[] = ['truth_
  * F-29's generation always supplies a richer prompt; this is the keyless fallback.
  */
 export function defaultItemPrompt(targetExpression: string, rep: string): string {
+  const display = formatLogicExpression(targetExpression);
   switch (rep) {
     case 'circuit':
-      return `Build a circuit that computes: ${targetExpression}`;
+      return `Build a circuit that computes ${display}.`;
     case 'pseudocode':
-      return `Write pseudocode that computes: ${targetExpression}`;
+      return `Write pseudocode that computes ${display}.`;
     default:
-      return `Complete the truth table for: ${targetExpression}`;
+      return `Complete the truth table for ${display}.`;
   }
+}
+
+/** Display Boolean expressions with the formal logic symbols learners should learn. */
+export function formatLogicExpression(expression: string): string {
+  return expression
+    .replace(/\bNAND\b/g, '↑')
+    .replace(/\bNOR\b/g, '↓')
+    .replace(/\bAND\b/g, '∧')
+    .replace(/\bOR\b/g, '∨')
+    .replace(/\bNOT\b/g, '¬');
+}
+
+function explanationForTopic(input: AgentInput, topic: string, rationale: string): TacticalMove | null {
+  const explanation = readLessonIntro(input.lesson.content.lessonId)?.explanations?.find(
+    (candidate) => candidate.topic === topic,
+  );
+  if (!explanation) return null;
+  return {
+    move: 'intro_explanation',
+    topic: explanation.topic,
+    body: explanation.body,
+    visibleReps: toRepArray(explanation.visibleReps),
+    rationale,
+  };
+}
+
+function itemMoveFor(
+  input: AgentInput,
+  item: AgentInput['lesson']['content']['items'][number],
+  rationale: string,
+): TacticalMove {
+  return {
+    move: 'next_practice_item',
+    tier: item.difficultyTier,
+    rationale,
+    item: {
+      rep: 'truth_table',
+      targetExpression: item.targetExpression,
+      claimedTruthTable: item.truthTable,
+      visibleReps: ['truth_table'],
+      prompt: defaultItemPrompt(item.targetExpression, 'truth_table'),
+    },
+  };
+}
+
+/** Continue after a mid-lesson explanation by mounting the first item for that KC. */
+export function practiceAfterLatestExplanation(input: AgentInput): TacticalMove | null {
+  const latestExplanation = [...input.recentHistory]
+    .reverse()
+    .find((turn) => turn.actionType === 'mount' && turn.componentKind === 'IntroExplanation');
+  const topic = latestExplanation?.topic;
+  if (!topic) return null;
+  const item = input.lesson.content.items.find((candidate) => candidate.kc === topic);
+  return item
+    ? itemMoveFor(input, item, `finished explanation for "${topic}" — starting aligned practice`)
+    : null;
+}
+
+/**
+ * If the next item introduces a new KC with an authored explanation, teach that
+ * concept before mounting its first challenge.
+ */
+export function explanationBeforeNextItem(input: AgentInput): TacticalMove | null {
+  const ev = input.event;
+  if (ev.kind !== 'submit') return null;
+  if (input.currentSubmitCorrect === false) return null;
+
+  const items = input.lesson.content.items;
+  const idx = items.findIndex((i) => i.itemId === ev.itemId || i.targetExpression === ev.itemId);
+  if (idx < 0) return null;
+  const current = items[idx];
+  const next = items[(idx + 1 + items.length) % items.length];
+  if (!current || !next || next.kc === current.kc) return null;
+  const firstItemForNextKc = items.findIndex((candidate) => candidate.kc === next.kc);
+  if (firstItemForNextKc !== ((idx + 1) % items.length)) return null;
+
+  return explanationForTopic(
+    input,
+    next.kc,
+    `teaching KC "${next.kc}" before first aligned practice item "${next.itemId}"`,
+  );
 }
 
 /**

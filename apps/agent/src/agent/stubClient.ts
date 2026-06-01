@@ -5,7 +5,12 @@ import { FlowAgentClient } from './flowClient.js';
 import { generateL1, generateL2, generateL3Canned, L4_DEMORGAN_HINT } from '../hints/templates.js';
 import { detectHalfwayMisconception, loadMisconceptions } from '../hints/misconceptions.js';
 // F-27 (menu-lockstep): shared opening-move logic, used for both session_start and intro_advance.
-import { openingMove, defaultItemPrompt } from './introAdvance.js';
+import {
+  openingMove,
+  defaultItemPrompt,
+  practiceAfterLatestExplanation,
+  explanationBeforeNextItem,
+} from './introAdvance.js';
 
 /**
  * A deterministic, key-free `MoveProvider` (no LLM). It implements a small
@@ -39,6 +44,8 @@ export class HeuristicMoveProvider implements MoveProvider {
         (t) => t.eventKind === 'submit' || t.eventKind === 'request_hint' || t.eventKind === 'transfer_submitted',
       );
       if (alreadyStarted) {
+        const nextPractice = practiceAfterLatestExplanation(input);
+        if (nextPractice) return Promise.resolve(nextPractice);
         return Promise.resolve({
           move: 'no_action',
           reason: 'wait_for_learner',
@@ -125,6 +132,8 @@ export class HeuristicMoveProvider implements MoveProvider {
           rationale: 'rule-gate passed but no unseen transfer item available — cannot declare mastery (heuristic provider)',
         });
       }
+      const explanation = explanationBeforeNextItem(input);
+      if (explanation) return Promise.resolve(explanation);
       const next = pickLessonItem(input);
       if (next) return Promise.resolve(next);
       return Promise.resolve({

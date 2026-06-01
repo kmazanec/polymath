@@ -5,7 +5,7 @@
       "id": "submit-correct-advances",
       "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B" },
       "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "rephrase", "worked_example", "alt_representation"]
     },
     {
       "id": "wrong-submit-does-not-advance",
@@ -74,7 +74,7 @@
       "lessonId": 2,
       "event": { "kind": "submit", "itemId": "l2-majority", "submission": "(A AND B) OR (B AND C) OR (A AND C)", "correct": true },
       "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "rephrase", "worked_example", "alt_representation"]
     },
     {
       "id": "l2-xor-question-is-on-topic",
@@ -110,7 +110,7 @@
       "lessonId": 3,
       "event": { "kind": "submit", "itemId": "l3-xor", "submission": "(A AND NOT B) OR (NOT A AND B)", "correct": true },
       "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "rephrase", "worked_example", "alt_representation"]
     },
     {
       "id": "l3-nand-universality-question-is-on-topic",
@@ -151,7 +151,7 @@
         "repSubmission": { "rep": "truth_table", "cells": [1, 1, 1, 0] }
       },
       "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "rephrase", "worked_example", "alt_representation"]
     },
     {
       "id": "l4-wrong-not-halfway-does-not-name-misconception",
@@ -232,7 +232,7 @@
       "note": "Pattern-match defense: a single correct submit with the rule-gate NOT yet passed must keep practicing — it must NEVER jump to a transfer probe or mastery. One right answer is not mastery; the gate, not a lucky hit, is the truth-maker. (brief: 'mistake pattern-matching for mastery')",
       "event": { "kind": "submit", "itemId": "l1-and", "submission": "A AND B", "correct": true },
       "learnerState": { "consecutiveCorrect": 1, "hintsUsed": 0, "ruleGatePassed": false },
-      "expectMoveOneOf": ["next_practice_item", "rephrase", "worked_example", "alt_representation"]
+      "expectMoveOneOf": ["intro_explanation", "next_practice_item", "rephrase", "worked_example", "alt_representation"]
     },
     {
       "id": "spoken-on-topic-boolean-question-answered",
