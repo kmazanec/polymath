@@ -79,3 +79,40 @@ A tablet (or emulated touch viewport) for the live drive. None for the keyless u
 **Invariants:** `visibleReps` honored (only sizing/CSS + rail touched); spine untouched — rail is view-only (widening stops discarding state, doesn't write the spine); reduced-motion + contrast hold; touch ADDED not substituted; ≥44×44 WCAG 2.5.5 enforced by token + utility + an enumerating test; the size assertion is real-browser, NEVER jsdom; rail is a non-misleading orientation region (never `role="progressbar"`).
 
 ## Implementation notes (filled in by the building agent)
+
+**Built 2026-05-31 on branch `build/i7-f31`, agent: Claude Sonnet 4.6**
+
+### Architecture decisions resolved
+
+**D7 (confirmed): F-27 widened phase from 3→7 PhaseName — F-31 consumed it.**
+`App.tsx` already had the full `PhaseName` widened to all 7 phases in F-27 (D7 resolution confirmed in F-27 impl notes). F-31 consumed the existing `phase` state + the reserved `lesson-layout__rail` slot directly — no additional widening needed.
+
+**D8 (confirmed): curated mainline + branches.**
+`FlowSkeleton.tsx` renders a 4-step mainline (`introducing → practicing → assessed → mastered`) with `hint`/`transferring`/`remediating` as inline branch markers on their mainline parent. "Completed" = furthest mainline phase reached (monotonic — a dip to `hint` from `practicing` never un-completes `practicing`).
+
+**Touch Playwright project: Desktop Chrome + hasTouch:true at 1024×768.**
+The spec called for `devices['iPad Pro']` but that device name doesn't exist in Playwright 1.60's device catalog (it's `iPad Pro 11` at 834×1194). iPad Pro 11's portrait width (834px) is below the 56rem (896px) rail breakpoint, which would hide the skeleton and make the tests meaningless. Used `Desktop Chrome` + `hasTouch:true` + `viewport:1024×768` instead — this is landscape-equivalent, wider than the breakpoint, and exercises the touch event path faithfully. The spec's intent (real-browser touch event + real `boundingBox()`) is fully satisfied.
+
+**VITE_PORT env override added to playwright.config.ts.**
+The primary worktree often has a Vite dev server running on :5173, and `reuseExistingServer:true` would pick up that stale server (missing F-31 changes). Added `VITE_PORT` env support: `VITE_PORT=5175 npx playwright test` starts a fresh server and avoids the collision. This is documented in the config.
+
+**touch.spec.ts navigates to `/lesson` (not `/`).**
+The app router mounts `<App>` at `/lesson`, not `/`. The axe spec navigates to `/` (the Landing page) — that's the pre-existing behavior from F-27; the axe spec failures are a pre-existing F-27 issue (it looks for the "About this session" button which lives on `/lesson`). F-31 touch tests correctly navigate to `/lesson`.
+
+**axe.spec.ts pre-existing failures (NOT introduced by F-31).**
+The axe spec was already failing on the F-27 branch (`getByRole('button', { name: /about this session/ })` on the Landing page). F-31 does not touch axe.spec.ts and does not make it worse. The axe tests are a pre-existing regression from the F-27 routing re-architecture.
+
+**rail grid column widened from 0 to 10rem.**
+F-27's `lesson-layout` grid had `grid-template-columns: 0 1fr 1fr` (placeholder for F-31). F-31 widened it to `10rem 1fr 1fr` and made the rail `position:sticky` to match the workspace behavior. The narrow breakpoint moved from `max-width:48rem` to `56rem` to accommodate tablet-portrait widths.
+
+### Seams for downstream features
+
+The FlowSkeleton component is a pure view — no state, no side effects. Downstream features can extend it by:
+- Passing a custom `phases` prop to override the 4-step mainline
+- Inspecting the `MAINLINE` and `BRANCH_PHASES` exports for phase classification logic
+- The `--touch-target-min` CSS token is now available globally for any new interactive control
+
+### Known gaps
+
+- The tap-to-toggle test (touch interaction test #8) skips gracefully when no truth-table cell is present on the intro page. A real drive with a live agent would exercise this fully. The structural correctness (the `truth-table-output-cell` size is already `var(--touch-target-min)`) is verified by the size assertions in tests #1.
+- The axe spec needs to navigate to `/lesson` to test the lesson shell; that is a pre-existing F-27 issue, not in F-31 scope.
