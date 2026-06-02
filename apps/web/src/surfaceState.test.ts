@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ComponentSpec } from '@polymath/contract';
-import { applyMount, type SurfaceState } from './surfaceState.js';
+import { applyMount, appendVerdict, type SurfaceState } from './surfaceState.js';
 
 const WE_AND: ComponentSpec = {
   kind: 'WorkedExample',
@@ -93,5 +93,48 @@ describe('applyMount dedupe (B6 — retry re-mounting the same item)', () => {
 
     const completed = s.transcript.filter((t) => t.kind === 'completedItem');
     expect(completed).toHaveLength(2);
+  });
+});
+
+describe('completedItem.solved (BUG-03 — wrong-then-superseded item not "Completed")', () => {
+  it('a CORRECT last verdict marks the completed item solved=true', () => {
+    let s = freshSurface(TT_BANDA);
+    s = appendVerdict(s, true, 'B AND A'); // learner got it right
+    s = applyMount(s, TT_OTHER); // prior TT_BANDA superseded → completedItem
+
+    const completed = s.transcript.filter((t) => t.kind === 'completedItem');
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({ kind: 'completedItem', solved: true });
+  });
+
+  it('a WRONG last verdict marks the superseded item solved=false (rendered "Reviewed", not "Completed")', () => {
+    let s = freshSurface(TT_BANDA);
+    s = appendVerdict(s, false, 'B AND A'); // learner got it wrong
+    // The tutor moves the learner on to a DIFFERENT item (or remediates with a
+    // fresh, non-identical retry) — the wrong item is superseded.
+    s = applyMount(s, TT_OTHER);
+
+    const completed = s.transcript.filter((t) => t.kind === 'completedItem');
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({ kind: 'completedItem', solved: false });
+  });
+
+  it('the LAST verdict wins: wrong then right → solved=true', () => {
+    let s = freshSurface(TT_BANDA);
+    s = appendVerdict(s, false, 'B AND A'); // first attempt wrong
+    s = appendVerdict(s, true, 'B AND A'); // retry correct
+    s = applyMount(s, TT_OTHER);
+
+    const completed = s.transcript.filter((t) => t.kind === 'completedItem');
+    expect(completed[0]).toMatchObject({ kind: 'completedItem', solved: true });
+  });
+
+  it('no verdict recorded → solved is undefined (neutral, not a success claim)', () => {
+    let s = freshSurface(TT_BANDA);
+    s = applyMount(s, TT_OTHER); // superseded with no verdict ever submitted
+
+    const completed = s.transcript.filter((t) => t.kind === 'completedItem');
+    expect(completed[0]).toMatchObject({ kind: 'completedItem' });
+    expect((completed[0] as { solved?: boolean }).solved).toBeUndefined();
   });
 });

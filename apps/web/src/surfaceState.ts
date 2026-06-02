@@ -63,10 +63,18 @@ export interface VerdictTurn {
  * A completed item — appended when the active item is superseded by a new
  * active item.  Carries the full spec so the transcript can render a read-only
  * view of what was solved.
+ *
+ * `solved` records whether the learner's LAST verdict on this item was correct.
+ * A wrong-then-superseded item (e.g. a wrong truth-table answer that the tutor
+ * remediates with a fresh retry) must NOT be labelled "Completed ✓" — that is
+ * BUG-03.  It is derived at append time from the most recent matching verdict
+ * turn; `undefined` when no verdict was recorded for the item (treated as
+ * neutral, not a success claim).
  */
 export interface CompletedItemTurn {
   kind: 'completedItem';
   spec: ComponentSpec;
+  solved?: boolean;
 }
 
 /**
@@ -213,6 +221,38 @@ function specIdentity(spec: ComponentSpec): string {
   }
 }
 
+/**
+ * The expression an item-bearing spec answers — what the matching `verdict`
+ * turn records in its `expression` field.  Used to pair a completed item with
+ * the learner's last verdict on it (BUG-03).  Null for non-item specs.
+ */
+function specExpression(spec: ComponentSpec): string | null {
+  if ('expression' in spec && typeof (spec as { expression?: unknown }).expression === 'string') {
+    return (spec as { expression: string }).expression;
+  }
+  if (
+    'targetExpression' in spec &&
+    typeof (spec as { targetExpression?: unknown }).targetExpression === 'string'
+  ) {
+    return (spec as { targetExpression: string }).targetExpression;
+  }
+  return null;
+}
+
+/**
+ * The learner's most recent verdict for `expression`, scanning the transcript
+ * newest-first.  `undefined` when no verdict was recorded for it — a completed
+ * item with no verdict is rendered neutrally, never as a success.
+ */
+function lastVerdictFor(transcript: Turn[], expression: string | null): boolean | undefined {
+  if (expression === null) return undefined;
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    const t = transcript[i];
+    if (t !== undefined && t.kind === 'verdict' && t.expression === expression) return t.correct;
+  }
+  return undefined;
+}
+
 /** The spec a transcript turn carries (for identity comparison), or null for
  *  turns that don't echo a spec (verdict, spokenTurn). */
 function turnSpec(turn: Turn): ComponentSpec | null {
@@ -271,7 +311,16 @@ export function applyMount(state: SurfaceState, spec: ComponentSpec): SurfaceSta
     const duplicatesLastTurn = lastTurnSpec !== undefined && lastTurnSpec !== null
       ? priorIdentity === specIdentity(lastTurnSpec)
       : false;
-    if (!duplicatesIncoming && !duplicatesLastTurn) newTranscript.push(completed);
+    if (!duplicatesIncoming && !duplicatesLastTurn) {
+      // BUG-03: tag the completed turn with the learner's last verdict on this
+      // item so the renderer doesn't label a wrong-then-remediated item as
+      // "Completed ✓".  Verdict turns precede the re-anchor that completes the
+      // item, so the matching one is already in `newTranscript`.
+      if (completed.kind === 'completedItem') {
+        completed.solved = lastVerdictFor(newTranscript, specExpression(completed.spec));
+      }
+      newTranscript.push(completed);
+    }
   }
 
   return { mounted: spec, mountSeq: state.mountSeq + 1, transcript: newTranscript };

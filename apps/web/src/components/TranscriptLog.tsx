@@ -75,20 +75,35 @@ function renderTurn(turn: Turn, index: number): ReactElement {
           </span>
         </div>
       );
-    case 'completedItem':
-      // Read-only echo of the completed workspace item.
+    case 'completedItem': {
+      // Read-only echo of the superseded workspace item.  BUG-03: an item whose
+      // LAST verdict was wrong (the tutor moved on / remediated) is "Reviewed",
+      // not "Completed ✓" — only a correct last verdict earns the completed
+      // label.  `solved === undefined` (no verdict recorded) is neutral.
+      const itemExpr =
+        'expression' in turn.spec
+          ? (turn.spec as { expression: string }).expression
+          : 'targetExpression' in turn.spec
+          ? (turn.spec as { targetExpression: string }).targetExpression
+          : turn.spec.kind;
+      const wasWrong = turn.solved === false;
       return (
-        <div key={index} className="transcript-turn transcript-turn--completed-item">
-          <div className="completed-item-label" aria-label="Completed item">
-            <span aria-hidden="true">✓</span> Completed:{' '}
-            {'expression' in turn.spec
-              ? (turn.spec as { expression: string }).expression
-              : 'targetExpression' in turn.spec
-              ? (turn.spec as { targetExpression: string }).targetExpression
-              : turn.spec.kind}
+        <div
+          key={index}
+          className={`transcript-turn transcript-turn--completed-item${
+            wasWrong ? ' transcript-turn--reviewed-item' : ''
+          }`}
+        >
+          <div
+            className="completed-item-label"
+            aria-label={wasWrong ? 'Reviewed item' : 'Completed item'}
+          >
+            <span aria-hidden="true">{wasWrong ? '↻' : '✓'}</span>{' '}
+            {wasWrong ? 'Reviewed' : 'Completed'}: {itemExpr}
           </div>
         </div>
       );
+    }
     case 'spokenTurn':
       // F-30 seam: rendered as a chat bubble. F-27 only defines the slot;
       // F-30 produces the content.

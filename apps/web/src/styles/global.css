@@ -1012,6 +1012,9 @@ button:disabled,
 }
 .completed-item-label { display: flex; align-items: center; gap: .4rem; opacity: 0.75; }
 .completed-item-label span[aria-hidden] { color: var(--color-signal); }
+/* BUG-03: a wrong-then-superseded item reads as a neutral "Reviewed", never a
+   green success check. */
+.transcript-turn--reviewed-item .completed-item-label span[aria-hidden] { color: var(--desk-text-muted); }
 .transcript-turn--spoken { display: flex; flex-direction: column; gap: .3rem; padding: .65rem .95rem; max-width: 85%; }
 .transcript-spoken--learner {
   background: linear-gradient(135deg, rgba(123,108,255,0.22), rgba(91,140,255,0.18));

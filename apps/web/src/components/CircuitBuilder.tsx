@@ -134,13 +134,24 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
 
   const addGate = useCallback(
     (gate: GateKind) => {
-      const id = `g-${seqRef.current++}`;
+      // BUG-06 fix: stagger each new gate so multiple gates never spawn on top of
+      // each other (the old `{ x: 200, y: 40 + ns.length * 20 }` put every gate at
+      // the same x with only a 20px y-step — and counted the fixed A/B/OUT nodes —
+      // so 2+ gates piled into one illegible overlapping blob). Use the per-instance
+      // gate counter (`seqRef`, which only ever counts gates) to lay them out in a
+      // tidy column between the input column (x≈0) and the output (x=400), wrapping
+      // to a second column after a few so they stay inside the canvas. Gates are
+      // ~80px tall, so the vertical step is 100px (no overlap).
+      const gateIndex = seqRef.current++;
+      const id = `g-${gateIndex}`;
+      const col = Math.floor(gateIndex / 3);
+      const row = gateIndex % 3;
       setNodes((ns) => [
         ...ns,
         {
           id,
           type: 'gate',
-          position: { x: 200, y: 40 + ns.length * 20 },
+          position: { x: 180 + col * 90, y: 20 + row * 100 },
           data: { gate },
         },
       ]);
