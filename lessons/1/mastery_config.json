@@ -2,8 +2,8 @@
   "consecutiveCorrectAtHardestTier": 3,
   "hintsUsedInLastN_items": 0,
   "responseTimeFloorMs": 2000,
-  "responseTimeCeilingMs": 60000,
-  "responseTimeMedianBandMs": [2000, 60000],
+  "responseTimeCeilingMs": 300000,
+  "responseTimeMedianBandMs": [2000, 300000],
 
   "bktMasteryThreshold": 0.95,
   "bktPrior_L0": 0.3,
