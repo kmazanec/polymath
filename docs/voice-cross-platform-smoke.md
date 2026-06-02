@@ -176,3 +176,42 @@ Android Chrome / desktop) is DEFERRED — it needs real keys + devices, like the
 of this checklist. The iOS-Safari TTS quirk (F-11 spec line 90) is covered here: the
 `<ExplainBackPrompt>` renderer must degrade gracefully (no throw) if TTS or mic is
 unavailable, and the server precondition #1 fails closed on an empty/silent capture.
+
+## Conversational voice loop (live verification — ADR-018)
+
+The production server-side voice bridge (the `createRealtimeSession` factory →
+`LiveRealtimeSession` joining the LiveKit room + an OpenAI Realtime session) is
+wired in `createServer` and turns ON only when `voiceConfigured()` **and**
+`OPENAI_API_KEY` are set. The seam, the tool-call → guard gating, the
+`transcript_stream` transport, the lesson-state context push, and the web UI
+(streaming transcript, mic level meter, listening/speaking/thinking states) are
+all covered offline (unit + jsdom + a built-bundle e2e assertion + an agent
+`docker build` proving `@livekit/rtc-node` loads on the `node:22-slim` base).
+The items below can only be confirmed against real keys + a real device:
+
+- [ ] **Audible round-trip** — speak a question; the tutor answers **in audio**
+  (full-duplex), and the answer is also rendered as an agent transcript bubble.
+- [ ] **Streaming transcript** — while speaking, interim words appear in a single
+  greyed in-progress bubble; on finalization the bubble commits as a durable turn.
+  The agent's words stream the same way. Order is learner→agent, interleaved.
+- [ ] **Mic level meter** — the meter reflects live mic input (moves while you
+  speak, settles when silent) — confirming audio reaches the capture path.
+- [ ] **Activity states** — the mic shows red/pulsing **listening** when idle in a
+  session, **thinking** after you finish until the tutor starts, **agent-speaking**
+  while the tutor talks. (Reduced-motion: states are still distinguishable without
+  animation.)
+- [ ] **Tool-driven UI** — when the tutor proposes a next item / hint / worked
+  example in conversation, the corresponding component mounts in the workspace
+  (the tool call passed the server guard pipeline).
+- [ ] **Earned-it gate holds over voice** — the tutor cannot talk the learner into
+  a transfer probe before the rule gate passes, nor into mastery before the full
+  gate is satisfied (a premature proposal is silently downgraded — no mount).
+- [ ] **Lesson-state reactivity** — submit an item by hand mid-conversation; the
+  tutor's next spoken turn reflects the server-computed correctness/streak
+  (it was told, it did not score).
+- [ ] **Audio format / latency** — TTFT ~1s, barge-in <300ms, transcript ≤2s; the
+  48kHz-room → 24kHz-OpenAI resampling produces intelligible audio (the format
+  bridging in `liveRealtimeSession.ts` is the one part only this smoke can confirm).
+- [ ] **Fail-closed** — with `OPENAI_API_KEY` unset (LiveKit set): the mic still
+  connects for explain-back, but no conversational bridge starts and `/api/health`
+  is unaffected (the lazy native import never loads / never crashes boot).
