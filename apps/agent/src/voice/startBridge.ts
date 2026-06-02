@@ -22,10 +22,12 @@
  */
 import type { Db } from '../db/client.js';
 import type { ServerMessage } from '@polymath/contract';
+import { noAction } from '@polymath/contract';
 import { VoiceBridge } from './bridge.js';
 import type { RealtimeSession } from './realtimeClient.js';
 import type { LearnerUtteranceRegistry } from './learnerUtteranceRegistry.js';
 import type { SocketRegistry } from './socketRegistry.js';
+import { resolveVoiceToolCall, type ResolveVoiceToolCallContext } from './resolveToolCall.js';
 
 /** Minimal session context the bridge needs from the HTTP/DB layer. */
 export interface BridgeSessionContext {
@@ -80,6 +82,27 @@ export interface StartBridgeArgs {
   apiKey: string;
   apiSecret: string;
   modelVersion: string;
+  /**
+   * Server-derived gate context supplier for tool-call routing (C4).
+   *
+   * When the model emits a `propose_tactical_move` tool call, the bridge calls
+   * this getter to obtain the latest server-computed mastery / learner snapshot
+   * before running `resolveVoiceToolCall`. The getter is called at tool-call time
+   * (not at bridge construction) so it always reflects the most recent submit fold.
+   *
+   * Fail-closed default: when absent OR when the getter returns `undefined`, the
+   * bridge synthesises a MINIMAL context with `ruleGatePassed:false` /
+   * `gate.passed:false` so `rejectUnauthorizedAction` rejects all privileged moves
+   * (transfer probe, mastery). A `no_action` is sent to the model as its
+   * function_call_output. This is intentionally conservative — a voice turn that
+   * arrives before any submit has been folded should not be able to mint a
+   * privileged surface. (ADR-018; CLAUDE.md "privileged-action FAMILY" invariant.)
+   *
+   * The server wires this in `handleRealtimeSession` by capturing the latest
+   * `learnerDerived` / `gateEvaluation` snapshot from the liveBridgeRegistry's
+   * companion gate-context map (updated on each `submit` fold).
+   */
+  getGateContext?: () => ResolveVoiceToolCallContext | undefined;
 }
 
 export interface LiveBridgeHandle {
@@ -101,6 +124,31 @@ export interface LiveBridgeHandle {
  * Returns the bridge + the factory's `close` so the caller can register both
  * in its session-lifecycle map.
  */
+/**
+ * Minimal fail-closed gate context used when no server-derived state is available
+ * (no submit has been folded yet, or getGateContext returned undefined).
+ *
+ * Every privileged move (transfer probe, mastery) requires `ruleGatePassed:true`
+ * and `gate.passed:true`; a context with both false causes `rejectUnauthorizedAction`
+ * to refuse all privileged proposals → `no_action`. This is intentionally conservative.
+ * (ADR-018; CLAUDE.md "mastery gate fails closed" invariant.)
+ */
+const UNGROUNDED_GATE_CTX: ResolveVoiceToolCallContext = {
+  learner: {
+    bktByKc: {},
+    hintsUsed: 0,
+    consecutiveCorrect: 0,
+    ruleGatePassed: false,
+    explainBackPassed: false,
+    topicGuardrailClean: true,
+  },
+  gate: {
+    passed: false,
+    blockers: ['rule_gate_failed'],
+  },
+  transferCandidates: undefined,
+};
+
 export async function startVoiceBridge(args: StartBridgeArgs): Promise<LiveBridgeHandle> {
   const {
     factory,
@@ -113,6 +161,7 @@ export async function startVoiceBridge(args: StartBridgeArgs): Promise<LiveBridg
     apiKey,
     apiSecret,
     modelVersion,
+    getGateContext,
   } = args;
 
   const { session, publishAudio, onLearnerAudio, close: closeFactory } = await factory({
@@ -165,6 +214,61 @@ export async function startVoiceBridge(args: StartBridgeArgs): Promise<LiveBridg
     session.sendAudioFrame(frame);
     bridge.onLearnerAudioActivity();
   });
+
+  // --- Tool-call routing (C4) ---
+  //
+  // When the model emits a `propose_tactical_move` function call, route it through
+  // the SAME validation sequence as the text path (resolveVoiceToolCall: Zod +
+  // Layer-2 + earned-it gate). The validated action is dispatched to the learner's
+  // socket as an `action` ServerMessage. The function_call_output is sent back to
+  // the model so it can narrate the outcome appropriately.
+  //
+  // Fail-closed: `session.onToolCall` is optional; if absent (old mock, stub) we
+  // simply skip the subscription. The gate context defaults to UNGROUNDED_GATE_CTX
+  // when no real state is available — all privileged proposals become no_action.
+  if (session.onToolCall) {
+    session.onToolCall(({ name, args: callArgs, callId }) => {
+      // Only route the tool we defined; ignore any unexpected tool names.
+      if (name !== 'propose_tactical_move') return;
+
+      // Resolve gate context. Server-derived state from the latest submit fold;
+      // falls back to the fail-closed minimal ctx when none is available.
+      const gateCtx = getGateContext?.() ?? UNGROUNDED_GATE_CTX;
+
+      // Run the full validation pipeline (ADR-018).
+      const action = resolveVoiceToolCall(callArgs, gateCtx);
+
+      // Dispatch the gated action to the learner's socket.
+      const ws = socketRegistry.get(ctx.sessionId);
+      if (ws) {
+        const msg: ServerMessage = {
+          kind: 'action',
+          sessionId: ctx.sessionId,
+          action,
+        };
+        ws.send(JSON.stringify(msg));
+      }
+
+      // Send function_call_output back to the model so it knows the outcome.
+      // Keep it short: the model uses this to narrate ("I've queued your next
+      // problem" vs "I can't do that yet"). Avoid logging or forwarding the
+      // full action payload — it may contain claimedTruthTable arrays the model
+      // doesn't need back. (Secrets are never in tool payloads; this is safe.)
+      if (session.sendContext) {
+        const outcome =
+          action.type === 'no_action'
+            ? `move refused (not yet earned or malformed)`
+            : `move accepted: ${action.type}`;
+        // Use sendContext as the lowest-friction way to get the result back to the
+        // model's context window. A real function_call_output would need a
+        // `conversation.item.create` + `response.create` which re-triggers speech.
+        // sendContext injects it without triggering a new spoken response, which is
+        // appropriate when the server has already decided the action — the model can
+        // incorporate the result on its next VAD turn.
+        session.sendContext(`[tool_result call_id=${callId}] ${outcome}`);
+      }
+    });
+  }
 
   await bridge.start();
   return { bridge, close: closeFactory };

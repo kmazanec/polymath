@@ -1,5 +1,5 @@
 /**
- * startVoiceBridge (C5) + VoiceBridge.pushLessonState (C6) — unit tests.
+ * startVoiceBridge (C5) + VoiceBridge.pushLessonState (C6) + tool-call routing (C4) — unit tests.
  *
  * All tests use MockRealtimeSession and stub/spy dependencies. No network,
  * no Postgres, no keys required.
@@ -14,6 +14,12 @@
  *  - A live bridge receives pushLessonState with server-computed values.
  *  - No live bridge → no-op, no throw.
  *  - Correctness value comes from server, not client.
+ *
+ * C4 (tool-call routing) scenarios:
+ *  - A `propose_tactical_move` tool call fires onToolCall → action dispatched to socket.
+ *  - A privileged move (transfer probe) with an ungrounded ctx is downgraded to no_action.
+ *  - Outcome is echoed back to the session via sendContext (function_call_output).
+ *  - Unknown tool name is silently ignored (no dispatch).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -336,5 +342,163 @@ describe('SocketRegistry', () => {
     reg.register('sid-2', ws1);
     reg.register('sid-2', ws2); // must be ignored
     expect(reg.get('sid-2')).toBe(ws1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C4: tool-call routing via onToolCall → resolveVoiceToolCall → socket dispatch
+// ---------------------------------------------------------------------------
+
+describe('tool-call routing (C4)', () => {
+  beforeEach(() => resetCacheRegistry());
+
+  /** Minimal no-action gate ctx: all privileged moves refused (fail-closed default). */
+  function ungroundedCtx() {
+    return {
+      learner: {
+        bktByKc: {} as Record<string, number>,
+        hintsUsed: 0,
+        consecutiveCorrect: 0,
+        ruleGatePassed: false,
+        explainBackPassed: false,
+        topicGuardrailClean: true,
+      },
+      gate: { passed: false as const, blockers: ['rule_gate_failed' as const] },
+      transferCandidates: undefined as undefined,
+    };
+  }
+
+  async function buildBridgeWithSocket(
+    session: MockRealtimeSession,
+    socketRegistry: SocketRegistry,
+    getGateContext?: () => ReturnType<typeof ungroundedCtx>,
+  ) {
+    const { factory } = makeFakeFactory(session);
+    return startVoiceBridge({
+      factory,
+      ctx: { sessionId: SESSION_ID, learnerId: SESSION_ID, lessonId: 1, lessonTitle: 'T', phase: 'practicing' },
+      db: STUB_DB,
+      utteranceRegistry: new LearnerUtteranceRegistry(),
+      socketRegistry,
+      roomName: 'r',
+      livekitUrl: 'wss://test',
+      apiKey: 'k',
+      apiSecret: 's',
+      modelVersion: 'gpt-realtime',
+      getGateContext,
+    });
+  }
+
+  it('propose_tactical_move with a valid no_action move → action dispatched to socket', async () => {
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const socketRegistry = new SocketRegistry();
+    const sentMessages: string[] = [];
+    const fakeWs = { send: (m: string) => sentMessages.push(m) } as unknown as import('ws').WebSocket;
+    socketRegistry.register(SESSION_ID, fakeWs);
+
+    await buildBridgeWithSocket(session, socketRegistry, () => ungroundedCtx());
+
+    // Fire a no_action tool call — should always succeed (no privilege required).
+    session.pushToolCall('propose_tactical_move', { move: 'no_action', rationale: 'waiting', noActionReason: 'wait_for_learner' }, 'call-1');
+
+    // Allow synchronous dispatch to complete.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const actionMsgs = sentMessages.map((m) => JSON.parse(m) as { kind: string; action?: { type: string } })
+      .filter((m) => m.kind === 'action');
+
+    expect(actionMsgs).toHaveLength(1);
+    expect(actionMsgs[0]?.action?.type).toBe('no_action');
+  });
+
+  it('privileged move (transfer probe) with ungrounded ctx → downgraded to no_action', async () => {
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const socketRegistry = new SocketRegistry();
+    const sentMessages: string[] = [];
+    const fakeWs = { send: (m: string) => sentMessages.push(m) } as unknown as import('ws').WebSocket;
+    socketRegistry.register(SESSION_ID, fakeWs);
+
+    // Ungrounded ctx: ruleGatePassed = false → transfer probe refused.
+    await buildBridgeWithSocket(session, socketRegistry, () => ungroundedCtx());
+
+    session.pushToolCall('propose_tactical_move', {
+      move: 'propose_transfer_probe',
+      rationale: 'ready',
+      probeExpression: 'A AND B',
+      probeTargetRep: 'truth_table',
+      probeHiddenReps: ['circuit', 'pseudocode'],
+      probeItemId: 'item-1',
+    }, 'call-2');
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const actionMsgs = sentMessages.map((m) => JSON.parse(m) as { kind: string; action?: { type: string } })
+      .filter((m) => m.kind === 'action');
+
+    // Must be downgraded — the gate refuses the probe when no rule gate pass.
+    expect(actionMsgs).toHaveLength(1);
+    expect(actionMsgs[0]?.action?.type).toBe('no_action');
+  });
+
+  it('tool call outcome echoed to session via sendContext (function_call_output)', async () => {
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const socketRegistry = new SocketRegistry();
+    const fakeWs = { send: vi.fn() } as unknown as import('ws').WebSocket;
+    socketRegistry.register(SESSION_ID, fakeWs);
+
+    await buildBridgeWithSocket(session, socketRegistry, () => ungroundedCtx());
+
+    session.pushToolCall('propose_tactical_move', { move: 'no_action', rationale: 'wait', noActionReason: 'thinking' }, 'call-3');
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The bridge must echo back a sendContext containing the call_id.
+    expect(session.sentContexts.some((c) => c.includes('call-3'))).toBe(true);
+  });
+
+  it('unknown tool name is silently ignored — no action dispatch', async () => {
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const socketRegistry = new SocketRegistry();
+    const sentMessages: string[] = [];
+    const fakeWs = { send: (m: string) => sentMessages.push(m) } as unknown as import('ws').WebSocket;
+    socketRegistry.register(SESSION_ID, fakeWs);
+
+    await buildBridgeWithSocket(session, socketRegistry, () => ungroundedCtx());
+
+    session.pushToolCall('some_unknown_tool', { foo: 'bar' }, 'call-4');
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const actionMsgs = sentMessages.map((m) => JSON.parse(m) as { kind: string })
+      .filter((m) => m.kind === 'action');
+
+    expect(actionMsgs).toHaveLength(0);
+  });
+
+  it('no getGateContext → fails closed (ungrounded ctx) — privileged move downgraded', async () => {
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const socketRegistry = new SocketRegistry();
+    const sentMessages: string[] = [];
+    const fakeWs = { send: (m: string) => sentMessages.push(m) } as unknown as import('ws').WebSocket;
+    socketRegistry.register(SESSION_ID, fakeWs);
+
+    // No getGateContext provided → falls back to UNGROUNDED_GATE_CTX.
+    await buildBridgeWithSocket(session, socketRegistry, undefined);
+
+    session.pushToolCall('propose_tactical_move', {
+      move: 'propose_transfer_probe',
+      rationale: 'should be refused',
+      probeExpression: 'A OR B',
+      probeTargetRep: 'circuit',
+      probeHiddenReps: ['truth_table'],
+      probeItemId: 'item-x',
+    }, 'call-5');
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const actionMsgs = sentMessages.map((m) => JSON.parse(m) as { kind: string; action?: { type: string } })
+      .filter((m) => m.kind === 'action');
+
+    expect(actionMsgs[0]?.action?.type).toBe('no_action');
   });
 });

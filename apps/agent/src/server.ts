@@ -3313,18 +3313,58 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
   // turn (ADR-016). Absent entry → no-op, no voice active.
   const bridgeReg = rawDeps.liveBridgeRegistry ?? new LiveBridgeRegistry();
 
+  // Production realtime-session factory: default a lazy-loading `createLiveRealtimeSession`
+  // wrapper ONLY when voice is configured (LiveKit creds) AND an OPENAI_API_KEY is present.
+  // Otherwise leave undefined → no bridge → spoken_turn fails closed, exactly as before
+  // (ADR-006).
+  //
+  // The wrapper uses a dynamic import() on first invocation so `@livekit/rtc-node`'s native
+  // binding is never required() during the synchronous module load of server.ts. If the
+  // native binding fails to load (wrong base image, missing glibc, etc.) the factory promise
+  // rejects; `startVoiceBridge` propagates the error; `handleRealtimeSession` catches it and
+  // logs — the bridge is absent for this session, but `/api/health` is unaffected. This is
+  // the "boot-time seeding must be non-fatal" discipline applied to native-dep load.
+  // (CLAUDE.md: "A native-import failure must ALSO fail closed — no crash at boot.")
+  let liveRealtimeFactory: RealtimeSessionFactory | undefined;
+  if (!rawDeps.createRealtimeSession && voiceConfigured() && process.env['OPENAI_API_KEY']) {
+    // Lazy singleton: resolve the real factory once and cache it. If the first load fails,
+    // every subsequent call rejects with the same error — consistently fail-closed per session.
+    let cachedFactory: RealtimeSessionFactory | undefined;
+    let loadError: unknown;
+    let loaded = false;
+
+    liveRealtimeFactory = async (factoryArgs) => {
+      if (!loaded) {
+        loaded = true;
+        try {
+          const mod = await import('./voice/liveRealtimeSession.js');
+          cachedFactory = mod.createLiveRealtimeSession;
+        } catch (err) {
+          loadError = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[voice] liveRealtimeSession failed to load — session will degrade', { message: msg });
+        }
+      }
+      if (loadError !== undefined) throw loadError;
+      return cachedFactory!(factoryArgs);
+    };
+  }
+
   const deps: ServerDeps = {
     ...rawDeps,
     ...(defaultedJudge ? { explainBackJudge: defaultedJudge } : {}),
     ...(defaultedBaselineChat ? { baselineChat: defaultedBaselineChat } : {}),
     ...(defaultedOperatorSecret ? { operatorSecret: defaultedOperatorSecret } : {}),
+    ...(liveRealtimeFactory ? { createRealtimeSession: liveRealtimeFactory } : {}),
     explainBackCaptureRegistry: captureRegistry,
     explainBackTranscriptFor: transcriptFor,
     explainBackProsodyFor: prosodyFor,
-    // F-30: expose the utterance registry + the read getters so handleSpokenTurnTurn can
-    // read the server-captured utterance (never the client frame). The registry is filled
-    // by a VoiceBridge's onLearnerUtterance callback — DEFERRED to the cross-platform voice
-    // smoke (see the ServerDeps doc + docs/voice-cross-platform-smoke.md), as for explain-back.
+    // The utterance registry is filled by a VoiceBridge's onLearnerUtterance callback.
+    // With the live factory now wired, `handleRealtimeSession` starts a real bridge when
+    // voice is configured + OPENAI_API_KEY is set; the registry fill path is therefore
+    // ACTIVE in production when those conditions hold (ADR-016). Until a configured deploy
+    // runs the live smoke, the registry stays empty and spoken_turn fails closed — exactly
+    // as before (see the ServerDeps doc above and docs/voice-cross-platform-smoke.md).
     learnerUtteranceRegistry: utteranceRegistry,
     latestLearnerUtteranceFor,
     takeLearnerUtteranceFor,

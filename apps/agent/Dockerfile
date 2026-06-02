@@ -4,7 +4,7 @@
 # available. The agent and its deps export TypeScript source and run under tsx;
 # compiling to JS is a later optimisation, not needed for the walking skeleton.
 
-FROM node:22-alpine AS base
+FROM node:22-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
@@ -34,6 +34,13 @@ COPY packages/statechart packages/statechart
 COPY packages/bkt packages/bkt
 COPY packages/graph packages/graph
 COPY apps/agent apps/agent
+# After copying the source tree, overlay the agent's package-level node_modules
+# from the deps stage. pnpm creates per-package symlink directories
+# (apps/agent/node_modules/) pointing into the workspace virtual store; the build
+# context has no node_modules, so without this COPY the agent's direct deps
+# (@livekit/rtc-node, openai, etc.) are missing at runtime. The overlay order
+# matters: source first, then node_modules on top so symlinks aren't overwritten.
+COPY --from=deps /app/apps/agent/node_modules ./apps/agent/node_modules
 COPY lessons lessons
 # seedTransferBank reads seed_data/transfer_items.json (repo root) at boot.
 COPY seed_data seed_data
@@ -58,6 +65,8 @@ COPY --from=deps /app/packages ./packages
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages packages
 COPY apps/agent apps/agent
+# Overlay the agent's per-package node_modules from deps (same reason as runtime stage).
+COPY --from=deps /app/apps/agent/node_modules ./apps/agent/node_modules
 COPY lessons lessons
 COPY seed_data seed_data
 WORKDIR /app/apps/agent

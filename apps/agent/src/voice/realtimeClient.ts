@@ -66,6 +66,20 @@ export interface RealtimeSession {
    * (the model simply keeps its prior state estimate).
    */
   sendContext(text: string): void;
+  /**
+   * Optional subscription for realtime model tool calls.
+   *
+   * Fires when the model emits a `propose_tactical_move` function call result.
+   * The live implementation (`LiveRealtimeSession`) fires this on
+   * `response.function_call_arguments.done`. The mock and any test double may
+   * implement it or omit it — `startVoiceBridge` checks `session.onToolCall`
+   * before subscribing (optional-chaining guard).
+   *
+   * The caller (startVoiceBridge) routes the call through `resolveVoiceToolCall`
+   * so every proposal passes the same Zod + Layer-2 + earned-it gate as the
+   * text path (ADR-018).
+   */
+  onToolCall?(cb: (call: { name: string; args: unknown; callId: string }) => void): void;
 }
 
 /** Scripted tutor reply the mock emits after a learner utterance. */
@@ -187,6 +201,9 @@ export class MockRealtimeSession implements RealtimeSession {
     return Promise.resolve();
   }
 
+  /** Callbacks registered via onToolCall(), in call order. */
+  private readonly toolCallCbs: Array<(call: { name: string; args: unknown; callId: string }) => void> = [];
+
   /** All texts pushed via sendContext(), in call order. Test-driving surface. */
   readonly sentContexts: string[] = [];
 
@@ -194,6 +211,19 @@ export class MockRealtimeSession implements RealtimeSession {
     // Record for test assertions; a real impl would inject this as an ephemeral
     // provider context-update event.
     this.sentContexts.push(text);
+  }
+
+  /** Minimal implementation of the optional C4 tool-call surface. */
+  onToolCall(cb: (call: { name: string; args: unknown; callId: string }) => void): void {
+    this.toolCallCbs.push(cb);
+  }
+
+  /**
+   * Test-driving surface: fire a scripted tool call so tests can assert the
+   * startVoiceBridge routing (gate logic, socket dispatch, function_call_output).
+   */
+  pushToolCall(name: string, args: unknown, callId: string): void {
+    for (const cb of this.toolCallCbs) cb({ name, args, callId });
   }
 
   // --- Test-driving surface (not part of RealtimeSession) ---

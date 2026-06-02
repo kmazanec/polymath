@@ -26,7 +26,9 @@
     "@polymath/contract": "workspace:*",
     "@polymath/graph": "workspace:*",
     "drizzle-orm": "^0.38.3",
+    "@livekit/rtc-node": "^0.13.29",
     "livekit-server-sdk": "2.15.4",
+    "openai": "^6.41.0",
     "pg": "^8.13.1",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
