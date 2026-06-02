@@ -60,6 +60,17 @@ export interface AgentInput {
    *  turn). The deterministic forward-progress fallback (B7) reads this to choose
    *  the next not-yet-passed authored item — never a client flag or capped window. */
   passedItemIds?: Set<string>;
+  /** Server-derived UNCAPPED count of opening-walk mount actions
+   *  (IntroExplanation + WorkedExample) for this session. The opening-walk stage in
+   *  `openingMove` MUST be derived from this monotonic count, NOT from
+   *  `recentHistory` — the capped 5-event window pushes the early IntroExplanation
+   *  mounts out once enough intelligibility/intro_advance/ui_mount events accrue,
+   *  which stalled the walk re-mounting the WorkedExample forever (the learner could
+   *  never reach the first practice item). Same class of bug as `hintsByItem`. The
+   *  server populates this from an `app IS NULL`-scoped count query; absent (older
+   *  callers / tests that omit it) → `openingMove` falls back to the recentHistory
+   *  count for backward compatibility. */
+  openingWalkMounts?: number;
 }
 
 /** A held-out transfer item the agent may fire as a probe. Mirrors the

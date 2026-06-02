@@ -88,6 +88,35 @@ describe('deriveState (the single learner_state writer, pure core)', () => {
     ).toBe(false);
   });
 
+  it('BUG-05: scores a truth-table submit when the client names the item by its DISPLAYED expression, not the authored targetExpression', () => {
+    // PRODUCTION REPRO: the web client sends `itemId = spec.expression` — the
+    // expression the agent/engine DISPLAYED ("A AND B"), which is commutatively
+    // equivalent to but NOT string-equal to the authored item ("B AND A"). The old
+    // lookup (`itemId === i.itemId || i.targetExpression === itemId`) found NO item
+    // and returned false, so EVERY correct answer was scored wrong and the learner
+    // could never progress. Correctness must come from the truth table of the
+    // expression actually shown.
+    expect(
+      recomputeCorrect(content, 'A AND B', 'A AND B', { rep: 'truth_table', cells: [0, 0, 0, 1] }),
+    ).toBe(true);
+    expect(
+      recomputeCorrect(content, 'A AND B', 'A AND B', { rep: 'truth_table', cells: [1, 1, 1, 0] }),
+    ).toBe(false);
+    // The OR item, named by its displayed expression, scored against its own table.
+    expect(
+      recomputeCorrect(content, 'A OR B', 'A OR B', { rep: 'truth_table', cells: [0, 1, 1, 1] }),
+    ).toBe(true);
+  });
+
+  it('BUG-05: scores a pseudocode/circuit submit when the item is named by the displayed expression', () => {
+    // Circuit/pseudocode submit: itemId = the displayed target expression, submission
+    // = the learner's built expression. A correct, equivalent answer must score true
+    // even when the displayed expression isn't string-equal to the authored one.
+    expect(recomputeCorrect(content, 'A AND B', 'A AND B')).toBe(true);
+    expect(recomputeCorrect(content, 'A AND B', 'B AND A')).toBe(true);
+    expect(recomputeCorrect(content, 'A AND B', 'A OR B')).toBe(false);
+  });
+
   it('counts consecutive correct, resetting on a wrong submit or a hint', () => {
     const d1 = deriveState(
       [

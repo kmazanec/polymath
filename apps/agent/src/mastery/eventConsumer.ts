@@ -1,7 +1,24 @@
 import { type BKTConfig, type BKTParams, initBKT, updateBKT } from '@polymath/bkt';
-import { scoreEquivalence } from '@polymath/booleans';
+import { MAX_EQUIVALENCE_VARS, parse, scoreEquivalence, truthTable, variables } from '@polymath/booleans';
 import type { LessonContent, MasteryConfig, Rep, RepSubmission } from '@polymath/contract';
 import type { LearnerState } from './gate.js';
+
+/**
+ * The MSB-first output column of `expression`'s truth table, var-capped and
+ * parse-safe (BUG-05). Returns null when the expression is unparseable or exceeds
+ * the variable cap — the caller then treats the submission as incorrect, never a
+ * thrown crash or an event-loop-blocking 2^n enumeration (same triad guard as
+ * `scoreEquivalence`). `@polymath/booleans.truthTable` is MSB-first (first variable
+ * = most significant bit), matching the client's row order (00, 01, 10, 11).
+ */
+function expectedOutputColumn(expression: string): number[] | null {
+  try {
+    if (variables(parse(expression)).length > MAX_EQUIVALENCE_VARS) return null;
+    return truthTable(expression).out.map((b) => (b ? 1 : 0));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The single writer of derived learner state (ADR-009/011). It folds a session's
@@ -126,16 +143,31 @@ export function recomputeCorrect(
 ): boolean {
   if (!itemId) return false;
   const item = lesson.items.find((i) => i.itemId === itemId || i.targetExpression === itemId);
-  if (!item) return false;
+  // BUG-05: the web client names the item by the expression the agent DISPLAYED
+  // (`spec.expression`, e.g. "A AND B"), which is logically equivalent to but NOT
+  // string-equal to the authored item's `targetExpression` (e.g. "B AND A"). The
+  // old code required the item lookup to succeed and returned false otherwise — so
+  // EVERY correct answer was scored wrong and no learner could ever progress. The
+  // correctness key is the expression the learner was actually shown: prefer the
+  // matched item's authored target (when found), else fall back to `itemId` itself
+  // (the displayed expression). The two are equivalent by construction; either
+  // produces the same truth table / equivalence verdict.
+  const canonical = item?.targetExpression ?? itemId;
   if (repSubmission?.rep === 'truth_table') {
-    const expected = item.truthTable;
+    // Score against the truth table of the canonical expression (var-capped,
+    // parse-safe). When the item is found we could read `item.truthTable`, but
+    // computing from the expression handles the lookup-miss case uniformly and
+    // stays correct because the displayed expression is equivalent to the authored
+    // one. An unparseable/over-cap expression → null → incorrect (never a crash).
+    const expected = item?.truthTable ?? expectedOutputColumn(canonical);
+    if (!expected) return false;
     return (
       repSubmission.cells.length === expected.length &&
       repSubmission.cells.every((cell, index) => cell === expected[index])
     );
   }
   if (submission === undefined) return false;
-  return scoreEquivalence(submission, item.targetExpression);
+  return scoreEquivalence(submission, canonical);
 }
 
 /** Fold the session's events into the derived state. `lesson` maps items → KCs. */
@@ -159,6 +191,28 @@ export function deriveState(
     canonicalItemId.set(item.itemId, item.itemId);
     canonicalItemId.set(item.targetExpression, item.itemId);
   }
+
+  // BUG-05: the web client names an item by the expression the agent DISPLAYED
+  // (`spec.expression`, e.g. "A AND B"), which is logically equivalent to — but not
+  // string-equal to — the authored `targetExpression` (e.g. "B AND A"). An exact
+  // string lookup then misses, so the KC/tier/canonical-id resolution silently
+  // failed: BKT never updated for the right KC and the item was never marked passed,
+  // so mastery was unreachable even once correctness scored right. `resolveItemId`
+  // first tries the exact maps, then falls back to matching the displayed expression
+  // to a lesson item by LOGICAL EQUIVALENCE (var-capped, parse-safe). The result is
+  // memoized so we never re-enumerate truth tables for a repeated submit. Returns the
+  // raw id unchanged when nothing matches (a genuinely unknown item degrades exactly
+  // as before — no KC credit). Cheap: lesson items are ≤ a handful.
+  const resolvedIdCache = new Map<string, string>();
+  const resolveItemId = (rawItemId: string): string => {
+    if (canonicalItemId.has(rawItemId)) return canonicalItemId.get(rawItemId)!;
+    const cached = resolvedIdCache.get(rawItemId);
+    if (cached !== undefined) return cached;
+    const match = lesson.items.find((i) => scoreEquivalence(rawItemId, i.targetExpression));
+    const resolved = match?.itemId ?? rawItemId;
+    resolvedIdCache.set(rawItemId, resolved);
+    return resolved;
+  };
 
   // The hardest difficulty tier in the lesson. Used to gate `consecutiveCorrectAtHardestTier`.
   // Guard the empty-items edge case (fail closed: 0 keeps every submit below maxTier = 0
@@ -234,15 +288,22 @@ export function deriveState(
     // submit that answers it (mounts are emitted on the turn preceding the submit, so
     // by the time we process the submit the binding is already recorded).
     if (ev.mountedRep && ev.mountedItemExpression) {
-      const canonicalMounted =
-        canonicalItemId.get(ev.mountedItemExpression) ?? ev.mountedItemExpression;
+      // BUG-05: resolve the displayed mount expression to the canonical item id
+      // (equivalence-tolerant), so the trusted rep binds to the SAME key the submit
+      // later resolves to — otherwise cross-rep evidence is credited under the
+      // displayed-string key and the submit (keyed canonical) never finds it.
+      const canonicalMounted = resolveItemId(ev.mountedItemExpression);
       trustedRepByItem.set(canonicalMounted, ev.mountedRep);
     }
 
     if (ev.kind === 'submit') {
       state.submits++;
       const correct = isCorrect(ev.itemId, ev.submission, ev.repSubmission);
-      const kc = ev.itemId ? kcByItem.get(ev.itemId) : undefined;
+      // BUG-05: canonicalize the (possibly displayed-expression) itemId to the
+      // lesson's item BEFORE every map lookup, so KC/tier/passed/streak all resolve
+      // even when the client named the item by an equivalent expression.
+      const canonicalId = ev.itemId !== undefined ? resolveItemId(ev.itemId) : undefined;
+      const kc = canonicalId ? kcByItem.get(canonicalId) : undefined;
       if (kc) {
         // bktByKc is pre-seeded for all lesson KCs; for an item whose KC appears in
         // the lesson we always have an existing entry — `?? initBKT(cfg)` is a
@@ -252,16 +313,15 @@ export function deriveState(
         const prior = state.bktByKc[kc] ?? initBKT(cfg);
         state.bktByKc[kc] = updateBKT(prior, correct, cfg);
       }
-      if (ev.itemId && missed.has(ev.itemId)) state.retries++;
-      if (ev.itemId) {
+      if (canonicalId && missed.has(canonicalId)) state.retries++;
+      if (canonicalId) {
         if (!correct) {
-          missed.add(ev.itemId);
-          state.missesByItem[ev.itemId] = (state.missesByItem[ev.itemId] ?? 0) + 1;
+          missed.add(canonicalId);
+          state.missesByItem[canonicalId] = (state.missesByItem[canonicalId] ?? 0) + 1;
         } else {
-          missed.delete(ev.itemId); // a correct attempt clears the miss
+          missed.delete(canonicalId); // a correct attempt clears the miss
           // Record the canonical itemId as passed (B7 forward-progress source).
-          const canonical = canonicalItemId.get(ev.itemId);
-          if (canonical) state.passedItemIds.add(canonical);
+          state.passedItemIds.add(canonicalId);
         }
       }
       if (typeof ev.responseTimeMs === 'number') state.responseTimesMs.push(ev.responseTimeMs);
@@ -279,7 +339,7 @@ export function deriveState(
       //     tier-blind streak's hint-reset).
       // For a single-tier lesson (L1: maxTier === 1 === every item's tier) this
       // counter behaves identically to `consecutiveCorrect` — no regression for L1.
-      const itemTier = ev.itemId !== undefined ? (tierByItem.get(ev.itemId) ?? 0) : 0;
+      const itemTier = canonicalId !== undefined ? (tierByItem.get(canonicalId) ?? 0) : 0;
       if (itemTier === maxTier) {
         if (!correct) {
           // A wrong hardest-tier submit breaks the ladder AND the cross-rep evidence.
@@ -297,7 +357,7 @@ export function deriveState(
           // rep we can't prove. A correct submit on the IDENTICAL (item, trusted-rep)
           // as the immediately preceding one is not credited; genuinely interleaved
           // work (a different item, or a rep the server actually mounted) is.
-          const canonical = ev.itemId ? (canonicalItemId.get(ev.itemId) ?? ev.itemId) : '';
+          const canonical = canonicalId ?? '';
           const rep: Rep = trustedRepByItem.get(canonical) ?? 'truth_table';
           const key = `${canonical}::${rep}`;
           if (key !== lastHardestSubmitKey) {

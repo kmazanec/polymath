@@ -268,6 +268,33 @@ async function countOffTopicAnswers(db: Db, sessionId: string): Promise<number> 
   return rows[0]?.n ?? 0;
 }
 
+/**
+ * BUG-02 fix: UNCAPPED count of opening-walk mount actions (IntroExplanation +
+ * WorkedExample) for this session. The opening-walk stage in `openingMove` is a
+ * monotonic progression counter, so — exactly like the off-topic counter and the
+ * hint ladder — it must be derived from the full log, NOT the capped 5-event
+ * `recentHistory` window. With the window, once intervening intelligibility/
+ * intro_advance/ui_mount events pushed the early IntroExplanation mounts out, the
+ * stage count stalled at `=== explanations.length` and re-mounted the WorkedExample
+ * forever (the learner never reached the first practice item).
+ *
+ * `app IS NULL` scopes to Polymath rows only (D3 discriminator), like every other
+ * integrity read.
+ */
+async function countOpeningWalkMounts(db: Db, sessionId: string): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(events)
+    .where(
+      sql`${events.sessionId} = ${sessionId}
+        AND ${events.app} IS NULL
+        AND ${events.payload} -> 'action' ->> 'type' = 'mount'
+        AND ${events.payload} -> 'action' -> 'component' ->> 'kind'
+            IN ('IntroExplanation', 'WorkedExample')`,
+    );
+  return rows[0]?.n ?? 0;
+}
+
 /** F-14 dev/test seam parser: `NOT:0.72,AND:0.5` → `{ NOT: 0.72, AND: 0.5 }`.
  *  A malformed pair (no colon, non-numeric, NaN, out of [0,1]) is SKIPPED — the seam
  *  degrades a bad value away rather than crashing the connection. An empty/whitespace
@@ -2672,12 +2699,18 @@ export async function handleClientFrame(
   // explain_back_recording_ended turn (handled above) and folded from the persisted log
   // thereafter. Fail-closed by default: undefined → no verdict → mastery blocked.
   const explainBackVerdict: ExplainBackVerdict | undefined = undefined;
-  const [learnerDerived, recentHistory, transferCandidates, inTransferProbe] = await Promise.all([
-    updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict, explainBackVerdict),
-    readRecentHistory(deps.db, event.sessionId),
-    readTransferCandidates(deps.db, event.sessionId, lesson.content.lessonId),
-    isInTransferProbe(deps.db, event.sessionId),
-  ]);
+  const [learnerDerived, recentHistory, transferCandidates, inTransferProbe, openingWalkMounts] =
+    await Promise.all([
+      updateAndReadLearnerState(deps.db, event.sessionId, event, lesson, transferVerdict, explainBackVerdict),
+      readRecentHistory(deps.db, event.sessionId),
+      readTransferCandidates(deps.db, event.sessionId, lesson.content.lessonId),
+      isInTransferProbe(deps.db, event.sessionId),
+      // BUG-02: uncapped opening-walk mount count so `openingMove` derives its stage
+      // from the full log, not the capped recentHistory window (which trapped the
+      // learner re-mounting the WorkedExample). The current event isn't persisted
+      // until the end of the turn, so this counts only cards already shown.
+      countOpeningWalkMounts(deps.db, event.sessionId),
+    ]);
   const input: AgentInput = {
     event,
     lesson,
@@ -2690,6 +2723,7 @@ export async function handleClientFrame(
     priorMissesByItem: learnerDerived.priorMissesByItem,
     passedItemIds: learnerDerived.passedItemIds,
     currentSubmitCorrect: learnerDerived.currentSubmitCorrect,
+    openingWalkMounts,
   };
 
   const deterministicAuthoredAction =

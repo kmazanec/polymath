@@ -264,7 +264,17 @@ export function explanationBeforeNextItem(input: AgentInput): TacticalMove | nul
  * a lesson with a single explanation behaves exactly as the old stage 0/1/2.)
  */
 export function openingMove(input: AgentInput): TacticalMove {
-  const priorMounts = input.recentHistory.filter((t) => t.actionType === 'mount').length;
+  // BUG-02 fix: the opening-walk stage is a MONOTONIC progression counter and must
+  // come from the server's UNCAPPED count of opening-walk mounts, never the capped
+  // 5-event `recentHistory` window. Once intervening intelligibility/intro_advance/
+  // ui_mount events push the early IntroExplanation mounts out of the window, the
+  // recentHistory-derived count stalls at `=== explanations.length` — a stable fixed
+  // point that re-mounts the WorkedExample forever, trapping the learner before the
+  // first practice item. Prefer the server-derived count; fall back to the window
+  // count only when the server didn't supply it (older callers / unit tests).
+  const priorMounts =
+    input.openingWalkMounts ??
+    input.recentHistory.filter((t) => t.actionType === 'mount').length;
   const intro = readLessonIntro(input.lesson.content.lessonId);
 
   if (intro) {
