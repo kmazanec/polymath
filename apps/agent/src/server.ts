@@ -74,6 +74,9 @@ import type { ExplainBackJudge, ProsodyFeatures } from '@polymath/graph';
 import { makeExplainBackJudge } from '@polymath/graph';
 import { ExplainBackCaptureRegistry } from './voice/explainBackRegistry.js';
 import { LearnerUtteranceRegistry } from './voice/learnerUtteranceRegistry.js';
+import { SocketRegistry } from './voice/socketRegistry.js';
+import { LiveBridgeRegistry } from './voice/liveBridgeRegistry.js';
+import { startVoiceBridge, type RealtimeSessionFactory } from './voice/startBridge.js';
 import { tryHandleBaselineRoute } from './baseline/route.js';
 import { tryHandleHandoffRoute } from './handoff/route.js';
 import type { BaselineChatProvider } from './baseline/chatProvider.js';
@@ -145,6 +148,36 @@ export interface ServerDeps {
    * `createServer` defaults to `learnerUtteranceRegistry.takeLatest(sessionId)`. (MR !11.)
    */
   takeLearnerUtteranceFor?: (sessionId: string) => string | undefined;
+  /**
+   * Optional factory for the server-side realtime session + room plumbing.
+   *
+   * When present AND `voiceConfigured()` is true, `handleRealtimeSession` starts a
+   * `VoiceBridge` immediately after minting the token — wiring transcript streaming
+   * and learner-utterance capture for the session. When ABSENT (the default until
+   * the real LiveKit+OpenAI-Realtime plumbing ships), the handler mints the token
+   * exactly as before and returns; no bridge is started. This is the fail-closed
+   * design: no factory → no bridge → spoken_turn and transcript_stream stay empty
+   * → both fail closed. Tests inject a fake factory backed by `MockRealtimeSession`.
+   *
+   * See `startBridge.ts` for the factory shape + constraints.
+   */
+  createRealtimeSession?: RealtimeSessionFactory;
+  /**
+   * Session-to-WebSocket registry. Used by the voice bridge to push
+   * `transcript_stream` messages to the bound socket without holding a WS
+   * reference in the HTTP handler. Populated when each WS connection binds its
+   * session via `session_start` (MR !8 rule). Defaults to a fresh registry in
+   * `createServer`.
+   */
+  socketRegistry?: SocketRegistry;
+  /**
+   * Live-bridge registry: maps session id → active `VoiceBridge`. The submit
+   * path reads this to push server-computed lesson state (BKT, streak, phase,
+   * hint level, correctness) into the live session after each graded turn so
+   * the model can react without deriving those values itself. No entry → no-op.
+   * Defaults to a fresh registry in `createServer`.
+   */
+  liveBridgeRegistry?: LiveBridgeRegistry;
   /** F-16 baseline chat provider (the GPT-5 chat-baseline arm). Injectable for
    *  tests (a deterministic stub; CI is offline); defaults to the key-gated GPT-5
    *  provider when `OPENAI_API_KEY` is set, else `undefined` → the `/api/baseline/*`
@@ -1606,6 +1639,67 @@ async function handleRealtimeSession(
     roomName: minted.roomName,
     expiresAt: minted.expiresAt,
   });
+
+  // Start the server-side voice bridge if a factory is injected. This is the
+  // deferred production wiring: absent factory → no bridge → spoken_turn and
+  // transcript_stream fail closed exactly as before. The token is already minted
+  // and the 201 sent above, so a bridge-start failure degrades gracefully (the
+  // client can still join the room; it just loses the server-side transcript stream
+  // and learner-utterance capture for this session). We run this AFTER the 201 so a
+  // bridge construction error never blocks the client's token receipt.
+  //
+  // Assumption: `learnerId` is not stored on `sessions` — we use `sessionId` as the
+  // stable per-session learner identifier for OTel spans (sufficient for current
+  // observability needs; a future schema migration can add a real learner id).
+  // `phase` defaults to 'practicing' (the most common phase at token-mint time);
+  // the bridge's persona prompt uses it for the cache key — an incorrect phase
+  // only affects prompt-cache warmth, not correctness.
+  if (deps.createRealtimeSession && deps.socketRegistry && deps.liveBridgeRegistry) {
+    const factory = deps.createRealtimeSession;
+    const socketReg = deps.socketRegistry;
+    const bridgeReg = deps.liveBridgeRegistry;
+    // The resolved deps always carry a registry (createServer defaults it), but the
+    // type is optional in ServerDeps for callers that inject only what they need. Fall
+    // back to a fresh instance so startVoiceBridge always has one.
+    const utteranceReg = deps.learnerUtteranceRegistry ?? new LearnerUtteranceRegistry();
+
+    void (async () => {
+      try {
+        const lessonId = await currentLessonId(deps.db, sessionId);
+        const lesson = getLesson(lessonId);
+
+        const handle = await startVoiceBridge({
+          factory,
+          ctx: {
+            sessionId,
+            learnerId: sessionId,
+            lessonId: lesson.content.lessonId,
+            lessonTitle: lesson.content.title,
+            phase: 'practicing',
+          },
+          db: deps.db,
+          utteranceRegistry: utteranceReg,
+          socketRegistry: socketReg,
+          roomName: minted.roomName,
+          livekitUrl,
+          apiKey,
+          apiSecret,
+          modelVersion: process.env['OPENAI_REALTIME_MODEL'] ?? 'gpt-realtime',
+        });
+
+        bridgeReg.register(sessionId, handle.bridge);
+
+        // Tear down bridge + deregister when the bridge's underlying session ends.
+        // The factory's close() is idempotent; double-calling from both the room
+        // disconnect and a manual stop() is safe.
+        void handle.close().then(() => {
+          bridgeReg.unregister(sessionId);
+        });
+      } catch (err) {
+        console.error('[voice] failed to start bridge for session', sessionId, err);
+      }
+    })();
+  }
 }
 
 /** Read + parse a JSON body for an experiment POST, mapping the body-read failure
@@ -3095,6 +3189,34 @@ export async function handleClientFrame(
     });
 
     send(ws, { kind: 'action', sessionId: event.sessionId, action: finalAction });
+
+    // Push server-computed lesson state into the live voice session (ADR-016).
+    // This is a fire-and-forget context update: the model is TOLD what the server
+    // computed; it never derives BKT, streak, phase, or correctness itself. Only
+    // fires on `submit` turns (graded turns with a definite correct/incorrect
+    // verdict). Other turns (request_hint, session_start, etc.) don't change BKT
+    // and are not worth the context injection cost.
+    //
+    // The correctness value comes EXCLUSIVELY from the server-computed
+    // `learnerDerived.currentSubmitCorrect`, never the client's `event.correct` flag
+    // (the server-derive integrity invariant applies to the voice channel too).
+    if (event.kind === 'submit' && deps.liveBridgeRegistry) {
+      const liveBridge = deps.liveBridgeRegistry.get(event.sessionId);
+      if (liveBridge) {
+        // Use the minimum BKT across KCs — the weakest KC is the most informative
+        // signal for the model (it reveals where the learner is still struggling).
+        // Empty bktByKc (first submit) → report 0.
+        const bktValues = Object.values(learnerDerived.snapshot.bktByKc);
+        const minBkt = bktValues.length > 0 ? Math.min(...bktValues) : 0;
+        liveBridge.pushLessonState({
+          correct: learnerDerived.currentSubmitCorrect ?? null,
+          bkt: minBkt,
+          streak: learnerDerived.snapshot.consecutiveCorrect,
+          phase: gateEvaluation.passed ? 'assessed' : 'practicing',
+          hintLevel: learnerDerived.hintsByItem[event.itemId] ?? 0,
+        });
+      }
+    }
   });
 }
 
@@ -3182,6 +3304,15 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
   const envOperatorSecret = (process.env['POLYMATH_OPERATOR_SECRET'] ?? '').trim();
   const defaultedOperatorSecret = rawDeps.operatorSecret ?? (envOperatorSecret || undefined);
 
+  // Session→socket registry: populated when a WS connection binds its session via
+  // session_start (MR !8 binding rule). Used by the voice bridge to push
+  // transcript_stream messages without holding a WS reference in the HTTP layer.
+  const socketReg = rawDeps.socketRegistry ?? new SocketRegistry();
+  // Live-bridge registry: maps sessionId → active VoiceBridge. The submit path reads
+  // this to push server-computed lesson state into the live session after each graded
+  // turn (ADR-016). Absent entry → no-op, no voice active.
+  const bridgeReg = rawDeps.liveBridgeRegistry ?? new LiveBridgeRegistry();
+
   const deps: ServerDeps = {
     ...rawDeps,
     ...(defaultedJudge ? { explainBackJudge: defaultedJudge } : {}),
@@ -3197,6 +3328,8 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     learnerUtteranceRegistry: utteranceRegistry,
     latestLearnerUtteranceFor,
     takeLearnerUtteranceFor,
+    socketRegistry: socketReg,
+    liveBridgeRegistry: bridgeReg,
   };
 
   const httpServer = http.createServer((req, res) => {
@@ -3516,6 +3649,11 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
           parsed.sessionId.length > 0
         ) {
           boundSessionId = parsed.sessionId;
+          // Register the socket AFTER binding so transcript_stream messages from the
+          // voice bridge can reach this connection. This is the same once-and-final
+          // binding rule (MR !8): the socket is registered exactly once, keyed by the
+          // session_start-bound id, never by a per-frame id.
+          socketReg.register(boundSessionId, ws);
         }
       } catch {
         /* not JSON / not a session_start — ignore; the frame handler reports its own error */
@@ -3523,6 +3661,9 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     };
     ws.on('close', () => {
       if (!boundSessionId) return;
+      // Deregister the socket so the voice bridge stops trying to send transcript_stream
+      // to a closed connection. This keeps the socket map bounded.
+      socketReg.unregister(boundSessionId);
       // Non-fatal: a deletion-scheduling failure must never crash the process on a
       // socket close. The boot/interval sweep is the backstop.
       void scheduleSessionDeletion(deps.db, boundSessionId).catch((err) => {

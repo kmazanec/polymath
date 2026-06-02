@@ -52,6 +52,20 @@ export interface RealtimeSession {
   close(): Promise<void>;
   /** True if this session's systemPrompt hit the provider prompt cache. */
   readonly cacheHit: boolean;
+  /**
+   * Push a compact server-computed lesson state update to the model as a
+   * conversational context message. The model uses this to react to BKT, streak,
+   * phase, hint level, and correctness changes — it NEVER computes these itself;
+   * the server forwards only already-computed values (ADR-016).
+   *
+   * Called after each `submit` turn so the model stays calibrated to the
+   * learner's real mastery trajectory. The text is a short human-readable
+   * summary (e.g. "correct; BKT 0.82; streak 3; phase practicing; hint 0").
+   * Implementations are free to inject it as an ephemeral system message or a
+   * context-update event matching the provider's API. A no-op is always safe
+   * (the model simply keeps its prior state estimate).
+   */
+  sendContext(text: string): void;
 }
 
 /** Scripted tutor reply the mock emits after a learner utterance. */
@@ -171,6 +185,15 @@ export class MockRealtimeSession implements RealtimeSession {
     this.responding = false;
     this.queue = [];
     return Promise.resolve();
+  }
+
+  /** All texts pushed via sendContext(), in call order. Test-driving surface. */
+  readonly sentContexts: string[] = [];
+
+  sendContext(text: string): void {
+    // Record for test assertions; a real impl would inject this as an ephemeral
+    // provider context-update event.
+    this.sentContexts.push(text);
   }
 
   // --- Test-driving surface (not part of RealtimeSession) ---

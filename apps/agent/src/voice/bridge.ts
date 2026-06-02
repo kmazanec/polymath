@@ -59,6 +59,26 @@ export interface VoiceBridgeOpts {
    * When absent (tests, or a future non-spoken session) it silently no-ops.
    */
   onLearnerUtterance?: (text: string) => void;
+  /**
+   * Live transcript-streaming callback.
+   *
+   * Fired for EVERY transcript chunk — learner AND tutor, interim AND final —
+   * so the UI can display a live in-progress speech bubble as soon as the first
+   * ASR partial arrives (final:false) and resolve it once the segment closes
+   * (final:true). The bridge maps `role` → `speaker` ('tutor'→'agent') and
+   * calls this unconditionally before any other per-chunk logic so interim
+   * learner chunks reach the stream even though `onLearnerUtterance` is
+   * final-only.
+   *
+   * The bridge passes plain fields (no contract or WS imports here). The
+   * caller (server layer) supplies a callback that sends the WS
+   * `transcript_stream` message to the bound socket. Absent → silently no-ops.
+   */
+  onTranscriptChunk?: (chunk: {
+    speaker: 'learner' | 'agent';
+    text: string;
+    final: boolean;
+  }) => void;
 }
 
 /** Mutable accumulator for the turn currently being assembled. */
@@ -154,10 +174,48 @@ export class VoiceBridge {
     await this.opts.session.close();
   }
 
+  /**
+   * Push a compact, server-computed lesson-state summary into the live model
+   * after a graded turn. The model uses this to calibrate its next spoken
+   * response to the learner's actual mastery trajectory.
+   *
+   * The server calls this ONLY with values it already computed (BKT, streak,
+   * phase, hint level, correctness) — it NEVER lets the model derive or
+   * influence these values. The model is told, not asked. (ADR-016.)
+   *
+   * Silently no-ops after `stop()` — a late call racing a teardown is harmless.
+   */
+  pushLessonState(state: {
+    correct: boolean | null;
+    bkt: number;
+    streak: number;
+    phase: string;
+    hintLevel: number;
+  }): void {
+    if (this.stopped) return;
+    const correctLabel =
+      state.correct === null ? 'n/a' : state.correct ? 'correct' : 'incorrect';
+    const summary =
+      `${correctLabel}; BKT ${state.bkt.toFixed(3)}; streak ${state.streak}; ` +
+      `phase ${state.phase}; hint ${state.hintLevel}`;
+    this.opts.session.sendContext(summary);
+  }
+
   private handleTranscript(t: VoiceTranscript): void {
     // A real provider's WebSocket drains asynchronously, so a transcript can land
     // after close(); ignore it rather than insert against a draining pool.
     if (this.stopped) return;
+
+    // Live transcript stream: fire for ALL chunks (both roles, both interim and final)
+    // before any role-specific logic. This is what drives the in-progress speech bubble
+    // on the client — interim learner chunks must reach the stream even though
+    // onLearnerUtterance is final-only. 'tutor' role maps to 'agent' speaker so the wire
+    // contract never leaks internal naming. Absent callback → silently no-ops.
+    this.opts.onTranscriptChunk?.({
+      speaker: t.role === 'learner' ? 'learner' : 'agent',
+      text: t.text,
+      final: t.final,
+    });
 
     if (t.role === 'learner') {
       this.turn.learnerText = t.text;
