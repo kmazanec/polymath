@@ -279,10 +279,54 @@ describe('wire protocol', () => {
       { kind: 'ack', sessionId: SID, event: 'submit' },
       { kind: 'error', sessionId: SID, message: 'boom' },
       { kind: 'error', message: 'no session' },
+      // transcript_stream: all four combinations of speaker × final
+      { kind: 'transcript_stream', sessionId: SID, speaker: 'learner', text: 'hello', final: false },
+      { kind: 'transcript_stream', sessionId: SID, speaker: 'learner', text: 'hello world', final: true },
+      { kind: 'transcript_stream', sessionId: SID, speaker: 'agent', text: 'understood', final: false },
+      { kind: 'transcript_stream', sessionId: SID, speaker: 'agent', text: 'understood.', final: true },
     ];
     for (const m of messages) {
       expect(ServerMessage.parse(m)).toEqual(m);
     }
+  });
+
+  it('transcript_stream: rejects an over-cap text (MAX_SOURCE_LEN + 1)', () => {
+    expect(() =>
+      ServerMessage.parse({
+        kind: 'transcript_stream',
+        sessionId: SID,
+        speaker: 'learner',
+        text: 'x'.repeat(4001),
+        final: false,
+      }),
+    ).toThrow();
+  });
+
+  it('transcript_stream: strips unknown fields on parse (server→client only, ephemeral transport)', () => {
+    // Extra fields a sender might accidentally include are stripped, not thrown — same
+    // behaviour as spoken_turn (Zod discriminated-union strip mode).
+    const parsed = ServerMessage.parse({
+      kind: 'transcript_stream',
+      sessionId: SID,
+      speaker: 'agent',
+      text: 'hi',
+      final: true,
+      extraJunk: 'ignored',
+    });
+    expect(parsed).toEqual({ kind: 'transcript_stream', sessionId: SID, speaker: 'agent', text: 'hi', final: true });
+    expect(parsed).not.toHaveProperty('extraJunk');
+  });
+
+  it('transcript_stream: rejects an invalid speaker value', () => {
+    expect(() =>
+      ServerMessage.parse({
+        kind: 'transcript_stream',
+        sessionId: SID,
+        speaker: 'narrator',
+        text: 'hi',
+        final: false,
+      }),
+    ).toThrow();
   });
 
   it('accepts a submit with each repSubmission branch (append-only extension)', () => {

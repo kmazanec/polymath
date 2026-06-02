@@ -250,5 +250,19 @@ export const ServerMessage = z.discriminatedUnion('kind', [
     sessionId: SessionId.optional(),
     message: z.string(),
   }),
+  /** Server→client only. Ephemeral UI transport for streaming a spoken-turn
+   *  transcript chunk (ADR-018). `final:false` chunks are interim ASR partials —
+   *  the UI collapses them into a single in-progress bubble; `final:true` commits
+   *  the completed segment. The durable record of a spoken turn lives in the
+   *  persisted voice-turn event, not here — this kind is the live stream only and
+   *  carries no integrity weight. Capped to MAX_SOURCE_LEN like every other
+   *  learner/agent string in this contract. */
+  z.object({
+    kind: z.literal('transcript_stream'),
+    sessionId: SessionId,
+    speaker: z.enum(['learner', 'agent']),
+    text: z.string().max(MAX_SOURCE_LEN),
+    final: z.boolean(),
+  }),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
