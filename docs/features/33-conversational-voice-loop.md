@@ -1,6 +1,6 @@
 # Feature: Conversational Voice Loop
 
-**Status:** Building · **Date:** 2026-06-02 · **ADR:** [ADR-018](../adrs/ADR-018-conversational-voice-loop.md)
+**Status:** Done — with deferred live verification · **Date:** 2026-06-02 · **ADR:** [ADR-018](../adrs/ADR-018-conversational-voice-loop.md)
 
 ## What this delivers (before → after)
 
