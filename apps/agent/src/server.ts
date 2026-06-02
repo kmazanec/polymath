@@ -44,6 +44,7 @@ import {
   type LoggedEvent,
 } from './mastery/eventConsumer.js';
 import { validateOutboundAction } from './agent/validateAction.js';
+import { rejectUnauthorizedAction } from './agent/authorizedAction.js';
 import { compileMove, type TacticalMove } from './agent/menu.js';
 import { defaultItemPrompt, explanationBeforeNextItem } from './agent/introAdvance.js';
 import { computeRecall } from './agent/recallReflex.js';
@@ -710,52 +711,6 @@ async function isInTransferProbe(db: Db, sessionId: string): Promise<boolean> {
     if (c?.kind === 'TransferProbe') return true; // mounted and unresolved
   }
   return false;
-}
-
-/** Reject an outbound privileged action the learner hasn't earned, regardless of
- *  what the agent proposed (the server never trusts the agent — defense for a
- *  jailbroken/misbehaving LLM provider). Returns a rejection reason (→ downgrade to
- *  `no_action`) or null if authorized:
- *   - a `TransferProbe` mount needs `ruleGatePassed` AND an exact match to an
- *     allowed unseen `transfer_bank` row;
- *   - a `transition` → `mastered` OR a direct `mount MasteryCelebration` (the two
- *     equivalent privileged mastery routes) needs the full mastery predicate satisfied
- *     server-side (the threaded `gate` over the derived state). When explain-back is
- *     unmet the gate cannot pass — a forged mastery transition/celebration is downgraded. */
-function rejectUnauthorizedAction(
-  action: Action,
-  learner: LearnerSnapshot,
-  gate: MasteryGateResult,
-  candidates: TransferProbeItem[] | undefined,
-): string | null {
-  // Both privileged mastery routes get the earned-it gate: the `transition→mastered`
-  // proposal AND a DIRECT `mount MasteryCelebration` (a forged/jailbroken provider can
-  // emit either — MasteryCelebration is a valid mountable ComponentSpec that passes Zod
-  // + passes Layer-2 trivially). The server is the truth-maker (the XState machine is not
-  // driven at agent runtime — BUILD-PLAN decision #7), so this rejection path IS the
-  // statechart guard. The legitimate celebration is server-minted via the accepted-
-  // transition reflex (masteryCelebrationAction) with server-sourced conceptsMastered;
-  // any agent-proposed celebration is therefore rejected unless the gate is satisfied —
-  // and even then the agent's claimed conceptsMastered are never forwarded.
-  const isMasteryTransition = action.type === 'transition' && action.to === 'mastered';
-  const isDirectCelebration =
-    action.type === 'mount' && action.component.kind === 'MasteryCelebration';
-  if (isMasteryTransition || isDirectCelebration) {
-    // The full-gate evaluation is computed ONCE per turn by the caller and threaded
-    // in (no stale recompute). On rejection, name the blockers so AC#3's log records *why*.
-    return gate.passed ? null : `mastery_gate_failed: ${gate.blockers.join(',')}`;
-  }
-  if (action.type !== 'mount' || action.component.kind !== 'TransferProbe') return null;
-  if (!learner.ruleGatePassed) return 'transfer probe before the rule gate passed';
-  const c = action.component;
-  const match = (candidates ?? []).find(
-    (b) =>
-      b.itemId === c.itemId &&
-      b.targetExpression === c.expression &&
-      b.targetRep === c.targetRep &&
-      JSON.stringify([...b.hiddenReps].sort()) === JSON.stringify([...c.hiddenReps].sort()),
-  );
-  return match ? null : 'transfer probe does not match an allowed unseen bank item';
 }
 
 /** F-12: build the MasteryCelebration mount for an AUTHORIZED mastery transition.

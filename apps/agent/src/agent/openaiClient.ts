@@ -36,8 +36,11 @@ const ItemSchema = z.object({
 
 /** The structured-output schema the model fills. Mapped to `TacticalMove` below.
  *  Flat (not a discriminated union of disjoint shapes) so OpenAI strict JSON-schema
- *  mode accepts it; we narrow by `move` and read the relevant fields. */
-const MoveSchema = z.object({
+ *  mode accepts it; we narrow by `move` and read the relevant fields.
+ *
+ *  Exported so the realtime tool-call path can reuse the SAME schema — one definition
+ *  stays in lockstep with the menu, one `toTacticalMove` handles both paths. */
+export const MoveSchema = z.object({
   // The enum is the agent's full internal menu (F26_MENU = the prior menu + the
   // scaffold-only playground move). Sourcing it from the menu module keeps the LLM's
   // option set in lockstep with the TacticalMove union — adding a menu move can't
@@ -68,7 +71,7 @@ const MoveSchema = z.object({
    *  move (`verify_playground_equivalence`). */
   scaffold: z.string().nullable(),
 });
-type RawMove = z.infer<typeof MoveSchema>;
+export type RawMove = z.infer<typeof MoveSchema>;
 
 /** Convert a nullable Zod-validated ItemSchema output to a ProposedItem.
  *  Translates prompt: null → undefined (ProposedItem.prompt is optional, not nullable). */
@@ -82,7 +85,10 @@ function toProposedItem(raw: z.infer<typeof ItemSchema>): ProposedItem {
   };
 }
 
-function toTacticalMove(raw: RawMove): TacticalMove {
+/** Convert a Zod-validated flat `RawMove` into the typed `TacticalMove` discriminated
+ *  union. Exported so the realtime tool-call path (same schema, same switch) doesn't
+ *  duplicate this logic — one definition, two callers. */
+export function toTacticalMove(raw: RawMove): TacticalMove {
   const r = raw.rationale;
   const item: ProposedItem | null = raw.item !== null ? toProposedItem(raw.item) : null;
   switch (raw.move) {
