@@ -1133,6 +1133,93 @@ button:disabled,
 .composer .ask-tutor--unavailable .ask-tutor__button { color: var(--desk-text-muted); opacity: 0.5; }
 .composer .ask-tutor__note { display: none; }     /* the input placeholder already explains; keep the bar clean */
 
+/* ── Voice activity indicators (ADR-018) ─────────────────────────────────────
+ * Keyed on data-voice-activity, present ONLY while data-voice-state="connected".
+ * Color is ALWAYS paired with shape/motion so no state is distinguished by hue
+ * alone (WCAG 1.4.1 / ADR-004 colorblind-aware palette).
+ * All animations are gated with prefers-reduced-motion. */
+
+/* LISTENING — red pulsing ring signals "mic is live, I'm hearing you". */
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240,90,90,0.55); }
+  50%       { box-shadow: 0 0 0 6px rgba(240,90,90,0); }
+}
+.composer .ask-tutor__button[data-voice-activity="listening"] {
+  background: rgba(240,90,90,0.22); color: #ff9a9a;
+  outline: 2px solid rgba(240,90,90,0.5); outline-offset: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .composer .ask-tutor__button[data-voice-activity="listening"] {
+    animation: voice-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+/* THINKING — dim violet pulse: tutor is processing, not yet speaking. */
+@keyframes voice-thinking {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 1; }
+}
+.composer .ask-tutor__button[data-voice-activity="thinking"] {
+  background: rgba(123,108,255,0.18); color: var(--rail-violet);
+  outline: 2px solid rgba(123,108,255,0.35); outline-offset: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .composer .ask-tutor__button[data-voice-activity="thinking"] {
+    animation: voice-thinking 1s ease-in-out infinite;
+  }
+}
+
+/* AGENT-SPEAKING — teal/cyan steady glow: tutor is speaking.
+ * Cyan (distinct from the red listening state and the violet thinking state)
+ * paired with a solid outline — three different shapes, not just hue. */
+.composer .ask-tutor__button[data-voice-activity="agent-speaking"] {
+  background: rgba(23,226,234,0.15); color: var(--rail-cyan);
+  outline: 2px solid rgba(23,226,234,0.5); outline-offset: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes voice-agent-speaking {
+    0%, 100% { outline-color: rgba(23,226,234,0.5); }
+    50%       { outline-color: rgba(23,226,234,0.9); }
+  }
+  .composer .ask-tutor__button[data-voice-activity="agent-speaking"] {
+    animation: voice-agent-speaking 0.8s ease-in-out infinite;
+  }
+}
+
+/* ── Mic level meter ──────────────────────────────────────────────────────── */
+.mic-level-meter {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+  padding: 0 2px;
+  vertical-align: middle;
+}
+.mic-level-meter__bar {
+  display: inline-block;
+  width: 3px;
+  border-radius: 1px;
+  /* --level is a 0–1 fractional value set inline by the component. */
+  height: calc(3px + var(--level, 0) * 11px);
+  background: rgba(240,90,90,0.7);
+  transition: height 0.08s ease;
+}
+
+/* ── Partial/interim spoken-turn bubble ──────────────────────────────────── */
+.transcript-turn--partial {
+  opacity: 0.55;
+  font-style: italic;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .transcript-turn--partial {
+    animation: partial-fade-in 0.15s ease;
+  }
+  @keyframes partial-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 0.55; }
+  }
+}
+
 /* The ONE primary button — Continue / Send. Carries the accent rail as a fill. */
 .composer__primary {
   flex: 0 0 auto;

@@ -78,13 +78,21 @@ export interface CompletedItemTurn {
 }
 
 /**
- * A spoken turn (F-30 produces this; F-27 only defines the slot).
- * F-30 will append it; F-27 renders it as a learner/agent bubble.
+ * A spoken turn committed to the durable transcript.
+ *
+ * F-30 produces final turns via `appendSpokenTurn`; the streaming layer (ADR-018)
+ * holds in-progress (interim) chunks in a SEPARATE ephemeral React state so the
+ * append-only transcript is never mutated mid-stream. `partial` is carried here
+ * only as a DISPLAY hint on committed turns (always absent / false on a durable
+ * record — the field is optional so existing turns remain unchanged).
  */
 export interface SpokenTurn {
   kind: 'spokenTurn';
   speaker: 'learner' | 'agent';
   text: string;
+  /** Set only on transient in-progress turns rendered outside the transcript array.
+   *  Durable committed turns never carry this field. Optional + append-only. */
+  partial?: boolean;
 }
 
 /** The full discriminated union — append-only to the transcript. */

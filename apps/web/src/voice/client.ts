@@ -144,6 +144,16 @@ export class VoiceClient {
   }
 
   /**
+   * The live microphone MediaStream, present only while the session is
+   * connected. Null when idle, connecting, or errored. Callers use this to
+   * feed a level-meter AnalyserNode so the learner can see audio is being
+   * captured without granting extra permissions — the stream is already live.
+   */
+  get stream(): MediaStream | null {
+    return this._stream;
+  }
+
+  /**
    * Request mic permission, mint a realtime token, and join the LiveKit room.
    * Call this ONLY in response to a user gesture (e.g. button click).
    * Errors are caught and reflected as state — this method never rejects.

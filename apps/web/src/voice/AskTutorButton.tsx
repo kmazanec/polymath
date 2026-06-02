@@ -1,5 +1,10 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { VoiceClient } from './client.js';
+import { MicLevelMeter } from './MicLevelMeter.js';
+
+/** The conversational voice activity state, driven by transcript_stream events
+ *  (ADR-018). Only meaningful while the voice session is connected. */
+export type VoiceActivity = 'listening' | 'thinking' | 'agent-speaking';
 
 export interface AskTutorButtonProps {
   sessionId: string;
@@ -8,6 +13,11 @@ export interface AskTutorButtonProps {
   /** Injectable for tests; defaults to global fetch. Used only for the availability
    *  probe (the VoiceClient owns its own fetch for the mint). */
   fetchFn?: typeof fetch;
+  /** The current conversational activity while connected (ADR-018). Optional —
+   *  absent when not connected or when the caller doesn't track voice activity.
+   *  Reflected on the button as `data-voice-activity` so CSS can style each state.
+   *  Does NOT affect interactive behaviour — display only. */
+  activity?: VoiceActivity;
 }
 
 type VoiceState = VoiceClient['state'];
@@ -54,12 +64,17 @@ function isDisabled(state: VoiceState): boolean {
  * looked clickable, asked for the mic, then flattened to "Voice unavailable" with no
  * reason — which read as "the button does nothing".
  */
-export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: AskTutorButtonProps): ReactElement {
+export function AskTutorButton({ sessionId, client: injectedClient, fetchFn, activity }: AskTutorButtonProps): ReactElement {
   // Build the client lazily (once, stable across renders) unless one is injected.
   const [client] = useState<VoiceClient>(() => injectedClient ?? new VoiceClient({ sessionId }));
 
   // Mirror the client's state into React state so the button re-renders on changes.
   const [voiceState, setVoiceState] = useState<VoiceState>(() => client.state);
+
+  // Track the live mic stream so MicLevelMeter receives the real stream when
+  // connected and null otherwise. Polled from client.stream after state changes —
+  // same cadence as setVoiceState (both update in the same callback).
+  const [micStream, setMicStream] = useState<MediaStream | null>(() => client.stream);
 
   // Whether voice is configured on this deployment (probed on mount). Until known we
   // render a neutral "checking" disabled button so we never prompt the mic blindly.
@@ -99,9 +114,13 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: A
     // Support test clients that expose onStateChange.
     const maybeSubscribable = client as unknown as { onStateChange?: (fn: () => void) => void };
     if (typeof maybeSubscribable.onStateChange === 'function') {
-      maybeSubscribable.onStateChange(() => setVoiceState(client.state));
+      maybeSubscribable.onStateChange(() => {
+        setVoiceState(client.state);
+        setMicStream(client.stream);
+      });
     }
     setVoiceState(client.state);
+    setMicStream(client.stream);
     // Tear the session down on unmount: stop the mic and the token refresher so
     // navigating away from the lesson can't leave a hot mic or a minting loop
     // running. stop() is idle-safe (a no-op if voice was never started).
@@ -121,6 +140,7 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: A
         await client.start();
       }
       setVoiceState(client.state);
+      setMicStream(client.stream);
     })();
   }, [client]);
 
@@ -146,6 +166,10 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: A
     );
   }
 
+  // Only expose data-voice-activity while connected; absent in all other states
+  // so CSS can key cleanly on the attribute's presence (ADR-018).
+  const isConnected = voiceState === 'connected';
+
   return (
     <div className="ask-tutor">
       <button
@@ -154,6 +178,7 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: A
         onClick={handleClick}
         disabled={availability === 'unknown' || isDisabled(voiceState)}
         data-voice-state={voiceState}
+        {...(isConnected && activity !== undefined ? { 'data-voice-activity': activity } : {})}
         aria-label={voiceState === 'connected' ? 'End voice session with tutor' : 'Start voice session with tutor'}
       >
         {/* The microphone emoji is decorative — aria-hidden keeps it out of the
@@ -162,6 +187,9 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn }: A
           <><span aria-hidden="true">🎤</span> {labelFor(voiceState)}</>
         )}
       </button>
+      {/* Live mic level meter — only rendered while connected and a stream is available.
+          Gives the learner visual proof that audio is being captured (ADR-018). */}
+      {isConnected && <MicLevelMeter stream={micStream} />}
     </div>
   );
 }

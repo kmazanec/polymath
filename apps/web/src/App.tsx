@@ -14,7 +14,7 @@ import type {
 import { TranscriptLog } from './components/TranscriptLog.js';
 import { transferRepRefusal } from './copy/refusals.js';
 import { introForLesson } from './lessonIntroContent.js';
-import { AskTutorButton } from './voice/AskTutorButton.js';
+import { AskTutorButton, type VoiceActivity } from './voice/AskTutorButton.js';
 import { AboutSessionData } from './components/AboutSessionData.js';
 import { ConsentModal } from './observability/ConsentModal.js';
 import { initPostHog, capture, groupBySession } from './observability/posthog.js';
@@ -163,10 +163,16 @@ interface LessonBridge {
  *  F-27: receives the transcript `turns` + `appendTurn` seam for F-30.
  *  F-31: receives the lifted `phase` prop so FlowSkeleton can render in the
  *  reserved left-rail slot without needing its own useMachine call. */
+/** An in-progress spoken turn — held OUTSIDE the append-only transcript array
+ *  so interim ASR partials never mutate durable history. The latest partial for
+ *  a speaker replaces any prior one; `null` means no turn is in flight. */
+type InterimTurn = { speaker: 'learner' | 'agent'; text: string } | null;
+
 function LessonSession({
   lessonId,
   bridge,
   surface,
+  interim,
   conn,
   awaitingAgent,
   onSubmit,
@@ -180,6 +186,9 @@ function LessonSession({
   lessonId: number;
   bridge: LessonBridge;
   surface: SurfaceState;
+  /** Ephemeral in-progress spoken turn for the streaming transcript bubble.
+   *  Kept separate from the durable transcript array (ADR-018). */
+  interim: InterimTurn;
   conn: ConnState;
   awaitingAgent: boolean;
   onSubmit: (payload: RepSubmitPayload) => void;
@@ -259,6 +268,22 @@ function LessonSession({
           {/* TRANSCRIPT — append-only ordered log, ABOVE the live item in one thread. */}
           <TranscriptLog turns={transcript} />
 
+          {/* STREAMING INTERIM BUBBLE — one in-progress spoken turn, rendered OUTSIDE
+              the transcript array so the append-only log is never mutated mid-stream.
+              Replaced on each ASR partial; committed (and cleared) on `final:true`.
+              aria-live="polite" announces the latest text without interrupting the
+              learner (ADR-018). */}
+          {interim && (
+            <div
+              className={`transcript-turn transcript-turn--spoken transcript-spoken--${interim.speaker} transcript-turn--partial`}
+              aria-live="polite"
+              aria-label={`${interim.speaker === 'learner' ? 'You are saying' : 'Tutor is saying'}: ${interim.text}`}
+            >
+              <span className="spoken-speaker">{interim.speaker === 'learner' ? 'You' : 'Tutor'}</span>
+              <span className="spoken-text">{interim.text}</span>
+            </div>
+          )}
+
           {/* THE LIVE TURN — the current concept / practice item / probe, anchored at
               the foot of the conversation where the learner acts. */}
           <div className="thread__live" data-testid="workspace" ref={workspaceRef}>
@@ -333,6 +358,22 @@ export function App(): ReactElement {
   /** The intelligibility sampling prompt. */
   const [intelligibilityFor, setIntelligibilityFor] = useState<string | null>(null);
 
+  /**
+   * Ephemeral in-progress spoken turn for the streaming transcript bubble
+   * (ADR-018). Held OUTSIDE the append-only transcript array: each partial
+   * replaces this state; `final:true` commits to the transcript and clears this.
+   * Never null-checks to gate the display — null simply hides the bubble.
+   */
+  const [interim, setInterim] = useState<InterimTurn>(null);
+
+  /**
+   * Conversational activity state, driven by transcript_stream events (ADR-018).
+   * Defaults to 'listening' when connected and idle. Drives data-voice-activity
+   * on AskTutorButton for CSS affordances. Only meaningful while voice is active —
+   * the prop is optional on AskTutorButton so it's harmless when voice is off.
+   */
+  const [voiceActivity, setVoiceActivity] = useState<VoiceActivity>('listening');
+
   /** The id of the item currently mounted (for submit naming). */
   const currentItemId = useRef<string>('l1-and');
   const itemMountedAt = useRef<number>(Date.now());
@@ -399,6 +440,34 @@ export function App(): ReactElement {
             ) {
               setAwaitingAgent(false);
             }
+            // ADR-018: transcript_stream carries NO authority — it is a live display
+            // stream only. Interim partials replace the single in-progress bubble;
+            // a `final:true` chunk commits to the durable transcript and clears the
+            // bubble. This branch is purely additive — the F-30 typed-answer path
+            // (r.answer.spoken → appendSpokenTurn) is unchanged and runs below.
+            if (msg.kind === 'transcript_stream') {
+              if (!msg.final) {
+                // Partial: replace (never append) the single in-progress bubble.
+                setInterim({ speaker: msg.speaker, text: msg.text });
+              } else {
+                // Final: commit to durable transcript, clear the in-progress bubble.
+                setSurface((prev) => appendSpokenTurn(prev, msg.speaker, msg.text));
+                setInterim(null);
+              }
+              // Update voice activity based on transcript_stream events (ADR-018).
+              // learner final → 'thinking' (waiting for agent to begin);
+              // agent interim/final → 'agent-speaking';
+              // agent final → 'listening' (conversation turn complete).
+              if (msg.speaker === 'learner' && msg.final) {
+                setVoiceActivity('thinking');
+              } else if (msg.speaker === 'agent' && !msg.final) {
+                setVoiceActivity('agent-speaking');
+              } else if (msg.speaker === 'agent' && msg.final) {
+                setVoiceActivity('listening');
+              }
+              return;
+            }
+
             if (msg.kind === 'ack' && msg.event === 'enter_playground') {
               setPlayground({
                 kind: 'PlaygroundCanvas',
@@ -787,6 +856,7 @@ export function App(): ReactElement {
           lessonId={lessonId}
           bridge={bridgeRef.current}
           surface={surface}
+          interim={interim}
           conn={conn}
           awaitingAgent={awaitingAgent}
           onSubmit={onSubmit}
@@ -829,7 +899,7 @@ export function App(): ReactElement {
 
           <div className="ask-agent">
             <label className="visually-hidden" htmlFor="ask-agent-input">Ask the tutor a question</label>
-            {sessionId && <AskTutorButton sessionId={sessionId} />}
+            {sessionId && <AskTutorButton sessionId={sessionId} activity={voiceActivity} />}
             <input
               id="ask-agent-input"
               type="text"
