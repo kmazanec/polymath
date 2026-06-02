@@ -66,6 +66,23 @@ Test-first, ordered; each chunk names the ACs it satisfies and the test(s) that 
 - [ ] **C9 — Web: mic visuals.** Expose mic stream; `AnalyserNode` meter; `data-voice-activity` listening/speaking/thinking; styles + reduced-motion gating. *Tests:* `AskTutorButton` jsdom — activity attribute flips with signals; meter mounts when stream present; existing `VoiceState` behavior unchanged. (AC-7)
 - [ ] **C10 — E2E + build verification.** Extend `apps/web/e2e/voice.spec.ts` (fake media) to assert listening state + a streamed transcript bubble render over the **built** app (web DCE/artifact discipline, CLAUDE.md). `docker build` the agent image to prove `@livekit/rtc-node`/`openai` native deps resolve under Node 22. *Tests:* the e2e spec; a successful agent image build + `/api/health`. (AC-7, AC-1)
 
+## Build orchestration (model tiering + specialist agents)
+
+Opus reasons → Sonnet builds → Opus reviews. Opus (the orchestrator) holds the load-bearing contract/integration reasoning and the tool→guard mapping (C1–C3 design); Sonnet specialist agents build each chunk test-first in their lane inside the isolated worktree; one Opus review pass per surface plus cross-cutting security/design passes run on the finished branch before the MR.
+
+| Chunk | Surface | Builder (Sonnet) | Reviewer (Opus) |
+|-------|---------|------------------|-----------------|
+| C1 | contract (`packages/contract`) | matt-pocock | matt-pocock |
+| C2, C3 | server tool→move→gate (`apps/agent`) | ryan-dahl (matt-pocock base) | ryan-dahl |
+| C4, C5 | realtime session + bridge construction | ryan-dahl | ryan-dahl |
+| C6, C7 | state-context push + `transcript_stream` emit | ryan-dahl | ryan-dahl |
+| C8 | web transcript rendering (`apps/web`) | dan-abramov (matt-pocock base) | dan-abramov |
+| C9 | web mic visuals | dan-abramov | dan-abramov + paula-scher (design) |
+| C10 | e2e + agent docker build | ryan-dahl | — (verification) |
+| all | integrity/fail-closed/gate surface | — | troy-hunt (security pass) |
+
+Cross-cutting Opus passes after the build: **troy-hunt** on the new inbound trigger path, the server-captured-transcript boundary, and the model-proposes-privileged-moves gate; **paula-scher** on the listening/waveform/speaking indicators (hierarchy, contrast, dark mode, reduced-motion). Confirmed gating fixes are applied by Sonnet.
+
 ## Quality bars
 
 - **Security / trust boundary:** No new client trust. Transcript stays **server-captured** (the room participant is server-side); the client only triggers, never sends transcript text. `transcript_stream` is server→client (outbound) only. Tool-call actions traverse the same `validateOutboundAction`/Layer-2/`rejectUnauthorizedAction` gates as the text agent; privileged moves downgrade when unearned. Socket binds session from `session_start` only. Distinct-variable cap applies on any new server-side `equivalent()`/`truthTable()` call site. Integrity reads scope `events.app IS NULL`. Env fails closed (all of `LIVEKIT_URL`/`LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET` + OpenAI required). No secret in process argv for any key-gated CI step.
