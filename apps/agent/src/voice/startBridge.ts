@@ -194,17 +194,30 @@ export async function startVoiceBridge(args: StartBridgeArgs): Promise<LiveBridg
     // don't need to hold a ws reference here. The socket is registered only after
     // a session_start frame on the WS connection (MR !8 binding rule), so a
     // missing socket during early emit is expected and silently skipped.
+    //
+    // The tutor's ACCUMULATED transcript grows with each delta chunk; cap it at
+    // MAX_SOURCE_LEN (4 000 chars) before send so the resulting `transcript_stream`
+    // frame stays within the bound the client's ServerMessageSchema enforces.
+    // A tutor turn longer than 4 000 chars would otherwise produce a frame the
+    // client rejects, freezing the speech bubble.
     onTranscriptChunk: ({ speaker, text, final: isFinal }) => {
       const ws = socketRegistry.get(ctx.sessionId);
       if (!ws) return;
+      const MAX_TRANSCRIPT_TEXT = 4_000;
+      const clampedText = text.length > MAX_TRANSCRIPT_TEXT ? text.slice(0, MAX_TRANSCRIPT_TEXT) : text;
       const msg: ServerMessage = {
         kind: 'transcript_stream',
         sessionId: ctx.sessionId,
         speaker,
-        text,
+        text: clampedText,
         final: isFinal,
       };
-      ws.send(JSON.stringify(msg));
+      try {
+        ws.send(JSON.stringify(msg));
+      } catch {
+        // The socket may close between the registry null-check and the send.
+        // Drop silently — the next chunk will find no registered socket and skip.
+      }
     },
   });
 
@@ -246,7 +259,11 @@ export async function startVoiceBridge(args: StartBridgeArgs): Promise<LiveBridg
           sessionId: ctx.sessionId,
           action,
         };
-        ws.send(JSON.stringify(msg));
+        try {
+          ws.send(JSON.stringify(msg));
+        } catch {
+          // Socket may close between the registry get and the send — drop silently.
+        }
       }
 
       // Send function_call_output back to the model so it knows the outcome.

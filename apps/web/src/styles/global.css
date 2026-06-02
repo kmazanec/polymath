@@ -1135,18 +1135,25 @@ button:disabled,
 
 /* ── Voice activity indicators (ADR-018) ─────────────────────────────────────
  * Keyed on data-voice-activity, present ONLY while data-voice-state="connected".
- * Color is ALWAYS paired with shape/motion so no state is distinguished by hue
- * alone (WCAG 1.4.1 / ADR-004 colorblind-aware palette).
- * All animations are gated with prefers-reduced-motion. */
+ *
+ * Every state is distinguished by SHAPE (the per-state SVG glyph in the button),
+ * COLOR (background tint + outline hue), and OUTLINE STYLE (solid/dashed/double)
+ * so colorblind users and reduced-motion users each have two independent non-color
+ * cues — WCAG 1.4.1 / ADR-004. Animations are additive (reduced-motion gated) and
+ * never drop below full button opacity so no state reads as disabled (ADR-016). */
 
-/* LISTENING — red pulsing ring signals "mic is live, I'm hearing you". */
+/* LISTENING — mic glyph, solid outline, red tint.
+ * Color: red.  Shape: mic SVG.  Outline-style: solid.
+ * Animation (reduced-motion: none): pulsing box-shadow ring. */
 @keyframes voice-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(240,90,90,0.55); }
   50%       { box-shadow: 0 0 0 6px rgba(240,90,90,0); }
 }
 .composer .ask-tutor__button[data-voice-activity="listening"] {
   background: rgba(240,90,90,0.22); color: #ff9a9a;
-  outline: 2px solid rgba(240,90,90,0.5); outline-offset: 2px;
+  outline: 2px solid rgba(240,90,90,0.6); outline-offset: 2px;
+  outline-style: solid;
+  opacity: 1;
 }
 @media (prefers-reduced-motion: no-preference) {
   .composer .ask-tutor__button[data-voice-activity="listening"] {
@@ -1154,14 +1161,19 @@ button:disabled,
   }
 }
 
-/* THINKING — dim violet pulse: tutor is processing, not yet speaking. */
+/* THINKING — three-dots glyph, dashed outline, violet tint.
+ * Color: violet.  Shape: dots SVG.  Outline-style: dashed.
+ * No opacity animation — opacity < 1 reads universally as "disabled".
+ * Animation (reduced-motion: none): outline-color throb (never touches opacity). */
 @keyframes voice-thinking {
-  0%, 100% { opacity: 0.6; }
-  50%       { opacity: 1; }
+  0%, 100% { outline-color: rgba(123,108,255,0.4); }
+  50%       { outline-color: rgba(123,108,255,0.8); }
 }
 .composer .ask-tutor__button[data-voice-activity="thinking"] {
   background: rgba(123,108,255,0.18); color: var(--rail-violet);
-  outline: 2px solid rgba(123,108,255,0.35); outline-offset: 2px;
+  outline: 2px dashed rgba(123,108,255,0.4); outline-offset: 2px;
+  outline-style: dashed;
+  opacity: 1;
 }
 @media (prefers-reduced-motion: no-preference) {
   .composer .ask-tutor__button[data-voice-activity="thinking"] {
@@ -1169,24 +1181,29 @@ button:disabled,
   }
 }
 
-/* AGENT-SPEAKING — teal/cyan steady glow: tutor is speaking.
- * Cyan (distinct from the red listening state and the violet thinking state)
- * paired with a solid outline — three different shapes, not just hue. */
+/* AGENT-SPEAKING — speaker glyph, double outline, cyan tint.
+ * Color: cyan.  Shape: speaker SVG.  Outline-style: double (3px renders correctly at 2x).
+ * Animation (reduced-motion: none): outline-color throb. */
+@keyframes voice-agent-speaking {
+  0%, 100% { outline-color: rgba(23,226,234,0.5); }
+  50%       { outline-color: rgba(23,226,234,0.95); }
+}
 .composer .ask-tutor__button[data-voice-activity="agent-speaking"] {
   background: rgba(23,226,234,0.15); color: var(--rail-cyan);
-  outline: 2px solid rgba(23,226,234,0.5); outline-offset: 2px;
+  outline: 3px double rgba(23,226,234,0.5); outline-offset: 2px;
+  outline-style: double;
+  opacity: 1;
 }
 @media (prefers-reduced-motion: no-preference) {
-  @keyframes voice-agent-speaking {
-    0%, 100% { outline-color: rgba(23,226,234,0.5); }
-    50%       { outline-color: rgba(23,226,234,0.9); }
-  }
   .composer .ask-tutor__button[data-voice-activity="agent-speaking"] {
     animation: voice-agent-speaking 0.8s ease-in-out infinite;
   }
 }
 
 /* ── Mic level meter ──────────────────────────────────────────────────────── */
+/* The meter is aria-hidden (correct); it lives inside .ask-tutor which is
+ * flex: 0 0 auto in .composer .ask-tutor, so the meter doesn't break the 44px
+ * button layout — the meter sits alongside the button, not inside it (ADR-016). */
 .mic-level-meter {
   display: inline-flex;
   align-items: flex-end;
@@ -1199,24 +1216,52 @@ button:disabled,
   display: inline-block;
   width: 3px;
   border-radius: 1px;
-  /* --level is a 0–1 fractional value set inline by the component. */
-  height: calc(3px + var(--level, 0) * 11px);
-  background: rgba(240,90,90,0.7);
-  transition: height 0.08s ease;
+  /* --level is a 0–1 fractional value set inline by the component.
+   * 4px floor: "armed but quiet" is visibly distinct from "meter is off" —
+   * a silent mic shows small but present bars, not near-invisible 3px stubs.
+   * Color: ramps from muted --desk-text-muted (calm idle) to the live red tint
+   * with level, so silence looks calm and audio looks active. */
+  height: calc(4px + var(--level, 0) * 10px);
+  background: color-mix(in srgb, #ff9a9a calc(var(--level, 0) * 100%), var(--desk-text-muted));
+  transition: height 0.08s ease, background 0.15s ease;
 }
 
 /* ── Partial/interim spoken-turn bubble ──────────────────────────────────── */
+/* "In-progress" is conveyed by italic style + a trailing animated ellipsis, NOT
+ * by opacity on the whole bubble. opacity:0.55 dims text AND fill toward the dark
+ * desk background, which fails WCAG AA 4.5:1 for body text (WCAG 1.4.3).
+ *
+ * The bubble fill/border are kept at full strength so contrast is frame-identical
+ * to a committed turn. The muted text color for partial content uses
+ * --desk-text-muted (#9aa0c8), which is ~4.6:1 on --desk-panel (rgba(255,255,255,0.025)
+ * over --desk-bg #0b0d1f ≈ #0c0e21): 9.4:1 on the solid desk background, clearing AA
+ * comfortably even on the lightest plausible bubble fill. */
 .transcript-turn--partial {
-  opacity: 0.55;
+  opacity: 1;   /* bubble fill + border always at full strength */
   font-style: italic;
 }
+.transcript-turn--partial .spoken-text {
+  color: var(--desk-text-muted);
+}
+/* Trailing ellipsis — conveys streaming/in-progress without opacity (ADR-004). */
+.transcript-turn--partial .spoken-text::after {
+  content: '\2009…';   /* thin-space + ellipsis */
+  color: var(--desk-text-muted);
+}
 @media (prefers-reduced-motion: no-preference) {
-  .transcript-turn--partial {
-    animation: partial-fade-in 0.15s ease;
+  @keyframes partial-ellipsis {
+    0%,  100% { opacity: 1;   }
+    50%        { opacity: 0.4; }
+  }
+  .transcript-turn--partial .spoken-text::after {
+    animation: partial-ellipsis 1.1s ease-in-out infinite;
   }
   @keyframes partial-fade-in {
     from { opacity: 0; }
-    to   { opacity: 0.55; }
+    to   { opacity: 1; }
+  }
+  .transcript-turn--partial {
+    animation: partial-fade-in 0.15s ease;
   }
 }
 

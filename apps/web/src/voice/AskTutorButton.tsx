@@ -1,6 +1,7 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react';
 import { VoiceClient } from './client.js';
 import { MicLevelMeter } from './MicLevelMeter.js';
+import { ActivityGlyph, activityAnnouncement } from './ActivityGlyph.js';
 
 /** The conversational voice activity state, driven by transcript_stream events
  *  (ADR-018). Only meaningful while the voice session is connected. */
@@ -144,49 +145,63 @@ export function AskTutorButton({ sessionId, client: injectedClient, fetchFn, act
     })();
   }, [client]);
 
-  // Voice not configured on this deployment → render an honest, non-interactive
-  // affordance. No mic prompt, no dead-looking button.
-  if (availability === 'unavailable') {
-    return (
-      <div className="ask-tutor ask-tutor--unavailable">
-        {/* aria-label makes the announced name unambiguous without the emoji glyph. */}
-        <button
-          type="button"
-          className="ask-tutor__button"
-          disabled
-          aria-disabled="true"
-          aria-label="Voice tutor unavailable"
-        >
-          <span aria-hidden="true">🎤</span> Voice tutor unavailable
-        </button>
-        <span className="ask-tutor__note">
-          Voice isn&rsquo;t set up on this deployment — use the text box above to ask the tutor.
-        </span>
-      </div>
-    );
-  }
-
   // Only expose data-voice-activity while connected; absent in all other states
   // so CSS can key cleanly on the attribute's presence (ADR-018).
   const isConnected = voiceState === 'connected';
+  const activeActivity = isConnected && activity !== undefined ? activity : undefined;
+  const isUnavailable = availability === 'unavailable';
 
+  // All render branches share a single <div className="ask-tutor ..."><button> DOM
+  // structure so that React reconciles the same node across availability transitions.
+  // A split return (early `if`) would replace the button element on transition, making
+  // any captured DOM reference stale. Shared structure keeps the reference alive.
   return (
-    <div className="ask-tutor">
+    <div className={`ask-tutor${isUnavailable ? ' ask-tutor--unavailable' : ''}`}>
+      {/* aria-live region: announces activity changes to screen readers without
+          relying on aria-label alone (which is only re-announced on focus, not on
+          prop change). polite so it doesn't interrupt the transcript region.
+          ADR-016 / ADR-018 / WCAG 4.1.3. */}
+      {isConnected && activity !== undefined && (
+        <span className="visually-hidden" aria-live="polite" aria-atomic="true">
+          {activityAnnouncement(activity)}
+        </span>
+      )}
       <button
         type="button"
         className="ask-tutor__button"
-        onClick={handleClick}
-        disabled={availability === 'unknown' || isDisabled(voiceState)}
-        data-voice-state={voiceState}
-        {...(isConnected && activity !== undefined ? { 'data-voice-activity': activity } : {})}
-        aria-label={voiceState === 'connected' ? 'End voice session with tutor' : 'Start voice session with tutor'}
+        onClick={isUnavailable ? undefined : handleClick}
+        disabled={isUnavailable || availability === 'unknown' || isDisabled(voiceState)}
+        {...(isUnavailable ? { 'aria-disabled': 'true' as const } : {})}
+        data-voice-state={isUnavailable ? undefined : voiceState}
+        {...(activeActivity !== undefined ? { 'data-voice-activity': activeActivity } : {})}
+        aria-label={
+          isUnavailable ? 'Voice tutor unavailable'
+          : voiceState === 'connected' ? 'End voice session with tutor'
+          : 'Start voice session with tutor'
+        }
       >
-        {/* The microphone emoji is decorative — aria-hidden keeps it out of the
-            accessible name (the aria-label above is the announced text). */}
-        {availability === 'unknown' ? 'Checking voice…' : (
-          <><span aria-hidden="true">🎤</span> {labelFor(voiceState)}</>
+        {/* Button content varies by state:
+            - unavailable: emoji + explanatory text
+            - unknown (probing): "Checking voice…"
+            - connected + active: per-state SVG glyph (distinct shape, inherits
+              currentColor, survives reduced-motion — ADR-004/WCAG 1.4.1)
+            - otherwise: emoji + label text
+            The emoji is aria-hidden; the button's aria-label is the announced name. */}
+        {isUnavailable ? (
+          <><span aria-hidden="true">🎤</span> Voice tutor unavailable</>
+        ) : availability === 'unknown' ? 'Checking voice…' : (
+          activeActivity !== undefined
+            ? <ActivityGlyph activity={activeActivity} />
+            : <><span aria-hidden="true">🎤</span> {labelFor(voiceState)}</>
         )}
       </button>
+      {/* Explanation note — only shown (visible) when unavailable; hidden otherwise
+          by CSS (.ask-tutor__note { display: none } in the non-unavailable case). */}
+      {isUnavailable && (
+        <span className="ask-tutor__note">
+          Voice isn&rsquo;t set up on this deployment — use the text box above to ask the tutor.
+        </span>
+      )}
       {/* Live mic level meter — only rendered while connected and a stream is available.
           Gives the learner visual proof that audio is being captured (ADR-018). */}
       {isConnected && <MicLevelMeter stream={micStream} />}

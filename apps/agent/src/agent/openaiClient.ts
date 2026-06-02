@@ -21,17 +21,27 @@ import {
  * when a key is present — see eval/ and feature file).
  */
 
+// String-length caps for model-controlled fields. A jailbroken model could otherwise
+// emit multi-MB values that get persisted, rendered, or re-sent to the client.
+// Lengths are chosen to match what the UI and persistence layer already bound:
+//  MAX_EXPRESSION_LEN — Boolean expression strings; matches the variable-cap DoS guard.
+//  MAX_PROSE_LEN      — Free-form prose (rationale, answers, hints, scaffolds).
+//  MAX_TABLE_CELLS    — claimedTruthTable; 2^10 = 1 024 matches contract.MAX_CELLS.
+const MAX_EXPRESSION_LEN = 2_000;
+const MAX_PROSE_LEN = 4_000;
+const MAX_TABLE_CELLS = 1_024;
+
 const Rep = z.enum(['truth_table', 'circuit', 'pseudocode']);
 const ItemSchema = z.object({
   rep: Rep,
-  targetExpression: z.string(),
-  claimedTruthTable: z.array(z.union([z.literal(0), z.literal(1)])),
+  targetExpression: z.string().max(MAX_EXPRESSION_LEN),
+  claimedTruthTable: z.array(z.union([z.literal(0), z.literal(1)])).max(MAX_TABLE_CELLS),
   visibleReps: z.array(Rep),
   // F-29 / ADR-015: lockstep with ProposedItem.prompt in menu.ts.
   // The model MUST emit a prompt for every item it generates (the rails check
   // enforces this). Nullable in the schema so OpenAI strict mode accepts it
   // (missing vs null are both treated as absent in toTacticalMove below).
-  prompt: z.string().max(2000).nullable(),
+  prompt: z.string().max(MAX_PROSE_LEN).nullable(),
 });
 
 /** The structured-output schema the model fills. Mapped to `TacticalMove` below.
@@ -46,30 +56,32 @@ export const MoveSchema = z.object({
   // option set in lockstep with the TacticalMove union — adding a menu move can't
   // silently leave the keyed path unable to emit it.
   move: z.enum(F26_MENU),
-  rationale: z.string(),
+  rationale: z.string().max(MAX_PROSE_LEN),
   item: ItemSchema.nullable(),
   tier: z.number().nullable(),
   altRep: Rep.nullable(),
-  workedExpression: z.string().nullable(),
-  workedSteps: z.array(z.object({ label: z.string(), detail: z.string() })).nullable(),
+  workedExpression: z.string().max(MAX_EXPRESSION_LEN).nullable(),
+  workedSteps: z
+    .array(z.object({ label: z.string().max(MAX_PROSE_LEN), detail: z.string().max(MAX_PROSE_LEN) }))
+    .nullable(),
   workedVisibleReps: z.array(Rep).nullable(),
-  question: z.string().nullable(),
-  answer: z.string().nullable(),
+  question: z.string().max(MAX_PROSE_LEN).nullable(),
+  answer: z.string().max(MAX_PROSE_LEN).nullable(),
   topicClassification: z.enum(['on_topic', 'off_topic']).nullable(),
   noActionReason: z.enum(['wait_for_learner', 'thinking', 'agent_unsure']).nullable(),
   /** ADR-010 Layer 3 hint fields (F-06). `hintLevel` selects the ladder rung;
    *  `hintBody` is the templated (L1/L2) or free-form (L3) text. */
   hintLevel: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable(),
-  hintBody: z.string().nullable(),
+  hintBody: z.string().max(MAX_PROSE_LEN).nullable(),
   /** Transfer-probe fields (F-07). The held-out item the learner must reproduce
    *  in `probeTargetRep`, with `probeHiddenReps` excluded from the workspace. */
-  probeExpression: z.string().nullable(),
+  probeExpression: z.string().max(MAX_EXPRESSION_LEN).nullable(),
   probeTargetRep: Rep.nullable(),
   probeHiddenReps: z.array(Rep).nullable(),
-  probeItemId: z.string().nullable(),
+  probeItemId: z.string().max(MAX_PROSE_LEN).nullable(),
   /** ADR-012 stretch: optional scaffold text for the scaffold-only playground
    *  move (`verify_playground_equivalence`). */
-  scaffold: z.string().nullable(),
+  scaffold: z.string().max(MAX_PROSE_LEN).nullable(),
 });
 export type RawMove = z.infer<typeof MoveSchema>;
 

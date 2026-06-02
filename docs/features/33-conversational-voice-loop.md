@@ -90,6 +90,36 @@ Cross-cutting Opus passes after the build: **troy-hunt** on the new inbound trig
 - **Observability:** `VoiceBridge` already logs `voice_turns` + OTel spans (TTFT, barge-in, cache-hit) — production wiring lights these up; no new metric needed. `transcript_stream` is ephemeral UI transport (the durable record is the logged voice turn + the committed `spokenTurn`).
 - **Simplicity:** One new contract kind; one new server impl file + a tool-schema module; additive web exposure (no `VoiceState` machine changes, transcript stays append-only). No speculative abstraction over providers beyond the existing `RealtimeSession` seam.
 
+## Review findings (Opus review + troy-hunt security + paula-scher design)
+
+Gating (fixed before merge):
+- **G1 — bridge killed on start.** `handleRealtimeSession` called `handle.close()` (which *performs* teardown) immediately after registering the bridge → every live session died instantly. Fix: register the handle; close it from the WS-close lifecycle for the bound session, not eagerly.
+- **G2 — `getGateContext` never wired.** Production omitted it, so the tool-call path always used `UNGROUNDED_GATE_CTX` → privileged voice moves permanently unreachable (gate-nobody-can-pass) and non-privileged tool mounts ran ungrounded. Fix: thread a per-session server-derived `{learner,gate,transferCandidates}` snapshot (the same values the submit fold computes) into `startVoiceBridge`.
+- **G3 — odd-`byteOffset` `Int16Array` crash.** Pooled `Buffer` decode can yield an odd `byteOffset`; `new Int16Array(buf, oddOffset, …)` throws in a sync WS listener → process crash. Fix: copy onto an aligned buffer before the Int16 view; guard odd `byteLength`; try/catch the publish.
+- **G4 — re-mint leaks bridges (security H1).** Each mint constructed a new room+socket with no dedup; `register` overwrote and orphaned the prior bridge (never closed). Fix: singleton bridge per bound session — if one exists, don't construct a second.
+- **G5 — activity states hue-only for colorblind+reduced-motion (design H1).** `font-size:0` hides the label, the emoji ignores `color`, so only ring-hue + gated motion distinguish listening/thinking/speaking. Fix: per-state glyph (inline SVG) or outline-style (solid/dashed/double) so states differ without color or motion.
+- **G6 — activity never announced to AT (design H2).** Fix: a visually-hidden `aria-live="polite"` region announcing Listening / Tutor thinking / Tutor speaking.
+- **G7 — thinking = `opacity:0.6` reads as disabled (design H3).** Fix: drop the opacity pulse; use a working-motion/glyph that doesn't imply disabled.
+
+Hardening (fixed before merge — match the codebase's bind-and-bound discipline):
+- **H-a — cap every `MoveSchema` model string + `claimedTruthTable` length** (security M2): a jailbroken model can emit multi-MB `answer`/`hintBody` into the transcript/DB. Add `.max()`.
+- **H-b — cap the streamed `transcript_stream` text to `MAX_SOURCE_LEN`** before send (review M1): a >4000-char tutor turn yields a frame the client rejects, freezing the bubble.
+- **H-c — key `pushLessonState`/bridge dispatch off the bound session id** (security M1), and try/catch the `ws.send` for a racing close (review L2).
+- **H-d — fix the activity state machine** (design M4): a short agent reply with no interim must still show "speaking"; don't leave it stuck.
+
+Deferred / live-smoke-only (recorded in `docs/voice-cross-platform-smoke.md`): audio resampling correctness, real TTFT/barge-in, exact OpenAI Realtime event shapes, `sendContext`-as-function-output behavior.
+
 ## Decisions, assumptions & blockers
 
-*(filled in during/after the build)*
+**Decisions made**
+- Superseded ADR-004's TTS-out-only-for-explain-back clause + the voice-not-for-navigation non-goal, and lifted ADR-016's full-duplex-reply deferral, via ADR-018. WHY: the product target is a spoken tutor fused with live tiles, and the transcript-record objection that justified the original deferral dissolves (the realtime model emits an aligned transcript we already log + now stream).
+- Realtime tool calls reuse the existing `MoveSchema`/`toTacticalMove` and route through the identical `compileMove → validateOutboundAction → Layer-2 → rejectUnauthorizedAction` chokepoint, extracted to `agent/authorizedAction.ts` so the voice and text gates structurally cannot drift. WHY: preserves ADR-005 (model proposes, guards decide) by construction.
+- Transcript transport = a new append-only `transcript_stream` ServerMessage over the app WS, not the LiveKit data channel. WHY: the data channel is unwired both ends; the app WS is one Zod-validated seam.
+- Production realtime client = server-side LiveKit participant (`@livekit/rtc-node`) + OpenAI Realtime, behind an injected `createRealtimeSession` factory, lazy-imported and default-wired only when `voiceConfigured() && OPENAI_API_KEY`. WHY: keeps the integrity boundary (server-captured transcript) and stays fail-closed/offline-green; the native dep forced the agent image base `node:22-alpine → node:22-slim` (empirically: rtc-node fails on musl, loads on Debian; no apk steps so the swap is safe).
+
+**Assumptions** (verify in the live smoke)
+- OpenAI Realtime event shapes (`response.output_audio.delta`, `…transcript.delta/done`, `function_call_arguments.done` fields), 48k→24k PCM16 resampling via `AudioStream`, and `conversation.item.create role:system` not auto-triggering a response — all cast via `unknown` and documented inline.
+- `learnerId` is set to `sessionId` (no learner-id column yet); `phase` at mint time is `'practicing'` (drives only the cache key). Both are noted as deferrable.
+
+**Deferred / blockers**
+- The live audio round-trip is verifiable only with real LIVEKIT + OPENAI keys (CI is offline by the security rule). Offline bar met: typecheck, unit + jsdom tests, agent `docker build` + `RTC_OK` load proof, built-bundle grep for `data-voice-activity`/`transcript_stream`. Live items tracked in the smoke checklist.

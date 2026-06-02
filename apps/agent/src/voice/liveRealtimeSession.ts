@@ -484,21 +484,36 @@ export const createLiveRealtimeSession: RealtimeSessionFactory = async (args) =>
   // Called by the bridge with tutor PCM16 Uint8Array frames from OpenAI Realtime.
   // Reinterpret as Int16Array (PCM16 little-endian words) for AudioFrame.
   function publishAudio(frame: Uint8Array): void {
-    if (!frame.byteLength) return;
-    // Assumption: frame.byteLength is always even (PCM16 = 2 bytes per sample).
-    const samplesPerChannel = frame.byteLength / 2;
-    const pcm16 = new Int16Array(frame.buffer, frame.byteOffset, samplesPerChannel);
-    const audioFrame = new AudioFrame(pcm16, OAI_SAMPLE_RATE, OAI_CHANNELS, samplesPerChannel);
-    // captureFrame is async (backpressure-aware); fire-and-forget here because
-    // the bridge calls this at decode-time and the AudioSource queues internally.
-    // A queue overflow will cause frames to be dropped — acceptable for voice (no stutter
-    // recovery needed; the model sends audio at its own pace).
-    void audioSource.captureFrame(audioFrame).catch((err) => {
+    try {
+      if (!frame.byteLength) return;
+      // Node pools Buffers — a slice from a pooled Buffer carries a non-zero byteOffset
+      // that may be ODD. `new Int16Array(buffer, oddOffset)` throws a RangeError because
+      // Int16Array requires 2-byte alignment. Copy onto a fresh Uint8Array (always
+      // 0-aligned) before creating the Int16 view to guarantee alignment. `slice()`
+      // returns a new allocation, so no shared-buffer aliasing either.
+      const copy = frame.slice();
+      // Guard odd byte-lengths (malformed frames) by flooring the sample count.
+      const samplesPerChannel = Math.floor(copy.byteLength / 2);
+      if (samplesPerChannel === 0) return;
+      const pcm16 = new Int16Array(copy.buffer, copy.byteOffset, samplesPerChannel);
+      const audioFrame = new AudioFrame(pcm16, OAI_SAMPLE_RATE, OAI_CHANNELS, samplesPerChannel);
+      // captureFrame is async (backpressure-aware); fire-and-forget here because
+      // the bridge calls this at decode-time and the AudioSource queues internally.
+      // A queue overflow will cause frames to be dropped — acceptable for voice (no stutter
+      // recovery needed; the model sends audio at its own pace).
+      void audioSource.captureFrame(audioFrame).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes('closed')) {
+          console.error('[voice:room] captureFrame failed', { message: msg });
+        }
+      });
+    } catch (err) {
+      // A malformed frame must log+drop rather than propagate out of the synchronous WS
+      // listener, which would crash the process. (ADR-018 fail-closed: bad frame → silent
+      // drop; valid frames before and after are unaffected.)
       const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('closed')) {
-        console.error('[voice:room] captureFrame failed', { message: msg });
-      }
-    });
+      console.error('[voice:room] publishAudio: malformed frame dropped', { message: msg });
+    }
   }
 
   // --- close: tear down room + session ---

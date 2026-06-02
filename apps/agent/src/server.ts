@@ -77,6 +77,7 @@ import { LearnerUtteranceRegistry } from './voice/learnerUtteranceRegistry.js';
 import { SocketRegistry } from './voice/socketRegistry.js';
 import { LiveBridgeRegistry } from './voice/liveBridgeRegistry.js';
 import { startVoiceBridge, type RealtimeSessionFactory } from './voice/startBridge.js';
+import type { ResolveVoiceToolCallContext } from './voice/resolveToolCall.js';
 import { tryHandleBaselineRoute } from './baseline/route.js';
 import { tryHandleHandoffRoute } from './handoff/route.js';
 import type { BaselineChatProvider } from './baseline/chatProvider.js';
@@ -171,13 +172,29 @@ export interface ServerDeps {
    */
   socketRegistry?: SocketRegistry;
   /**
-   * Live-bridge registry: maps session id → active `VoiceBridge`. The submit
-   * path reads this to push server-computed lesson state (BKT, streak, phase,
-   * hint level, correctness) into the live session after each graded turn so
-   * the model can react without deriving those values itself. No entry → no-op.
+   * Live-bridge registry: maps session id → active `VoiceBridge` + teardown.
+   * The submit path reads the bridge to push server-computed lesson state (BKT,
+   * streak, phase, hint level, correctness) into the live session after each
+   * graded turn so the model can react without deriving those values itself.
+   * The WS-close handler calls `closeAndUnregister` to tear down the room and
+   * OpenAI socket when the learner's connection closes. No entry → no-op.
    * Defaults to a fresh registry in `createServer`.
    */
   liveBridgeRegistry?: LiveBridgeRegistry;
+  /**
+   * Per-session gate-context map for the voice tool-call routing path (C4,
+   * ADR-018). Holds the latest server-computed `{ learner, gate, transferCandidates }`
+   * snapshot for each bound session, updated at the end of every submit fold.
+   *
+   * The voice bridge calls `getGateContext` at tool-call time (not at bridge
+   * construction) so it always reflects the most recent graded state. A session
+   * that has had no submit yet has no entry → the bridge falls back to
+   * `UNGROUNDED_GATE_CTX` (all privileged moves refused — fail closed).
+   *
+   * Defaults to a fresh Map in `createServer`. Tests may inject a pre-populated
+   * Map to exercise the grounded-context path.
+   */
+  voiceGateContextRegistry?: Map<string, ResolveVoiceToolCallContext>;
   /** F-16 baseline chat provider (the GPT-5 chat-baseline arm). Injectable for
    *  tests (a deterministic stub; CI is offline); defaults to the key-gated GPT-5
    *  provider when `OPENAI_API_KEY` is set, else `undefined` → the `/api/baseline/*`
@@ -1662,6 +1679,19 @@ async function handleRealtimeSession(
     // type is optional in ServerDeps for callers that inject only what they need. Fall
     // back to a fresh instance so startVoiceBridge always has one.
     const utteranceReg = deps.learnerUtteranceRegistry ?? new LearnerUtteranceRegistry();
+    // Gate-context map for the voice tool-call routing path (ADR-018). The bridge
+    // reads this at tool-call time so it always has the latest submit-fold state.
+    // Absent from deps only in callers that inject minimal deps — fall back to an
+    // empty map so the bridge's fail-closed default (UNGROUNDED_GATE_CTX) applies.
+    const gateCtxMapRef = deps.voiceGateContextRegistry ?? new Map<string, ResolveVoiceToolCallContext>();
+
+    // Singleton guard: each session has at most one live bridge. A re-mint (e.g.
+    // a client refreshing the voice tab) gets a fresh token but must not spin up
+    // a second bridge — the first bridge is still live and the second would orphan
+    // it (leaving a dangling LiveKit room + OpenAI socket). If a bridge already
+    // exists for this session, the token was already sent (201 above) and the
+    // client re-joins with it; we simply return without constructing a new bridge.
+    if (bridgeReg.has(sessionId)) return;
 
     void (async () => {
       try {
@@ -1685,16 +1715,19 @@ async function handleRealtimeSession(
           apiKey,
           apiSecret,
           modelVersion: process.env['OPENAI_REALTIME_MODEL'] ?? 'gpt-realtime',
+          // Wire the server-derived gate context so the tool-call routing path
+          // can gate privileged moves (transfer probe, mastery) against the latest
+          // submit-fold state. Returns undefined before any submit has been folded →
+          // the bridge falls back to UNGROUNDED_GATE_CTX (fail closed). (ADR-018.)
+          getGateContext: () => gateCtxMapRef.get(sessionId),
         });
 
-        bridgeReg.register(sessionId, handle.bridge);
-
-        // Tear down bridge + deregister when the bridge's underlying session ends.
-        // The factory's close() is idempotent; double-calling from both the room
-        // disconnect and a manual stop() is safe.
-        void handle.close().then(() => {
-          bridgeReg.unregister(sessionId);
-        });
+        // Register the bridge + its teardown. The teardown is deferred to WS close
+        // (the ws.on('close') handler calls bridgeReg.closeAndUnregister). We do NOT
+        // call handle.close() here — that would immediately tear down the session
+        // the instant it starts. The registry holds the close fn so the WS-close
+        // handler can drive teardown at the right time. (ADR-018.)
+        bridgeReg.register(sessionId, handle.bridge, handle.close);
       } catch (err) {
         console.error('[voice] failed to start bridge for session', sessionId, err);
       }
@@ -3217,6 +3250,24 @@ export async function handleClientFrame(
         });
       }
     }
+
+    // Update the per-session gate-context snapshot so the voice tool-call routing
+    // path (ADR-018) has the latest server-derived state when a `propose_tactical_move`
+    // tool call arrives. The voice bridge reads this at tool-call time (not at bridge
+    // construction) via the `getGateContext` getter injected in handleRealtimeSession.
+    //
+    // Updated on every turn (not just `submit`) so non-submit turns that still advance
+    // the gate (e.g. explain_back_recording_ended clearing explainBackPassed) are reflected.
+    // The snapshot is always server-derived: learnerDerived, gateEvaluation, and
+    // transferCandidates are all computed from the authoritative event log, never from
+    // client-supplied values (ADR-018 server-derive rule).
+    if (deps.voiceGateContextRegistry) {
+      deps.voiceGateContextRegistry.set(event.sessionId, {
+        learner: learnerDerived.snapshot,
+        gate: gateEvaluation,
+        transferCandidates,
+      });
+    }
   });
 }
 
@@ -3308,10 +3359,16 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
   // session_start (MR !8 binding rule). Used by the voice bridge to push
   // transcript_stream messages without holding a WS reference in the HTTP layer.
   const socketReg = rawDeps.socketRegistry ?? new SocketRegistry();
-  // Live-bridge registry: maps sessionId → active VoiceBridge. The submit path reads
-  // this to push server-computed lesson state into the live session after each graded
-  // turn (ADR-016). Absent entry → no-op, no voice active.
+  // Live-bridge registry: maps sessionId → active VoiceBridge + teardown. The submit
+  // path reads the bridge to push server-computed lesson state into the live session
+  // (ADR-016). The WS-close handler calls closeAndUnregister to tear down the room and
+  // OpenAI socket. Absent entry → no-op.
   const bridgeReg = rawDeps.liveBridgeRegistry ?? new LiveBridgeRegistry();
+  // Per-session gate-context map: holds the latest server-computed learner snapshot +
+  // mastery gate result for voice tool-call routing (ADR-018 earned-it gate). Updated
+  // at the end of each submit fold. Absent entry → bridge falls back to
+  // UNGROUNDED_GATE_CTX (all privileged moves refused — fail closed).
+  const gateCtxMap = rawDeps.voiceGateContextRegistry ?? new Map<string, ResolveVoiceToolCallContext>();
 
   // Production realtime-session factory: default a lazy-loading `createLiveRealtimeSession`
   // wrapper ONLY when voice is configured (LiveKit creds) AND an OPENAI_API_KEY is present.
@@ -3370,6 +3427,7 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
     takeLearnerUtteranceFor,
     socketRegistry: socketReg,
     liveBridgeRegistry: bridgeReg,
+    voiceGateContextRegistry: gateCtxMap,
   };
 
   const httpServer = http.createServer((req, res) => {
@@ -3704,6 +3762,11 @@ export function createServer(rawDeps: ServerDeps): PolymathServer {
       // Deregister the socket so the voice bridge stops trying to send transcript_stream
       // to a closed connection. This keeps the socket map bounded.
       socketReg.unregister(boundSessionId);
+      // Tear down the live voice bridge (LiveKit room + OpenAI Realtime WS) now that
+      // the learner's socket has closed. Teardown is driven from here — not from
+      // bridge-start time — so the session is not destroyed the instant it opens.
+      // closeAndUnregister is non-fatal: errors are logged inside the registry.
+      void deps.liveBridgeRegistry?.closeAndUnregister(boundSessionId);
       // Non-fatal: a deletion-scheduling failure must never crash the process on a
       // socket close. The boot/interval sweep is the backstop.
       void scheduleSessionDeletion(deps.db, boundSessionId).catch((err) => {

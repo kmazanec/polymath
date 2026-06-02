@@ -32,6 +32,7 @@ import { LearnerUtteranceRegistry } from './learnerUtteranceRegistry.js';
 import { SocketRegistry } from './socketRegistry.js';
 import { LiveBridgeRegistry } from './liveBridgeRegistry.js';
 import type { Db } from '../db/client.js';
+import type { ResolveVoiceToolCallContext } from './resolveToolCall.js';
 
 const CONFIG: RealtimeSessionConfig = {
   systemPrompt: 'test persona',
@@ -295,7 +296,7 @@ describe('VoiceBridge.pushLessonState (C6)', () => {
     // is that the registry lookup returns undefined and the server guards on it.
   });
 
-  it('LiveBridgeRegistry.register / unregister lifecycle', async () => {
+  it('LiveBridgeRegistry register/closeAndUnregister lifecycle', async () => {
     const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
     const { factory } = makeFakeFactory(session);
 
@@ -312,12 +313,47 @@ describe('VoiceBridge.pushLessonState (C6)', () => {
       modelVersion: 'gpt-realtime',
     });
 
+    const closeFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const reg = new LiveBridgeRegistry();
-    reg.register(SESSION_ID, bridge);
+    reg.register(SESSION_ID, bridge, closeFn);
     expect(reg.get(SESSION_ID)).toBe(bridge);
+    expect(reg.has(SESSION_ID)).toBe(true);
 
-    reg.unregister(SESSION_ID);
+    await reg.closeAndUnregister(SESSION_ID);
+
+    // After closeAndUnregister: entry removed, close fn was called.
     expect(reg.get(SESSION_ID)).toBeUndefined();
+    expect(reg.has(SESSION_ID)).toBe(false);
+    expect(closeFn).toHaveBeenCalledOnce();
+  });
+
+  it('LiveBridgeRegistry singleton: second register for same id is ignored', async () => {
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const { factory } = makeFakeFactory(session);
+    const { bridge } = await startVoiceBridge({
+      factory,
+      ctx: { sessionId: SESSION_ID, learnerId: SESSION_ID, lessonId: 1, lessonTitle: 'T', phase: 'practicing' },
+      db: STUB_DB,
+      utteranceRegistry: new LearnerUtteranceRegistry(),
+      socketRegistry: new SocketRegistry(),
+      roomName: 'r',
+      livekitUrl: 'wss://test',
+      apiKey: 'k',
+      apiSecret: 's',
+      modelVersion: 'gpt-realtime',
+    });
+
+    const close1 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const close2 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const reg = new LiveBridgeRegistry();
+    reg.register(SESSION_ID, bridge, close1);
+    // Second register with a different close fn must be a no-op.
+    reg.register(SESSION_ID, bridge, close2);
+
+    // Only the first entry is retained.
+    await reg.closeAndUnregister(SESSION_ID);
+    expect(close1).toHaveBeenCalledOnce();
+    expect(close2).not.toHaveBeenCalled();
   });
 });
 
@@ -500,5 +536,184 @@ describe('tool-call routing (C4)', () => {
       .filter((m) => m.kind === 'action');
 
     expect(actionMsgs[0]?.action?.type).toBe('no_action');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-wiring invariants: singleton, grounded context, WS-close teardown
+// ---------------------------------------------------------------------------
+
+describe('server-wiring invariants (LiveBridgeRegistry + startVoiceBridge)', () => {
+  beforeEach(() => resetCacheRegistry());
+
+  /**
+   * Builds a startVoiceBridge call and returns the handle.
+   * The factory records how many times it was invoked so tests can assert singleton behaviour.
+   */
+  async function buildHandle(
+    session: MockRealtimeSession,
+    opts?: { getGateContext?: () => ResolveVoiceToolCallContext | undefined },
+  ) {
+    const { factory, ...rest } = makeFakeFactory(session);
+    return {
+      handle: await startVoiceBridge({
+        factory,
+        ctx: { sessionId: SESSION_ID, learnerId: SESSION_ID, lessonId: 1, lessonTitle: 'T', phase: 'practicing' },
+        db: STUB_DB,
+        utteranceRegistry: new LearnerUtteranceRegistry(),
+        socketRegistry: new SocketRegistry(),
+        roomName: 'r',
+        livekitUrl: 'wss://test',
+        apiKey: 'k',
+        apiSecret: 's',
+        modelVersion: 'gpt-realtime',
+        getGateContext: opts?.getGateContext,
+      }),
+      ...rest,
+    };
+  }
+
+  it('singleton: LiveBridgeRegistry.has() prevents a second bridge from being started for the same session', async () => {
+    // Simulates the handleRealtimeSession guard: if bridgeReg.has(sessionId) → skip bridge start.
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const { handle } = await buildHandle(session);
+
+    const close1 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    const reg = new LiveBridgeRegistry();
+    reg.register(SESSION_ID, handle.bridge, close1);
+
+    // has() returns true — the guard in handleRealtimeSession returns early.
+    expect(reg.has(SESSION_ID)).toBe(true);
+
+    // Simulating a second mint: the caller checks has() before calling startVoiceBridge.
+    // We verify here that the registry retains the FIRST entry after a no-op register attempt.
+    const close2 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    reg.register(SESSION_ID, handle.bridge, close2); // no-op
+
+    // On WS close, only close1 runs (close2 was never stored).
+    await reg.closeAndUnregister(SESSION_ID);
+    expect(close1).toHaveBeenCalledOnce();
+    expect(close2).not.toHaveBeenCalled();
+  });
+
+  it('grounded getGateContext: a transfer probe is accepted when ruleGatePassed + matching candidate', async () => {
+    // Build a grounded gate context where the rule gate has passed and a transfer
+    // candidate exists — the probe should be allowed through (not downgraded).
+    const groundedCtx: ResolveVoiceToolCallContext = {
+      learner: {
+        bktByKc: { 'AND': 0.95 },
+        hintsUsed: 0,
+        consecutiveCorrect: 3,
+        ruleGatePassed: true,
+        explainBackPassed: false,
+        topicGuardrailClean: true,
+      },
+      gate: { passed: false, blockers: ['explain_back_not_passed'] },
+      transferCandidates: [
+        {
+          itemId: 'item-transfer-1',
+          targetExpression: 'A AND B',
+          targetRep: 'truth_table',
+          hiddenReps: ['circuit', 'pseudocode'],
+        },
+      ],
+    };
+
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const socketRegistry = new SocketRegistry();
+    const sentMessages: string[] = [];
+    const fakeWs = { send: (m: string) => sentMessages.push(m) } as unknown as import('ws').WebSocket;
+    socketRegistry.register(SESSION_ID, fakeWs);
+
+    const { factory } = makeFakeFactory(session);
+    await startVoiceBridge({
+      factory,
+      ctx: { sessionId: SESSION_ID, learnerId: SESSION_ID, lessonId: 1, lessonTitle: 'T', phase: 'practicing' },
+      db: STUB_DB,
+      utteranceRegistry: new LearnerUtteranceRegistry(),
+      socketRegistry,
+      roomName: 'r',
+      livekitUrl: 'wss://test',
+      apiKey: 'k',
+      apiSecret: 's',
+      modelVersion: 'gpt-realtime',
+      getGateContext: () => groundedCtx,
+    });
+
+    // Fire a transfer probe tool call matching the candidate.
+    // All nullable MoveSchema fields must be present (either as their value or null)
+    // for Zod to accept the object — omitting a nullable field is a parse error in Zod 3.
+    session.pushToolCall('propose_tactical_move', {
+      move: 'propose_transfer_probe',
+      rationale: 'earned it',
+      item: null,
+      tier: null,
+      altRep: null,
+      workedExpression: null,
+      workedSteps: null,
+      workedVisibleReps: null,
+      question: null,
+      answer: null,
+      topicClassification: null,
+      noActionReason: null,
+      hintLevel: null,
+      hintBody: null,
+      probeExpression: 'A AND B',
+      probeTargetRep: 'truth_table',
+      probeHiddenReps: ['circuit', 'pseudocode'],
+      probeItemId: 'item-transfer-1',
+      scaffold: null,
+    }, 'call-grounded');
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const actionMsgs = sentMessages
+      .map((m) => JSON.parse(m) as { kind: string; action?: { type: string } })
+      .filter((m) => m.kind === 'action');
+
+    // With a grounded context where ruleGatePassed=true and a matching candidate,
+    // the probe should NOT be downgraded to no_action.
+    expect(actionMsgs).toHaveLength(1);
+    expect(actionMsgs[0]?.action?.type).not.toBe('no_action');
+    expect(actionMsgs[0]?.action?.type).toBe('mount');
+  });
+
+  it('bridge is NOT closed at start — close is deferred to closeAndUnregister', async () => {
+    // The factory's close() must not be called eagerly when startVoiceBridge returns.
+    // Teardown should happen only when closeAndUnregister is explicitly called (from the
+    // WS-close handler), not the instant the bridge is registered.
+    const session = new MockRealtimeSession(CONFIG, { reply: { tutorText: 'ok', audioFrames: 0 } });
+    const closeFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+    const factory: RealtimeSessionFactory = async () => ({
+      session,
+      publishAudio: vi.fn(),
+      onLearnerAudio: () => {},
+      close: closeFn,
+    });
+
+    const handle = await startVoiceBridge({
+      factory,
+      ctx: { sessionId: SESSION_ID, learnerId: SESSION_ID, lessonId: 1, lessonTitle: 'T', phase: 'practicing' },
+      db: STUB_DB,
+      utteranceRegistry: new LearnerUtteranceRegistry(),
+      socketRegistry: new SocketRegistry(),
+      roomName: 'r',
+      livekitUrl: 'wss://test',
+      apiKey: 'k',
+      apiSecret: 's',
+      modelVersion: 'gpt-realtime',
+    });
+
+    // After startVoiceBridge returns, close must NOT have been called yet.
+    expect(closeFn).not.toHaveBeenCalled();
+
+    // Now simulate WS close by calling closeAndUnregister via the registry.
+    const reg = new LiveBridgeRegistry();
+    reg.register(SESSION_ID, handle.bridge, handle.close);
+    await reg.closeAndUnregister(SESSION_ID);
+
+    // Only now should close have been called.
+    expect(closeFn).toHaveBeenCalledOnce();
   });
 });

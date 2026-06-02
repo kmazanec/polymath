@@ -455,15 +455,32 @@ export function App(): ReactElement {
                 setInterim(null);
               }
               // Update voice activity based on transcript_stream events (ADR-018).
-              // learner final → 'thinking' (waiting for agent to begin);
-              // agent interim/final → 'agent-speaking';
-              // agent final → 'listening' (conversation turn complete).
+              //
+              // Rules:
+              //   learner final           → thinking  (waiting for agent to reply)
+              //   agent chunk (any)       → agent-speaking  (includes final-only short replies)
+              //   agent final             → listening  (turn complete; reset for next learner input)
+              //
+              // The agent-speaking state is set for EVERY agent chunk — interim or final — so a
+              // short reply that arrives as a single final:true frame (no preceding interim) still
+              // shows agent-speaking before falling through to listening. On a final agent chunk
+              // both branches run in order: agent-speaking is set first, then listening is set
+              // immediately after. React batches these two setState calls within the same event
+              // handler, so the UI sees the listening state by the time it paints. This is
+              // intentional: for a brief final-only reply, the indicator correctly shows the
+              // full transition listening→thinking→agent-speaking→listening across turns rather
+              // than silently skipping agent-speaking (which would leave the indicator on
+              // thinking, misrepresenting what happened).
               if (msg.speaker === 'learner' && msg.final) {
                 setVoiceActivity('thinking');
-              } else if (msg.speaker === 'agent' && !msg.final) {
+              } else if (msg.speaker === 'agent') {
+                // Show agent-speaking for every agent chunk — interim OR final (ADR-018).
+                // This ensures final-only short replies still briefly register as agent-speaking.
                 setVoiceActivity('agent-speaking');
-              } else if (msg.speaker === 'agent' && msg.final) {
-                setVoiceActivity('listening');
+                if (msg.final) {
+                  // Turn complete: reset to listening so the learner knows it's their move.
+                  setVoiceActivity('listening');
+                }
               }
               return;
             }
