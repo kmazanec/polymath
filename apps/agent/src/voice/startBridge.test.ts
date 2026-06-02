@@ -315,7 +315,8 @@ describe('VoiceBridge.pushLessonState (C6)', () => {
 
     const closeFn = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const reg = new LiveBridgeRegistry();
-    reg.register(SESSION_ID, bridge, closeFn);
+    expect(reg.reserve(SESSION_ID)).toBe(true);
+    expect(reg.register(SESSION_ID, bridge, closeFn)).toBe(true);
     expect(reg.get(SESSION_ID)).toBe(bridge);
     expect(reg.has(SESSION_ID)).toBe(true);
 
@@ -346,14 +347,42 @@ describe('VoiceBridge.pushLessonState (C6)', () => {
     const close1 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const close2 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const reg = new LiveBridgeRegistry();
-    reg.register(SESSION_ID, bridge, close1);
-    // Second register with a different close fn must be a no-op.
-    reg.register(SESSION_ID, bridge, close2);
+    expect(reg.reserve(SESSION_ID)).toBe(true);
+    expect(reg.register(SESSION_ID, bridge, close1)).toBe(true);
+    // A second reserve while a live entry exists must lose (singleton), so the
+    // second mint never constructs; and a register without a held reservation
+    // does not replace the live entry.
+    expect(reg.reserve(SESSION_ID)).toBe(false);
+    expect(reg.register(SESSION_ID, bridge, close2)).toBe(false);
 
     // Only the first entry is retained.
     await reg.closeAndUnregister(SESSION_ID);
     expect(close1).toHaveBeenCalledOnce();
     expect(close2).not.toHaveBeenCalled();
+  });
+
+  it('LiveBridgeRegistry race: reserve() is synchronous so two mints cannot both win', () => {
+    const reg = new LiveBridgeRegistry();
+    // Two near-simultaneous mints both reach reserve() before either constructs.
+    expect(reg.reserve(SESSION_ID)).toBe(true); // winner
+    expect(reg.reserve(SESSION_ID)).toBe(false); // loser — must not construct
+    // The loser, if it somehow constructed anyway, cannot store its orphan handle.
+    const bridge = {} as unknown as import('./bridge.js').VoiceBridge;
+    const orphanClose = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    // Winner fills its slot; loser's register returns false (caller closes the orphan).
+    expect(reg.register(SESSION_ID, bridge, vi.fn<() => Promise<void>>().mockResolvedValue(undefined))).toBe(true);
+    expect(reg.register(SESSION_ID, bridge, orphanClose)).toBe(false);
+  });
+
+  it('LiveBridgeRegistry: a WS close during construction drops the reservation so register orphans', async () => {
+    const reg = new LiveBridgeRegistry();
+    expect(reg.reserve(SESSION_ID)).toBe(true);
+    // WS closes before the (async) construction calls register.
+    await reg.closeAndUnregister(SESSION_ID);
+    const bridge = {} as unknown as import('./bridge.js').VoiceBridge;
+    // register now finds no reservation → returns false; the caller must close the orphan.
+    expect(reg.register(SESSION_ID, bridge, vi.fn<() => Promise<void>>().mockResolvedValue(undefined))).toBe(false);
+    expect(reg.get(SESSION_ID)).toBeUndefined();
   });
 });
 
@@ -580,15 +609,15 @@ describe('server-wiring invariants (LiveBridgeRegistry + startVoiceBridge)', () 
 
     const close1 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     const reg = new LiveBridgeRegistry();
+    expect(reg.reserve(SESSION_ID)).toBe(true);
     reg.register(SESSION_ID, handle.bridge, close1);
 
-    // has() returns true — the guard in handleRealtimeSession returns early.
+    // has() returns true — the guard in handleRealtimeSession (reserve()) returns early.
     expect(reg.has(SESSION_ID)).toBe(true);
 
-    // Simulating a second mint: the caller checks has() before calling startVoiceBridge.
-    // We verify here that the registry retains the FIRST entry after a no-op register attempt.
+    // Simulating a second mint: reserve() loses, so the caller never calls startVoiceBridge.
     const close2 = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
-    reg.register(SESSION_ID, handle.bridge, close2); // no-op
+    expect(reg.reserve(SESSION_ID)).toBe(false);
 
     // On WS close, only close1 runs (close2 was never stored).
     await reg.closeAndUnregister(SESSION_ID);
@@ -710,6 +739,7 @@ describe('server-wiring invariants (LiveBridgeRegistry + startVoiceBridge)', () 
 
     // Now simulate WS close by calling closeAndUnregister via the registry.
     const reg = new LiveBridgeRegistry();
+    reg.reserve(SESSION_ID);
     reg.register(SESSION_ID, handle.bridge, handle.close);
     await reg.closeAndUnregister(SESSION_ID);
 

@@ -13,19 +13,31 @@
  *    disconnects. Teardown is always deferred to WS close — never called eagerly at
  *    bridge-start time — so the live session is not destroyed the moment it opens.
  *
- * Singleton-per-session guarantee: `register()` is a no-op when the session already
- * has a live entry. This prevents a second token-mint from constructing a second
- * bridge for the same session (which would orphan the first bridge's room + socket).
- * The caller must not construct the bridge if `get()` returns a live entry.
+ * Singleton-per-session guarantee: a session has at most one live bridge. Because
+ * bridge construction is async (it awaits the realtime/room connect), a plain
+ * "check then construct" leaves a race window — two near-simultaneous mints both
+ * observe no entry, both construct, and the second orphans a LiveKit room + OpenAI
+ * socket. The guarantee is therefore enforced by a SYNCHRONOUS reservation taken
+ * BEFORE the await: `reserve()` atomically (single-threaded event loop) marks the
+ * slot and returns whether the caller won. Only the winner constructs; it then
+ * `register()`s the real handle into its reservation, or `release()`s it on failure.
+ * A loser that somehow still constructed must `close()` its orphan handle.
  *
  * Lifecycle:
- *  - `register(sessionId, bridge, close)` — called after `startVoiceBridge` succeeds.
- *    No-op if the session already has an entry (singleton guarantee).
+ *  - `reserve(sessionId)` — synchronous slot claim before constructing. Returns
+ *    `true` to the single winner; `false` if a reservation or live entry exists.
+ *  - `register(sessionId, bridge, close)` — fills the reserved slot after
+ *    `startVoiceBridge` succeeds; returns `true` if stored. Returns `false` (and the
+ *    caller must `close()` the orphan handle) if the slot is no longer the caller's
+ *    reservation — e.g. the WS closed mid-construction and dropped it, or a live
+ *    entry already exists.
+ *  - `release(sessionId)` — drops a reservation that never produced a bridge
+ *    (construction threw), so a later mint can retry.
  *  - `closeAndUnregister(sessionId)` — awaits the factory's `close()` then removes
  *    the entry. Called from the WS-close handler to drive teardown.
  *  - `get(sessionId)` — returns the live `VoiceBridge` for a session, or `undefined`.
- *  - `has(sessionId)` — returns `true` when a live entry exists (used to enforce the
- *    singleton guarantee before constructing a new bridge).
+ *  - `has(sessionId)` — returns `true` when a reservation OR a live entry exists
+ *    (used to short-circuit a re-mint before constructing a new bridge).
  */
 import type { VoiceBridge } from './bridge.js';
 
@@ -36,14 +48,38 @@ interface BridgeEntry {
 
 export class LiveBridgeRegistry {
   private readonly entries = new Map<string, BridgeEntry>();
+  /** Sessions whose bridge is being constructed (slot reserved, not yet filled). */
+  private readonly reserved = new Set<string>();
 
   /**
-   * Register a bridge + its teardown function for a session. No-op when the
-   * session already has a live entry (singleton-per-session guarantee).
+   * Synchronously claim the singleton slot for a session before the async
+   * construction begins. Returns `true` to the one winner; `false` if a
+   * reservation or a live entry already exists. Taken right after the mint, with
+   * no `await` between the check and the claim, so two racing mints cannot both win.
    */
-  register(sessionId: string, bridge: VoiceBridge, close: () => Promise<void>): void {
-    if (this.entries.has(sessionId)) return; // singleton: never replace a live entry
+  reserve(sessionId: string): boolean {
+    if (this.reserved.has(sessionId) || this.entries.has(sessionId)) return false;
+    this.reserved.add(sessionId);
+    return true;
+  }
+
+  /** Drop a reservation that never produced a bridge (construction failed). */
+  release(sessionId: string): void {
+    this.reserved.delete(sessionId);
+  }
+
+  /**
+   * Fill the slot with the constructed bridge + its teardown. Stores and returns
+   * `true` only when this caller still holds the reservation and no live entry
+   * exists. Returns `false` when the reservation is gone (the WS closed
+   * mid-construction) or a live entry already exists — the caller then owns an
+   * orphan handle it must `close()`. Never replaces a live entry (singleton).
+   */
+  register(sessionId: string, bridge: VoiceBridge, close: () => Promise<void>): boolean {
+    const heldReservation = this.reserved.delete(sessionId);
+    if (!heldReservation || this.entries.has(sessionId)) return false;
     this.entries.set(sessionId, { bridge, close });
+    return true;
   }
 
   /**
@@ -52,6 +88,10 @@ export class LiveBridgeRegistry {
    * teardown is deferred until the learner's socket closes, never triggered at start.
    */
   async closeAndUnregister(sessionId: string): Promise<void> {
+    // Drop any pending reservation so a bridge still constructing for this session
+    // can't fill the slot after the socket has gone (its register() returns false
+    // and the caller closes the orphan).
+    this.reserved.delete(sessionId);
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     this.entries.delete(sessionId); // remove first so a re-entrant close is a no-op
@@ -70,10 +110,11 @@ export class LiveBridgeRegistry {
   }
 
   /**
-   * Returns `true` when a live bridge entry exists for the session. Used by the
-   * token-mint path to enforce the singleton guarantee before constructing a new bridge.
+   * Returns `true` when a reservation OR a live bridge entry exists for the session.
+   * Reflects in-flight construction too, so a re-mint short-circuits during the
+   * (async) construction window, not only after it completes.
    */
   has(sessionId: string): boolean {
-    return this.entries.has(sessionId);
+    return this.reserved.has(sessionId) || this.entries.has(sessionId);
   }
 }

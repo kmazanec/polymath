@@ -1688,10 +1688,12 @@ async function handleRealtimeSession(
     // Singleton guard: each session has at most one live bridge. A re-mint (e.g.
     // a client refreshing the voice tab) gets a fresh token but must not spin up
     // a second bridge — the first bridge is still live and the second would orphan
-    // it (leaving a dangling LiveKit room + OpenAI socket). If a bridge already
-    // exists for this session, the token was already sent (201 above) and the
-    // client re-joins with it; we simply return without constructing a new bridge.
-    if (bridgeReg.has(sessionId)) return;
+    // it (leaving a dangling LiveKit room + OpenAI socket). Construction is async,
+    // so the slot is claimed SYNCHRONOUSLY here (before any await) via `reserve()`:
+    // two racing mints can't both win, so only one bridge is ever constructed. If a
+    // reservation/live entry already exists, the token was already sent (201 above)
+    // and the client re-joins with it; we return without constructing a new bridge.
+    if (!bridgeReg.reserve(sessionId)) return;
 
     void (async () => {
       try {
@@ -1722,13 +1724,19 @@ async function handleRealtimeSession(
           getGateContext: () => gateCtxMapRef.get(sessionId),
         });
 
-        // Register the bridge + its teardown. The teardown is deferred to WS close
-        // (the ws.on('close') handler calls bridgeReg.closeAndUnregister). We do NOT
-        // call handle.close() here — that would immediately tear down the session
-        // the instant it starts. The registry holds the close fn so the WS-close
-        // handler can drive teardown at the right time. (ADR-018.)
-        bridgeReg.register(sessionId, handle.bridge, handle.close);
+        // Fill the reserved slot with the bridge + its teardown. The teardown is
+        // deferred to WS close (the ws.on('close') handler calls
+        // bridgeReg.closeAndUnregister) — we do NOT call handle.close() here, which
+        // would tear down the session the instant it starts. `register` returns
+        // whether it actually stored the handle; if it didn't (the WS already closed
+        // during this async construction and dropped the reservation, or a live entry
+        // exists), this handle is an orphan we close so its room + socket don't leak.
+        const stored = bridgeReg.register(sessionId, handle.bridge, handle.close);
+        if (!stored) await handle.close();
       } catch (err) {
+        // Construction failed — drop the reservation so a later mint can retry,
+        // rather than permanently blocking voice for this session.
+        bridgeReg.release(sessionId);
         console.error('[voice] failed to start bridge for session', sessionId, err);
       }
     })();
