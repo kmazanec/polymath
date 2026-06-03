@@ -11,26 +11,28 @@
 # Caddy auto-fetches the Let's Encrypt cert for polymath.biograph.dev on first
 # request; the domain's A record must point at this droplet.
 #
-# `import security_headers` reuses the snippet defined in OpenEMR's Caddyfile so
-# HSTS / X-Frame-Options etc. stay consistent across sibling apps.
-#
-# That shared snippet ships `Permissions-Policy: …, microphone=(), …` (an empty
-# allowlist = mic disabled for every origin), which Chrome enforces BEFORE the
-# permission prompt — so the voice tutor's getUserMedia is blocked with
+# Security headers are inlined here (NOT `import security_headers`) on purpose.
+# The shared OpenEMR snippet sets `Permissions-Policy: …, microphone=(), …` (an
+# empty allowlist = mic disabled for every origin), which Chrome enforces BEFORE
+# the permission prompt — so the voice tutor's getUserMedia is blocked with
 # "microphone is not allowed in this document" even when the browser setting is
-# "Ask". Re-set the header AFTER the import (so it wins) to allow the microphone
-# for this origin only; geolocation and camera stay locked.
+# "Ask". Importing the snippet and then re-setting the header does NOT work:
+# both become `deferred` response-header handlers writing the same field, and the
+# snippet's restrictive value wins non-deterministically. Inlining the block is
+# the only way to emit a single Permissions-Policy handler with the mic allowed.
+# Every other header is byte-identical to the shared snippet — keep them in sync
+# if the snippet changes. microphone=(self) allows the mic for this origin only;
+# geolocation + camera stay locked. (ADR-004 / ADR-018.)
 
 polymath.biograph.dev {
-	import security_headers
-
-	# Allow the microphone for this origin (overrides the shared snippet's
-	# `microphone=()`); keep geolocation + camera disabled. Required for the
-	# voice tutor's getUserMedia, which is requested only on the learner's
-	# "Ask the tutor" click (ADR-004 / ADR-018). The `>` forces a SET (replace),
-	# not an append — otherwise the imported restrictive header would remain
-	# alongside this one and the browser could still honor `microphone=()`.
-	header >Permissions-Policy "geolocation=(), microphone=(self), camera=()"
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(self), camera=()"
+		-Server
+	}
 
 	# Agent: REST API and the WebSocket endpoint (auto-upgraded on /agent).
 	handle /api/* {
