@@ -259,9 +259,21 @@ export function explanationBeforeNextItem(input: AgentInput): TacticalMove | nul
  *   Stage E           → WorkedExample
  *   Stage E+1 onward  → first practice item
  *
- * `priorMounts` is the number of mount turns already shown in this opening
- * sequence, so it IS the index of the next card to teach. (Backwards-compatible:
- * a lesson with a single explanation behaves exactly as the old stage 0/1/2.)
+ * `priorMounts` is the number of opening cards already shown. On an `intro_advance`
+ * (the learner clicked "Continue") it IS the index of the NEXT card to teach — the
+ * walk advances. On a `session_start` it is NOT: see the idempotence note below.
+ *
+ * IDEMPOTENT SESSION_START (idle-reconnect auto-advance fix): `AgentSocket` re-sends
+ * `session_start` on EVERY WebSocket reconnect, with no learner gesture (an idle proxy
+ * drop, a server blip, a duplicate tab). `session_start` must therefore be a
+ * RE-ANNOUNCE, never an advance: a reconnect re-mounts the card the learner is
+ * currently on, it does not walk them forward. Only `intro_advance` advances. Without
+ * this, a handful of idle reconnects walked the learner AND → Truth tables →
+ * WorkedExample → first practice item with zero action, flipping the phase to
+ * PRACTICING on its own. So the card index (`stage`) is `priorMounts` for an advance,
+ * but clamped to the current card (`priorMounts - 1`) for a `session_start` that finds
+ * cards already shown. The first `session_start` (`priorMounts === 0`) mounts card 0.
+ * (Backwards-compatible: a lesson with a single explanation behaves as the old 0/1/2.)
  */
 export function openingMove(input: AgentInput): TacticalMove {
   // BUG-02 fix: the opening-walk stage is a MONOTONIC progression counter and must
@@ -275,6 +287,14 @@ export function openingMove(input: AgentInput): TacticalMove {
   const priorMounts =
     input.openingWalkMounts ??
     input.recentHistory.filter((t) => t.actionType === 'mount').length;
+
+  // A `session_start` is a re-announce (reconnect), so it RE-MOUNTS the current card
+  // rather than advancing — clamp its stage back to the last card already shown. An
+  // `intro_advance` (the learner's "Continue") advances to `priorMounts`. The first
+  // `session_start` with nothing shown yet (priorMounts === 0) still mounts card 0.
+  const stage =
+    input.event.kind === 'session_start' && priorMounts > 0 ? priorMounts - 1 : priorMounts;
+
   const intro = readLessonIntro(input.lesson.content.lessonId);
 
   if (intro) {
@@ -290,8 +310,8 @@ export function openingMove(input: AgentInput): TacticalMove {
         : allExplanations;
 
     // Stages 0..E-1: teach each opening explanation card in order.
-    if (priorMounts < explanations.length) {
-      const explanation = explanations[priorMounts];
+    if (stage < explanations.length) {
+      const explanation = explanations[stage];
       if (explanation) {
         const visibleReps = toRepArray(explanation.visibleReps);
         const illustration = toIllustration(explanation.illustration);
@@ -301,13 +321,13 @@ export function openingMove(input: AgentInput): TacticalMove {
           body: explanation.body,
           visibleReps,
           ...(illustration ? { illustration } : {}),
-          rationale: `intro stage ${priorMounts}/${explanations.length} — teaching "${explanation.topic}" before practice (opening move)`,
+          rationale: `intro stage ${stage}/${explanations.length} — teaching "${explanation.topic}" before practice (opening move)`,
         };
       }
     }
 
     // Stage E: the worked example, once every explanation has been taught.
-    if (priorMounts === explanations.length) {
+    if (stage === explanations.length) {
       const we = intro.workedExample;
       if (we) {
         const visibleReps = toRepArray(we.visibleReps, ['truth_table']);
@@ -318,13 +338,16 @@ export function openingMove(input: AgentInput): TacticalMove {
           steps: we.steps,
           visibleReps,
           ...(illustration ? { illustration } : {}),
-          rationale: `intro stage ${priorMounts} — mounting WorkedExample for "${we.expression}" after all ${explanations.length} explanation(s) (opening move)`,
+          rationale: `intro stage ${stage} — mounting WorkedExample for "${we.expression}" after all ${explanations.length} explanation(s) (opening move)`,
         };
       }
     }
   }
 
-  // Stage 2+ or missing intro content — mount the first practice item.
+  // Past the worked example (stage > E), or missing intro content — the opening
+  // walk is done, so mount the first practice item. Reached only by `intro_advance`
+  // (a `session_start` re-announce is clamped to a card already shown above, so it
+  // can never fall through here and auto-start practice).
   const first = input.lesson.content.items[0];
   if (first) {
     return {
