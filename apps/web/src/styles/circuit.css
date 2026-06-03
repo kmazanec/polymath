@@ -1,13 +1,22 @@
 /* ─── F-31: Touch contract for the circuit canvas (ADR-016) ─────────────────
  * react-flow handles default to ~6–8px (impossible with a finger). We grow the
- * visible dot to 14px and add a transparent ::before pseudo-element that gives a
- * full 44px hit-slop so touches land on wire endpoints reliably.
+ * visible dot to 14px and add a small transparent ::before hit-slop so touches
+ * land on wire endpoints reliably.
  * `touch-action: none` on the pane + nodes lets react-flow's pointer-event drag
  * work without the browser trying to scroll or pan the viewport at the same time.
  * ─────────────────────────────────────────────────────────────────────────── */
 
-/* Visible handle dot: 14px — large enough to see, small enough to not clutter.
- * The transparent ::before adds a 44px (2.75rem) hit-slop around each handle.
+/* Visible handle dot: 14px — large enough to see and tap, small enough to not clutter.
+ * The transparent ::before adds a modest hit-slop around each handle.
+ *
+ * SLOP SIZING: the gate node is only 64×46px and the handles sit ON its edges, so a
+ * large hit-slop (the original 44px = inset -15px) BLEEDS into the gate body — a drag
+ * meant to move the NOT gate grabbed the connector instead. Now that the visible dot
+ * is a clearly-tappable 14px, it doesn't need a giant square target: a 14+12 = 26px
+ * circular slop (inset -6px) stays finger-reachable while extending only ~6px past the
+ * dot, so it no longer overlaps the gate silhouette. `border-radius: 50%` keeps the
+ * hit area a CIRCLE (not a square), so the corners that previously covered the body
+ * are not part of the target.
  *
  * NOTE: do NOT set `position` here. The xyflow library's own style.css already
  * declares `.react-flow__handle { position: absolute }` and positions each handle
@@ -24,8 +33,9 @@
 .react-flow__handle::before {
   content: '';
   position: absolute;
-  /* inset: -(44px - 14px) / 2 = -15px on all sides */
-  inset: -15px;
+  /* inset -6px → 14 + (6*2) = 26px circular hit area; small enough not to overlap
+   * the 64×46 gate body, large enough to tap the now-prominent 14px dot. */
+  inset: -6px;
   border-radius: 50%;
   /* Transparent hit area — no visual clutter */
 }
