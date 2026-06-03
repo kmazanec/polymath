@@ -2822,13 +2822,26 @@ export async function handleClientFrame(
       ? null
       : deterministicAuthoredPhaseAction(input);
 
-  // Propose an action (under a timeout), then validate it server-side before it
-  // crosses the wire (ADR-005 / criterion 5). The agent's own flow already ran
-  // Layer 2, but the wire boundary re-validates and *enforces*: a Zod-malformed
-  // proposal OR an item whose claimedTruthTable fails the recompute is downgraded
-  // to `no_action` rather than forwarded. The server never trusts the agent, even
-  // its own — defense in depth (CLAUDE.md invariant).
-  const agentProposed = deterministicAuthoredAction ?? await proposeWithTimeout(deps.agent, input);
+  // INVARIANT: the agent must NOT act on a connection handshake — only on real
+  // learner input. `session_start` is the WebSocket open frame (and is re-sent on
+  // every reconnect), NOT a learner action, and the web client already mounts the
+  // lesson intro client-side, so the server has nothing it must do here. A bare
+  // `session_start` therefore yields `no_action` and NEVER consults the agent.
+  //
+  // This is a SERVER-side trust-boundary guard (provider-independent): the heuristic
+  // provider politely returned an intro card on session_start, but the LLM provider
+  // has no session_start branch and would freely mount a practice item on top of the
+  // learner's intro — the exact bug. Gating here protects against ANY provider.
+  //
+  // The one carve-out is the DELIBERATE skip-to-rep choice (`?rep=` / "Start in
+  // code"), which arrives as `session_start` WITH `startRep`. That is genuine learner
+  // intent, and `deterministicAuthoredPhaseAction` already mounts the first item for
+  // it on the trusted deterministic path (it returns null without `startRep`). So we
+  // keep that action and only force `no_action` for a startRep-less handshake.
+  const isBareSessionStart = event.kind === 'session_start' && !event.startRep;
+  const agentProposed: Action = isBareSessionStart
+    ? noAction('wait_for_learner', 'session_start handshake — agent waits for learner input')
+    : deterministicAuthoredAction ?? (await proposeWithTimeout(deps.agent, input));
   // F-12 AC#3 dev seam: `?testForce=mastered` injects a real mastery-transition
   // proposal (bypassing the agent's own choice) so the earned-it gate's refusal is
   // demoable. It still flows through validateOutboundAction → the earned-it gate, so

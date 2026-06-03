@@ -1601,21 +1601,28 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     // asserts the in-turn fold, not just the DB row (mirror of the seam-on
     // 'folds against L2' test, inverted).
     //
-    // CHANGE 2: session_start on a fresh session now returns an IntroExplanation
-    // (instruction before practice) rather than a practice item directly. The
-    // integrity check still holds: the L1 intro explanation's topic ('AND') is an L1
-    // KC, not an L2 KC ('composition'). A leaked L2 fold would produce topic
-    // 'composition'; a correct L1 fold produces topic 'AND'.
-    it('FAILS CLOSED: a forged session_start.lessonId=2 with NO seam returns an L1 intro on turn 1 (not L2)', async () => {
+    // CHANGE 3 (session_start no-action guard): a bare `session_start` now returns
+    // `no_action` — the agent never acts on the handshake (the client mounts the
+    // intro itself; the agent waits for real learner input). So the L1-vs-L2 fold is
+    // observed on the FIRST LEARNER ACTION (`intro_advance`, which the heuristic
+    // provider answers via openingMove), not on session_start. The integrity check is
+    // unchanged: the mounted L1 intro card's topic is an L1 KC ('AND'/'Truth tables'),
+    // never an L2 KC ('composition'/'XOR'); a leaked L2 fold would surface an L2 topic.
+    it('FAILS CLOSED: a forged session_start.lessonId=2 with NO seam folds against L1 (not L2)', async () => {
       const { sessionId } = (await (await fetch(`${baseUrl}/api/session`, { method: 'POST' })).json()) as {
         sessionId: string;
       };
       const actions = await driveWithQuery('', [
+        // Turn 0: the handshake — the agent must stay silent (no_action).
         { kind: 'session_start', sessionId, lessonId: 2 },
+        // Turn 1: the first real learner action — THIS is where the L1/L2 fold shows.
+        { kind: 'intro_advance', sessionId },
       ]);
-      const startAction = actions[0];
+      // The handshake itself fabricated nothing.
+      expect(actions[0]?.type).toBe('no_action');
+      const startAction = actions[1];
       expect(startAction).toBeDefined();
-      // The opening move is now IntroExplanation (instruction-first).
+      // The first learner action mounts L1 intro content (instruction-first).
       expect(startAction!.type).toBe('mount');
       if (startAction!.type === 'mount') {
         expect(
