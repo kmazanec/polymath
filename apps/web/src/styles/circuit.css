@@ -145,9 +145,16 @@
   background: var(--circuit-gate-fill); box-shadow: var(--shadow-sm); color: var(--color-ink);
   display: flex; align-items: center; gap: 5px; }
 .rf-node--io { padding: 4px 8px; border: 1.5px solid var(--color-ink); }
+/* HIGH (carries a true signal): the green "energized" glow. */
 .rf-node[data-active='true'] { color: var(--color-pass); }
 .rf-node--io[data-active='true'] { background: var(--color-signal-tint); border-color: var(--color-pass);
   box-shadow: 0 0 0 2px var(--color-pass), 0 0 12px var(--color-signal-glow); }
+/* LOW (the pulse reached it but it carries a false/0 signal): evaluated, but NOT
+ * energized. A faint amber/muted outline so the learner sees the gate computed a
+ * 0 — the signal is present but de-asserted — distinct from both green-high and
+ * the idle un-reached state. The current follows the logic. */
+.rf-node--io[data-lit='low'] { border-color: var(--color-low, var(--color-border));
+  box-shadow: 0 0 0 1px var(--color-low, var(--color-border)); opacity: 0.92; }
 .rf-node--gate { background: transparent; box-shadow: none; display: block; }
 .rf-node__label { line-height: 1; }
 
@@ -178,8 +185,17 @@
  * flips which stylesheet loads last would silently revert the wire colors to the
  * library defaults (code-review finding). */
 .circuit-canvas .react-flow__edge-path { stroke: var(--color-low); stroke-width: 3; }
+/* HIGH wire — carries a true signal: the green flowing "current" (only HIGH edges
+ * get react-flow's `animated` dashed-flow, so the flow itself reads as live). */
 .circuit-canvas .react-flow__edge.animated .react-flow__edge-path { stroke: var(--color-signal);
   filter: drop-shadow(0 0 4px var(--color-signal-glow)); }
+/* LOW wire — the pulse traversed it but it carries a false/0: a steady muted
+ * stroke, NOT green and NOT animated, so a 0 doesn't masquerade as flowing
+ * current. Distinct from the idle default by a subtle dash so the learner sees
+ * the path was evaluated. */
+.circuit-canvas .react-flow__edge.edge--low .react-flow__edge-path {
+  stroke: var(--color-mid, var(--color-low)); stroke-width: 3; stroke-dasharray: 2 4;
+  filter: none; }
 
 /* R2-5: edges are tap-to-delete. Signal the affordance on hover/selection — a
  * pointer cursor + thicker, highlighted stroke so a learner sees the wire is

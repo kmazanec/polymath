@@ -292,13 +292,14 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
   const activeSchedule = pulse.current;
   const ctx = pulseValue(activeSchedule, pulse.activeStep);
 
-  // The pulse lights every node the front has reached AND every wire it has
-  // traversed — CUMULATIVELY. Each `PulseStep.fromEdges` names the edges feeding
-  // the node lit at that step; we union the edges of EVERY step up to and
-  // including the active one, so a wire the signal has already crossed stays lit
-  // rather than dimming when the front moves on. Cleared on a new run / circuit
-  // change (the runner resets activeStep to null).
-  const activeEdgeKeys = useMemo(() => {
+  // The pulse marks every wire the front has TRAVERSED — cumulatively — and
+  // colors it by the signal it actually CARRIES. A wire carries the value of its
+  // SOURCE node, so an edge is HIGH (green "current") only when its source is
+  // true for the learner's chosen inputs; a traversed wire whose source is false
+  // is LOW (dim/evaluated, not energized). This is what makes the current follow
+  // the logic: A=1,B=1 on `A & !B` lights A's wire but NOT the NOT-gate's output
+  // wire (¬1 = 0) nor the AND's output (1 & 0 = 0). Cleared on a new run / change.
+  const traversedEdgeKeys = useMemo(() => {
     const keys = new Set<string>();
     if (pulse.activeStep === null || !activeSchedule) return keys;
     for (let i = 0; i <= pulse.activeStep; i++) {
@@ -309,13 +310,24 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
     return keys;
   }, [activeSchedule, pulse.activeStep]);
 
+  const nodeValues = activeSchedule?.nodeValues;
   const renderedEdges = useMemo(
     () =>
-      edges.map((e) => ({
-        ...e,
-        animated: activeEdgeKeys.has(`${e.source}->${e.target}`),
-      })),
-    [edges, activeEdgeKeys],
+      edges.map((e) => {
+        const traversed = traversedEdgeKeys.has(`${e.source}->${e.target}`);
+        // The wire carries its SOURCE node's value.
+        const high = traversed && nodeValues?.[e.source] === true;
+        return {
+          ...e,
+          // Only HIGH wires animate (the green flowing "current").
+          animated: high,
+          // Tag low-but-traversed wires so the CSS can render them as evaluated
+          // (dim) rather than leaving them at the idle default.
+          data: { ...e.data, lit: high ? 'high' : traversed ? 'low' : 'idle' },
+          className: high ? 'edge--high' : traversed ? 'edge--low' : undefined,
+        };
+      }),
+    [edges, traversedEdgeKeys, nodeValues],
   );
 
   // Decorate the live nodes with per-render interaction data WITHOUT mutating the

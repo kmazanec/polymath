@@ -224,6 +224,13 @@ export interface PulseSchedule {
   vars: string[];
   /** The input assignment this schedule animates. */
   env: Record<string, boolean>;
+  /** The boolean value carried at EVERY node (inputs + gates + output) for this
+   *  input assignment. The renderer colors a node/wire HIGH (green) only when its
+   *  value is true, so the "current" actually follows the logic — an input set to
+   *  0, or a gate that evaluates false, reads as low, not as a lit signal. Inputs
+   *  are NOT emitted as animation steps, so this map is the only place an input's
+   *  value is available to the view. */
+  nodeValues: Record<string, boolean>;
   steps: PulseStep[];
 }
 
@@ -318,8 +325,13 @@ export function pulseSchedule(
     };
   });
 
+  // Resolve the value at EVERY node (not just the stepped gates/output) so the
+  // renderer can color inputs and any wire by the signal it actually carries.
+  const nodeValues: Record<string, boolean> = {};
+  for (const n of circuit.nodes) nodeValues[n.id] = valueOf(n.id);
+
   const vars = variables(built.ast);
-  return { vars, env, steps };
+  return { vars, env, nodeValues, steps };
 }
 
 /** Convenience: assert pulse output matches the validator for an assignment

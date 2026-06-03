@@ -21,6 +21,9 @@ export interface PulseContextValue {
   vars: string[];
   /** The input assignment the current schedule animates. */
   env: Record<string, boolean>;
+  /** Value carried at every node (inputs + gates + output) for this assignment.
+   *  HIGH/green coloring keys on this, so the lit signal follows the logic. */
+  nodeValues: Record<string, boolean>;
 }
 
 const EMPTY: PulseContextValue = {
@@ -28,6 +31,7 @@ const EMPTY: PulseContextValue = {
   schedule: [],
   vars: [],
   env: {},
+  nodeValues: {},
 };
 
 const PulseContext = createContext<PulseContextValue>(EMPTY);
@@ -39,20 +43,40 @@ export function usePulse(): PulseContextValue {
   return useContext(PulseContext);
 }
 
-/** True when this node has been lit by the pulse so far — i.e. the signal has
- *  already reached it. The pulse is CUMULATIVE: a node that the front has passed
- *  stays lit (it does not dim when the next node lights). A node is lit when it
- *  appears at any step index ≤ the active step. Returns false when no pulse is
- *  running so the canvas is dark at rest. */
-export function isNodeLit(
-  ctx: PulseContextValue,
-  nodeId: string,
-): boolean {
+/** True when the pulse has REACHED this node — the animation front has arrived
+ *  and its value is now settled. The pulse is CUMULATIVE: a node the front has
+ *  passed stays reached (it doesn't un-reach when the next node lights). Gates and
+ *  the output appear as steps, so they're reached once their step index ≤ the
+ *  active step. Inputs are NOT stepped (their value is known immediately), so an
+ *  input is "reached" as soon as any pulse is running. Returns false at rest. */
+export function isNodeReached(ctx: PulseContextValue, nodeId: string): boolean {
   if (ctx.activeStep === null) return false;
+  // An input never appears in the step list; treat it as reached while running.
+  const isStepped = ctx.schedule.some((s) => s.nodeId === nodeId);
+  if (!isStepped) return true;
   for (let i = 0; i <= ctx.activeStep; i++) {
     if (ctx.schedule[i]?.nodeId === nodeId) return true;
   }
   return false;
+}
+
+/** True when this node carries a HIGH (true) signal for the active assignment. */
+export function isNodeHigh(ctx: PulseContextValue, nodeId: string): boolean {
+  return ctx.nodeValues[nodeId] === true;
+}
+
+/** The color state of a node for the renderer:
+ *   - 'idle'  : the pulse hasn't reached it yet (or no pulse running)
+ *   - 'high'  : reached AND carrying true → glows green (the "current")
+ *   - 'low'   : reached but carrying false → evaluated, but not energized
+ *  This is what makes the lit signal FOLLOW THE LOGIC: a wire/node only glows
+ *  when it actually carries a 1 for the learner's chosen inputs. */
+export function nodeLitState(
+  ctx: PulseContextValue,
+  nodeId: string,
+): 'idle' | 'high' | 'low' {
+  if (!isNodeReached(ctx, nodeId)) return 'idle';
+  return isNodeHigh(ctx, nodeId) ? 'high' : 'low';
 }
 
 export function PulseProvider({
@@ -71,5 +95,11 @@ export function pulseValue(
   activeStep: number | null,
 ): PulseContextValue {
   if (!schedule) return EMPTY;
-  return { activeStep, schedule: schedule.steps, vars: schedule.vars, env: schedule.env };
+  return {
+    activeStep,
+    schedule: schedule.steps,
+    vars: schedule.vars,
+    env: schedule.env,
+    nodeValues: schedule.nodeValues,
+  };
 }

@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { isNodeLit, usePulse } from '../canvas/PulseContext.js';
+import { nodeLitState, usePulse } from '../canvas/PulseContext.js';
 import { GateShape, type GateShapeKind } from './gateShapes.js';
 
 /**
@@ -12,17 +12,18 @@ import { GateShape, type GateShapeKind } from './gateShapes.js';
  * parent does not rebuild every node's `data` per tick).
  */
 
-/** True once the pulse front has reached this node — and it STAYS true for the
- *  rest of the pulse (cumulative; the lit path does not dim as the front moves
- *  on). Each node reads the context itself, so a tick re-renders only the nodes
- *  whose lit state actually flipped this step, not the whole node array. */
-function useIsLit(nodeId: string): boolean {
+/** The node's pulse color state: 'idle' (not reached), 'high' (carries a true
+ *  signal → glows), or 'low' (reached but false). This is CUMULATIVE and follows
+ *  the LOGIC — a node only glows when it actually carries a 1 for the chosen
+ *  inputs. Each node reads the context itself, so a tick re-renders only the
+ *  nodes whose state flipped, not the whole array. */
+function useLitState(nodeId: string): 'idle' | 'high' | 'low' {
   const ctx = usePulse();
-  return isNodeLit(ctx, nodeId);
+  return nodeLitState(ctx, nodeId);
 }
 
 export function InputNode({ id, data }: NodeProps): ReactElement {
-  const lit = useIsLit(id);
+  const litState = useLitState(id);
   // Inputs carry a learner-chosen value (change 7). It's shown as a small badge
   // and toggled in the parent — here we just reflect it for the pulse semantics.
   const d = data as { name?: string; value?: boolean; onToggle?: () => void };
@@ -31,7 +32,8 @@ export function InputNode({ id, data }: NodeProps): ReactElement {
     <div
       className="rf-node rf-node--io"
       data-node="input"
-      data-active={lit}
+      data-active={litState === 'high'}
+      data-lit={litState}
       data-value={hasValue ? (d.value ? '1' : '0') : undefined}
     >
       <span className="rf-node__label">{String(d.name ?? '?')}</span>
@@ -59,19 +61,21 @@ export function InputNode({ id, data }: NodeProps): ReactElement {
 
 export function GateNode({ id, data }: NodeProps): ReactElement {
   const d = data as { gate?: string; onDelete?: () => void };
-  const lit = useIsLit(id);
+  const litState = useLitState(id);
   const isNot = d.gate === 'NOT';
   return (
     <div
       className="rf-node rf-node--gate"
       data-node="gate"
       data-gate={d.gate}
-      data-active={lit}
+      data-active={litState === 'high'}
+      data-lit={litState}
       style={{ width: 51, height: 37 }}
     >
       <Handle type="target" position={Position.Left} id="a" style={{ top: isNot ? '50%' : '30%' }} />
       {!isNot && <Handle type="target" position={Position.Left} id="b" style={{ top: '70%' }} />}
-      <GateShape kind={(d.gate as GateShapeKind) ?? 'AND'} live={lit} />
+      {/* The gate body glows only when the gate OUTPUTS a true (high) signal. */}
+      <GateShape kind={(d.gate as GateShapeKind) ?? 'AND'} live={litState === 'high'} />
       <Handle type="source" position={Position.Right} />
       {/* Change 5: remove this gate from the board. Sits at the corner; stop the
           pointer so tapping ✕ never starts a node drag. */}
@@ -95,9 +99,14 @@ export function GateNode({ id, data }: NodeProps): ReactElement {
 }
 
 export function OutputNode({ id }: NodeProps): ReactElement {
-  const lit = useIsLit(id);
+  const litState = useLitState(id);
   return (
-    <div className="rf-node rf-node--io" data-node="output" data-active={lit}>
+    <div
+      className="rf-node rf-node--io"
+      data-node="output"
+      data-active={litState === 'high'}
+      data-lit={litState}
+    >
       <Handle type="target" position={Position.Left} id="a" />
       OUT
     </div>
