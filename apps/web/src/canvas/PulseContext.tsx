@@ -39,6 +39,22 @@ export function usePulse(): PulseContextValue {
   return useContext(PulseContext);
 }
 
+/** True when this node has been lit by the pulse so far — i.e. the signal has
+ *  already reached it. The pulse is CUMULATIVE: a node that the front has passed
+ *  stays lit (it does not dim when the next node lights). A node is lit when it
+ *  appears at any step index ≤ the active step. Returns false when no pulse is
+ *  running so the canvas is dark at rest. */
+export function isNodeLit(
+  ctx: PulseContextValue,
+  nodeId: string,
+): boolean {
+  if (ctx.activeStep === null) return false;
+  for (let i = 0; i <= ctx.activeStep; i++) {
+    if (ctx.schedule[i]?.nodeId === nodeId) return true;
+  }
+  return false;
+}
+
 export function PulseProvider({
   value,
   children,

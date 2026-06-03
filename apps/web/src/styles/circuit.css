@@ -48,6 +48,22 @@
   touch-action: none;
 }
 
+/* Change 1: xyflow's own dist/style.css gives EVERY `.react-flow__node` wrapper a
+ * white background + 10px padding + border + radius. That white wrapper — not our
+ * inner `.rf-node` — is the "weird white box" around the A / B / OUT nodes in dark
+ * mode. Our nodes draw their OWN chrome on the inner `.rf-node`, so the wrapper
+ * must be a transparent, padding-less, border-less pass-through. Scoped under
+ * `.circuit-canvas` so it only affects this canvas, and wins over the library's
+ * single-class default by specificity. */
+.circuit-canvas .react-flow__node {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  width: auto;
+}
+
 /* IO nodes (input/output) must clear the 44px height floor so the tap area for
  * the node itself (not just its handle) is finger-sized. */
 .rf-node--io {
@@ -63,10 +79,15 @@
  * body reads on the light canvas, but on the dark canvas the dot must be a faint
  * LIGHT dot and the gate body a LIFTED surface (not dark-on-dark). */
 .circuit-builder {
-  /* Faint dark dot on the light --color-surface-muted canvas (unchanged value). */
+  /* Circuit-board surface tokens. Light mode: a pale green PCB with faint copper
+   * traces; dark mode (block below) flips to the classic dark-green board. */
+  --circuit-board-bg: #eef4ec;          /* board substrate */
+  --circuit-trace: rgba(40,90,60,0.16);  /* fine grid "traces" */
+  --circuit-pad: rgba(40,90,60,0.28);    /* solder-pad dots at trace crossings */
+  /* Faint dark dot on the light canvas (kept for any legacy reference). */
   --circuit-grid-dot: rgba(32,35,68,0.10);
-  /* Gate body fill — white on light; flips to a lifted dark surface so the gate
-   * doesn't vanish into the dark canvas. */
+  /* Gate / IO body fill — a clean light chip body on the board; flips to a lifted
+   * dark surface in dark mode so shapes don't vanish (and aren't glaring white). */
   --circuit-gate-fill: var(--color-surface);
 }
 .gate-shape { width: 100%; height: 100%; }
@@ -82,10 +103,25 @@
   font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600; color: var(--color-ink); cursor: pointer;
   box-shadow: var(--shadow-sm); transition: transform var(--dur-hover) var(--ease-spring);
   min-height: var(--touch-target-min, 2.75rem); min-width: var(--touch-target-min, 2.75rem); }
+.circuit-palette button { cursor: grab; }
+.circuit-palette button:active { cursor: grabbing; }
 .circuit-palette button:hover { transform: translateY(-2px); box-shadow: var(--shadow-card); }
 .circuit-palette button .gate-shape { width: 26px; height: 18px; flex: 0 0 auto; }
+/* Change 2: a circuit-board (PCB) surface — a fine trace grid (horizontal +
+ * vertical thin lines) with brighter solder-pad dots at the crossings, over a
+ * tinted board substrate. Layered backgrounds, painted back-to-front:
+ *   1. pad dots (radial) at each 26px crossing
+ *   2. vertical traces (linear gradient, 1px line every 26px)
+ *   3. horizontal traces
+ *   4. the board substrate fill
+ * Reads as an EE-class breadboard/PCB rather than a plain dotted note grid. */
 .circuit-canvas { border-radius: var(--radius-md); overflow: hidden;
-  background: radial-gradient(circle at 1px 1px, var(--circuit-grid-dot) 1px, transparent 0) 0 0 / 22px 22px, var(--color-surface-muted); }
+  background:
+    radial-gradient(circle at 13px 13px, var(--circuit-pad) 1.5px, transparent 2px) 0 0 / 26px 26px,
+    repeating-linear-gradient(to right, var(--circuit-trace) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(to bottom, var(--circuit-trace) 0 1px, transparent 1px 26px),
+    var(--circuit-board-bg);
+}
 .circuit-controls { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 /* Verdict / error status lines — match the .status-pass/.status-fail pattern in
    global.css (::before glyph + semantic color). The circuit's inline <p> elements
@@ -101,14 +137,41 @@
 .circuit-builder[data-verdict='incorrect'] .circuit-verdict::before { content: '✗'; }
 .circuit-error { font-family: var(--font-body); color: var(--color-fail); }
 .circuit-error::before { content: '✗'; margin-right: 0.35em; }
-/* react-flow node wrappers (the pulse lights data-active='true'). */
-.rf-node { font-family: var(--font-mono); font-weight: 600; font-size: 12px; border-radius: var(--radius-md);
-  background: var(--color-surface); box-shadow: var(--shadow-sm); color: var(--color-ink); }
-.rf-node--io { padding: 6px 10px; border: 1.5px solid var(--color-ink); }
+/* react-flow node wrappers (the pulse lights data-active='true').
+ * Change 1: IO nodes use the theme-aware --circuit-gate-fill (a chip body), NOT a
+ * hard white --color-surface, so they don't read as glaring white boxes on the
+ * dark board. Change 3: ~20% smaller — font 12→10px, IO padding 6/10 → 4/8px. */
+.rf-node { font-family: var(--font-mono); font-weight: 600; font-size: 10px; border-radius: var(--radius-sm);
+  background: var(--circuit-gate-fill); box-shadow: var(--shadow-sm); color: var(--color-ink);
+  display: flex; align-items: center; gap: 5px; }
+.rf-node--io { padding: 4px 8px; border: 1.5px solid var(--color-ink); }
 .rf-node[data-active='true'] { color: var(--color-pass); }
 .rf-node--io[data-active='true'] { background: var(--color-signal-tint); border-color: var(--color-pass);
   box-shadow: 0 0 0 2px var(--color-pass), 0 0 12px var(--color-signal-glow); }
-.rf-node--gate { background: transparent; box-shadow: none; }
+.rf-node--gate { background: transparent; box-shadow: none; display: block; }
+.rf-node__label { line-height: 1; }
+
+/* Change 7: the per-input value chip the learner taps to flip A/B between 0 and 1.
+ * A small mono pill; 1 reads as the live/high state (signal tint), 0 as low. */
+.rf-input-toggle { font-family: var(--font-mono); font-weight: 700; font-size: 10px; line-height: 1;
+  min-width: 18px; height: 18px; padding: 0 4px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--color-border); background: var(--color-surface-muted); color: var(--color-ink); }
+.rf-input-toggle[data-value='1'] { background: var(--color-signal-tint); border-color: var(--color-pass);
+  color: var(--color-pass); }
+
+/* Change 5: the gate delete affordance — a small ✕ at the gate's top-right.
+ * Absolutely positioned relative to the gate node wrapper. */
+.rf-node--gate { position: relative; }
+.rf-gate-delete { position: absolute; top: -8px; right: -8px; width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1;
+  border-radius: 50%; border: 1px solid var(--color-border); background: var(--color-surface);
+  color: var(--color-fail); font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: var(--shadow-sm);
+  opacity: 0; transition: opacity var(--dur-hover, 120ms) ease; }
+/* Reveal the ✕ on hover/focus (desktop) and keep it visible on touch where there
+ * is no hover — always-on below the coarse-pointer breakpoint. */
+.rf-node--gate:hover .rf-gate-delete,
+.rf-gate-delete:focus-visible { opacity: 1; }
+@media (hover: none) { .rf-gate-delete { opacity: 1; } }
 /* react-flow edges carry the signal color. Scoped under .circuit-canvas so these win
  * over @xyflow's own dist/style.css `.react-flow__edge-path` (same single-class
  * specificity) by SPECIFICITY, not by CSS import order — otherwise a refactor that
@@ -138,9 +201,15 @@
 @media (prefers-color-scheme: dark) {
   .circuit-builder {
     --circuit-grid-dot: rgba(255,255,255,0.10);
-    /* A lifted slate, distinctly lighter than the #1f2238 canvas, so the gate
+    /* Classic dark-green PCB. The board is a deep green-slate; traces are a faint
+     * brighter green and the solder pads a touch brighter still — an EE-class
+     * board, not the old flat dark-slate dotted note grid. */
+    --circuit-board-bg: #11241c;
+    --circuit-trace: rgba(120,220,160,0.10);
+    --circuit-pad: rgba(120,220,160,0.30);
+    /* A lifted slate, distinctly lighter than the board, so the gate/IO chip
      * silhouette reads clearly while the --color-ink (now light) stroke stays
-     * crisp on it. */
-    --circuit-gate-fill: #3a3f5e;
+     * crisp on it — and, crucially (change 1), so IO nodes are NOT white boxes. */
+    --circuit-gate-fill: #283142;
   }
 }

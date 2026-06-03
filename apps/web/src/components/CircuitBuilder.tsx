@@ -1,4 +1,13 @@
-import { type MouseEvent as ReactMouseEvent, type ReactElement, useCallback, useMemo, useRef, useState } from 'react';
+import {
+  type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Background,
   ReactFlow,
@@ -6,6 +15,7 @@ import {
   addEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -74,6 +84,36 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
   const reduced = useMemo(() => prefersReducedMotion(), []);
   const inputVars = useMemo(() => variablesOf(spec.targetExpression), [spec.targetExpression]);
 
+  // Change 7: the learner chooses each input's value (A, B, …) so they can watch
+  // the same circuit behave differently across input combinations. Defaults to
+  // all-true (the original pulse env). Toggling a value re-runs nothing on its
+  // own — it just changes what the next "Test it" pulse propagates — but it does
+  // clear the currently-lit path so the canvas isn't showing a stale assignment.
+  const [inputValues, setInputValues] = useState<Record<string, boolean>>({});
+  // Seed/extend the value map whenever the input variables change. Preserve any
+  // value the learner already picked for a still-present variable.
+  useEffect(() => {
+    setInputValues((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const v of inputVars) next[v] = prev[v] ?? true;
+      return next;
+    });
+  }, [inputVars]);
+
+  const [verdict, setVerdict] = useState<'correct' | 'incorrect' | null>(null);
+  const [failing, setFailing] = useState<Record<string, boolean> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const pulse = usePulseRunner();
+
+  const toggleInput = useCallback(
+    (name: string) => {
+      setInputValues((prev) => ({ ...prev, [name]: !(prev[name] ?? true) }));
+      // The lit path was computed for the old assignment — clear it.
+      pulse.reset();
+    },
+    [pulse],
+  );
+
   const initialNodes = useMemo<Node[]>(() => {
     const inputs: Node[] = inputVars.map((name, i) => ({
       id: `in-${name}`,
@@ -92,17 +132,18 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [verdict, setVerdict] = useState<'correct' | 'incorrect' | null>(null);
-  const [failing, setFailing] = useState<Record<string, boolean> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const pulse = usePulseRunner();
   // Per-instance gate-id counter — keeps node ids unique within this workspace
   // without leaking a shared module-level counter across mounts/instances.
   const seqRef = useRef(0);
+  const { screenToFlowPosition } = useReactFlow();
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   const onConnect = useCallback(
-    (c: Connection) => setEdges((eds) => addEdge(c, eds)),
-    [setEdges],
+    (c: Connection) => {
+      setEdges((eds) => addEdge(c, eds));
+      pulse.reset();
+    },
+    [setEdges, pulse],
   );
 
   // R2-5: tap an existing wire to remove it. iPad has no keyboard, so the
@@ -120,8 +161,9 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
       setVerdict(null);
       setFailing(null);
       setError(null);
+      pulse.reset();
     },
-    [setEdges],
+    [setEdges, pulse],
   );
 
   // R2-5: "Clear wires" — start the wiring over without touching placed gates.
@@ -130,10 +172,11 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
     setVerdict(null);
     setFailing(null);
     setError(null);
-  }, [setEdges]);
+    pulse.reset();
+  }, [setEdges, pulse]);
 
   const addGate = useCallback(
-    (gate: GateKind) => {
+    (gate: GateKind, position?: { x: number; y: number }) => {
       // BUG-06 fix: stagger each new gate so multiple gates never spawn on top of
       // each other (the old `{ x: 200, y: 40 + ns.length * 20 }` put every gate at
       // the same x with only a 20px y-step — and counted the fixed A/B/OUT nodes —
@@ -142,21 +185,66 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
       // tidy column between the input column (x≈0) and the output (x=400), wrapping
       // to a second column after a few so they stay inside the canvas. Gates are
       // ~80px tall, so the vertical step is 100px (no overlap).
+      // Change 6: when dropped from the palette, `position` is the flow-coords
+      // drop point — place the gate exactly where the learner let go.
       const gateIndex = seqRef.current++;
       const id = `g-${gateIndex}`;
       const col = Math.floor(gateIndex / 3);
       const row = gateIndex % 3;
-      setNodes((ns) => [
-        ...ns,
-        {
-          id,
-          type: 'gate',
-          position: { x: 180 + col * 90, y: 20 + row * 100 },
-          data: { gate },
-        },
-      ]);
+      const pos = position ?? { x: 180 + col * 90, y: 20 + row * 100 };
+      setNodes((ns) => [...ns, { id, type: 'gate', position: pos, data: { gate } }]);
+      // A new gate changes the topology — clear any stale verdict + lit path.
+      setVerdict(null);
+      setFailing(null);
+      setError(null);
+      pulse.reset();
     },
-    [setNodes],
+    [setNodes, pulse],
+  );
+
+  // Change 5: remove a placed gate. Drops the gate node AND every wire touching
+  // it (an orphaned edge would otherwise dangle / mis-evaluate). Mirrors the
+  // touch-friendly onEdgeClick removal — a ✕ affordance on the gate body.
+  const deleteGate = useCallback(
+    (id: string) => {
+      setNodes((ns) => ns.filter((n) => n.id !== id));
+      setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
+      setVerdict(null);
+      setFailing(null);
+      setError(null);
+      pulse.reset();
+    },
+    [setNodes, setEdges, pulse],
+  );
+
+  // Change 6: drag a gate from the palette and drop it onto the canvas. The
+  // palette button sets the gate kind on the dataTransfer; the canvas accepts the
+  // drop and places the gate at the (screen→flow) drop point. Click-to-add stays
+  // as the keyboard/fallback path, so this is purely additive.
+  const onPaletteDragStart = useCallback((event: ReactDragEvent, gate: GateKind) => {
+    event.dataTransfer.setData('application/polymath-gate', gate);
+    event.dataTransfer.effectAllowed = 'copy';
+  }, []);
+
+  const onCanvasDragOver = useCallback((event: ReactDragEvent) => {
+    if (event.dataTransfer.types.includes('application/polymath-gate')) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  }, []);
+
+  const onCanvasDrop = useCallback(
+    (event: ReactDragEvent) => {
+      const raw = event.dataTransfer.getData('application/polymath-gate');
+      if (!raw) return;
+      event.preventDefault();
+      const gate = raw as GateKind;
+      // screenToFlowPosition maps the drop's client coords into canvas/flow
+      // coords (accounting for pan + zoom) so the gate lands under the cursor.
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      addGate(gate, position);
+    },
+    [screenToFlowPosition, addGate],
   );
 
   const runPulse = useCallback(() => {
@@ -167,13 +255,15 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
       setError(built.message);
       return;
     }
-    // Animate the first input combination of the target's table.
+    // Change 7: animate the learner's chosen input assignment (defaults all-true
+    // until they toggle). This is what makes "watch the gate behave differently
+    // for different inputs" work — the pulse env is the live inputValues map.
     const env: Record<string, boolean> = {};
-    for (const v of inputVars) env[v] = true;
+    for (const v of inputVars) env[v] = inputValues[v] ?? true;
     const schedule = pulseSchedule(circuit, built, env);
     if (reduced) pulse.step(schedule);
     else pulse.start(schedule);
-  }, [nodes, edges, inputVars, reduced, pulse]);
+  }, [nodes, edges, inputVars, inputValues, reduced, pulse]);
 
   const submit = useCallback(() => {
     const circuit = toCircuit(nodes, edges);
@@ -202,15 +292,21 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
   const activeSchedule = pulse.current;
   const ctx = pulseValue(activeSchedule, pulse.activeStep);
 
-  // The pulse lights the active node (via data-active) AND its incoming wires.
-  // `PulseStep.fromEdges` names the edges feeding the node lit this step; we
-  // decorate exactly those react-flow edges with `animated: true` so the
-  // signal-green edge CSS fires only on the active propagation front.
+  // The pulse lights every node the front has reached AND every wire it has
+  // traversed — CUMULATIVELY. Each `PulseStep.fromEdges` names the edges feeding
+  // the node lit at that step; we union the edges of EVERY step up to and
+  // including the active one, so a wire the signal has already crossed stays lit
+  // rather than dimming when the front moves on. Cleared on a new run / circuit
+  // change (the runner resets activeStep to null).
   const activeEdgeKeys = useMemo(() => {
-    const step =
-      pulse.activeStep !== null ? activeSchedule?.steps[pulse.activeStep] : undefined;
-    if (!step) return new Set<string>();
-    return new Set(step.fromEdges.map((e) => `${e.source}->${e.target}`));
+    const keys = new Set<string>();
+    if (pulse.activeStep === null || !activeSchedule) return keys;
+    for (let i = 0; i <= pulse.activeStep; i++) {
+      const step = activeSchedule.steps[i];
+      if (!step) continue;
+      for (const e of step.fromEdges) keys.add(`${e.source}->${e.target}`);
+    }
+    return keys;
   }, [activeSchedule, pulse.activeStep]);
 
   const renderedEdges = useMemo(
@@ -220,6 +316,28 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
         animated: activeEdgeKeys.has(`${e.source}->${e.target}`),
       })),
     [edges, activeEdgeKeys],
+  );
+
+  // Decorate the live nodes with per-render interaction data WITHOUT mutating the
+  // topology state `toCircuit` reads: inputs get their learner-chosen value + a
+  // toggle (change 7); gates get a delete handler (change 5). Same pattern as
+  // renderedEdges — derived, not stored.
+  const renderedNodes = useMemo(
+    () =>
+      nodes.map((n) => {
+        if (n.type === 'input') {
+          const name = String(n.data?.name ?? n.id);
+          return {
+            ...n,
+            data: { ...n.data, value: inputValues[name] ?? true, onToggle: () => toggleInput(name) },
+          };
+        }
+        if (n.type === 'gate') {
+          return { ...n, data: { ...n.data, onDelete: () => deleteGate(n.id) } };
+        }
+        return n;
+      }),
+    [nodes, inputValues, toggleInput, deleteGate],
   );
 
   return (
@@ -241,22 +359,36 @@ function CircuitBuilderInner({ spec, onSubmit }: CircuitBuilderProps): ReactElem
                 g === 'AND' || g === 'OR' || g === 'NOT' || g === 'NAND' || g === 'NOR',
             )
             .map((g) => (
-              <button key={g} type="button" onClick={() => addGate(g)} data-gate={g}>
+              <button
+                key={g}
+                type="button"
+                onClick={() => addGate(g)}
+                draggable
+                onDragStart={(e) => onPaletteDragStart(e, g)}
+                data-gate={g}
+                title={`Click to add, or drag onto the board, a ${g} gate`}
+              >
                 <GateShape kind={g} />
                 Add {g} gate
               </button>
             ))}
         </div>
 
-        <div className="circuit-canvas" style={{ height: 320 }}>
-          {/* Nodes are passed by stable reference; each node component reads the
-              active pulse step from PulseContext itself, so a pulse tick re-renders
-              only the lit node, not the whole node array. Edges, by contrast, ARE
-              remapped each pulse step (`renderedEdges` decorates the active-path wires
-              with `animated:true` from the step's `fromEdges`) — cheap for these small
-              teaching circuits, and the wire animation is the point. */}
+        <div
+          ref={canvasRef}
+          className="circuit-canvas"
+          style={{ height: 320 }}
+          onDragOver={onCanvasDragOver}
+          onDrop={onCanvasDrop}
+        >
+          {/* `renderedNodes` decorates each node per render (input value+toggle,
+              gate delete handler) without mutating the topology state toCircuit
+              reads. Each node component still reads the active pulse step from
+              PulseContext itself, so a pulse tick re-renders only the lit nodes,
+              not the whole array. Edges are likewise remapped each step
+              (`renderedEdges` lights the cumulative traversed path). */}
           <ReactFlow
-            nodes={nodes}
+            nodes={renderedNodes}
             edges={renderedEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}

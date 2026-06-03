@@ -33,7 +33,7 @@ describe('usePulseRunner', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('advances through every step then returns to idle (continuous)', () => {
+  it('advances through every step and HOLDS the full path lit (cumulative)', () => {
     const sched = schedule();
     const { result } = renderHook(() => usePulseRunner());
     expect(result.current.activeStep).toBeNull();
@@ -49,7 +49,20 @@ describe('usePulseRunner', () => {
     }
     // We saw the final step index at some point...
     expect(seen).toContain(sched.steps.length - 1);
-    // ...and the runner ends idle.
+    // ...and the runner STOPS the timer but leaves activeStep at the final step
+    // so the whole traversed path stays lit (cumulative pulse — it does not dim
+    // back to idle). It's cleared by the next start() or by reset().
+    expect(result.current.running).toBe(false);
+    expect(result.current.activeStep).toBe(sched.steps.length - 1);
+  });
+
+  it('reset() clears the lit path back to idle', () => {
+    const sched = schedule();
+    const { result } = renderHook(() => usePulseRunner());
+    act(() => result.current.start(sched));
+    act(() => vi.advanceTimersByTime(300 * (sched.steps.length + 1)));
+    expect(result.current.activeStep).toBe(sched.steps.length - 1);
+    act(() => result.current.reset());
     expect(result.current.activeStep).toBeNull();
     expect(result.current.running).toBe(false);
   });

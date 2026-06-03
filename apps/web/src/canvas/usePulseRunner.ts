@@ -28,6 +28,9 @@ export interface PulseRunner {
   current: PulseSchedule | null;
   /** A human-readable announcement for the active step (screen-reader live region). */
   announcement: string;
+  /** Clear any lit path and stop the pulse (called when the circuit changes so a
+   *  stale lit path doesn't linger over a now-different topology). */
+  reset: () => void;
 }
 
 function describeStep(schedule: PulseSchedule, index: number): string {
@@ -71,12 +74,15 @@ export function usePulseRunner(): PulseRunner {
           }, interval * i),
         );
       }
-      // After the last step, hold briefly then go idle.
+      // After the last step, stop the timer but LEAVE the path fully lit
+      // (activeStep stays at the final index). The pulse is cumulative — every
+      // node/wire the signal traversed remains lit so the learner sees the whole
+      // path glowing, not a fading wave. It's cleared on the next start() (a new
+      // run) or when the circuit changes (the parent resets the schedule).
       timers.current.push(
         setTimeout(() => {
-          setActiveStep(null);
           setRunning(false);
-        }, interval * n + interval),
+        }, interval * n),
       );
     },
     [clearTimers],
@@ -103,5 +109,12 @@ export function usePulseRunner(): PulseRunner {
     [clearTimers],
   );
 
-  return { activeStep, running, start, step, current, announcement };
+  const reset = useCallback(() => {
+    clearTimers();
+    setActiveStep(null);
+    setRunning(false);
+    setAnnouncement('');
+  }, [clearTimers]);
+
+  return { activeStep, running, start, step, current, announcement, reset };
 }
