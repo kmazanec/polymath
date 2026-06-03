@@ -98,7 +98,10 @@ export function defaultItemPrompt(targetExpression: string, rep: string): string
   const display = formatLogicExpression(targetExpression);
   switch (rep) {
     case 'circuit':
-      return `Build a circuit that computes ${display}.`;
+      // The circuit canvas lets the learner set each input's value and run the
+      // pulse, so the prompt invites that exploration: change A/B and watch the
+      // lit "current" follow the gate's logic (only true signals glow).
+      return `Build a circuit that computes ${display}. Tip: tap the 0/1 next to each input to change its value, then press "Test it" — watch how the output follows the gate as the inputs change.`;
     case 'pseudocode':
       return `Write pseudocode that computes ${display}.`;
     default:

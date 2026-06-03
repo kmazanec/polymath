@@ -1,7 +1,7 @@
 {
   "lessonId": 2,
   "title": "Lesson 2 — Composition",
-  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (composition, XOR-as-composition), and a worked example ((A OR B) AND C traced row-by-row). Added two 2-variable bridge items at the front (l2-bridge-and-notb and l2-nor promoted to tier 1) to ease into 3-variable composition. Interleaved XOR discrimination anchor (l2-xor-canonical) earlier — moved from tier 3 position into mid-sequence after bridge items establish OR/NOT composition. Final tier ordering: bridge items (tier 1 2-var) → simple 3-var compositions (tier 1) → NOT-inside-composition (tier 2) → XOR canonical anchor (tier 2) → XOR forms + complex composition (tier 3) → majority + 3-var XOR (tier 4). All truthTables verified MSB-first. XOR is a pedagogical label only — never written as 'A XOR B' in expressions. Gate-reachability fix: added l2-comp3-ab-or-notanot c as a third tier-4 item — mastery_config requires consecutiveCorrectAtHardestTier:3 but there were only 2 tier-4 items, making the gate mathematically unreachable. Three tier-4 items are now present: l2-majority, l2-xor-three, l2-comp3-aob-nac.",
+  "_authoring": "Pedagogical full pass (curriculum audit). Added intro with lessonIntro, per-KC explanations (composition, XOR-as-composition), and a worked example ((A OR B) AND C traced row-by-row). Bridge items at the front ease into 3-variable composition. Owner-directed 2026-06-03: the FIRST item is now l2-bridge-and-b (plain A AND B, tier 1) — the simplest possible circuit, a single AND gate — so the composition lesson starts from the gate the learner already mastered before introducing NOT-inside-composition (A AND NOT B). On a circuit challenge the learner can tap the 0/1 chip on each input to change A and B and watch the output follow the gate (the circuit-prompt copy says so); this single-AND opener is where that exploration is most legible. Then l2-bridge-and-notb and l2-nor (both promoted to tier 1). Interleaved XOR discrimination anchor (l2-xor-canonical) earlier — moved from tier 3 position into mid-sequence after bridge items establish OR/NOT composition. Final tier ordering: bridge items (tier 1 2-var) → simple 3-var compositions (tier 1) → NOT-inside-composition (tier 2) → XOR canonical anchor (tier 2) → XOR forms + complex composition (tier 3) → majority + 3-var XOR (tier 4). All truthTables verified MSB-first. XOR is a pedagogical label only — never written as 'A XOR B' in expressions. Gate-reachability fix: added l2-comp3-ab-or-notanot c as a third tier-4 item — mastery_config requires consecutiveCorrectAtHardestTier:3 but there were only 2 tier-4 items, making the gate mathematically unreachable. Three tier-4 items are now present: l2-majority, l2-xor-three, l2-comp3-aob-nac.",
   "knowledgeComponents": ["composition", "XOR"],
   "intro": {
     "lessonIntro": {
@@ -44,6 +44,14 @@
     }
   },
   "items": [
+    {
+      "itemId": "l2-bridge-and-b",
+      "kc": "composition",
+      "difficultyTier": 1,
+      "targetExpression": "A AND B",
+      "variables": ["A", "B"],
+      "truthTable": [0, 0, 0, 1]
+    },
     {
       "itemId": "l2-bridge-and-notb",
       "kc": "composition",
