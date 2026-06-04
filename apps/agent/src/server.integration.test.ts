@@ -1071,11 +1071,12 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     if (advanceAction!.type === 'mount') {
       expect(advanceAction!.component.kind).toBe('TruthTablePractice');
       if (advanceAction!.component.kind === 'TruthTablePractice') {
-        // L2 item[0] expression — the curriculum-audit pass added a 2-variable
-        // composition BRIDGE item (`A AND NOT B`) as L2's first item, so a learner
-        // arriving from L1 meets the simplest composition before the 3-variable
-        // items (Sweller intrinsic-load sequencing).
-        expect(advanceAction!.component.expression).toBe('A AND NOT B');
+        // L2 item[0] expression — the composition lesson opens with the SIMPLEST
+        // possible circuit, a single AND gate (`A AND B`, l2-bridge-and-b), so a
+        // learner arriving from L1 builds on the gate they just mastered before
+        // composing NOT into it (`A AND NOT B` is now item[1]) and before the
+        // 3-variable items (Sweller intrinsic-load sequencing).
+        expect(advanceAction!.component.expression).toBe('A AND B');
       }
     }
 
