@@ -935,6 +935,33 @@ button:disabled,
   opacity: 0.7;
   pointer-events: none;
 }
+/* "Active now" marker — a slim mono tag pinned just above the live workspace so
+   the foot card reads as the LIVE focus, distinct from the read-only history
+   scrolled above it. Sits on the accent spine, aligned with the live card. */
+.thread__active-marker {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  align-self: flex-start;
+  margin-left: 1.5rem;
+  margin-bottom: calc(var(--space-3-5) * -0.4);
+}
+.thread__active-marker-pip {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: var(--rail-violet);
+  box-shadow: 0 0 0 0 rgba(123,108,255,0.45);
+  animation: thinking-pulse 1.8s ease-in-out infinite;
+}
+.thread__active-marker-label {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--desk-text-muted);
+}
 .thread__thinking {
   display: inline-flex;
   align-items: center;

@@ -118,6 +118,25 @@ function mountKey(spec: ComponentSpec): string {
 }
 
 /**
+ * Whether the pinned live workspace should carry the "Active now" marker.
+ * Full-screen overlay specs (celebration, explain-back, playground) OWN the
+ * surface — there is no scrolling history beside them to distinguish from, so
+ * a marker would be noise. Every other spec (practice items, probes, intros,
+ * worked examples) is a turn in the thread and benefits from being labelled as
+ * the live focus once there's history above it.
+ */
+function showsActiveMarker(spec: ComponentSpec): boolean {
+  switch (spec.kind) {
+    case 'MasteryCelebration':
+    case 'ExplainBackPrompt':
+    case 'PlaygroundCanvas':
+      return false;
+    default:
+      return true;
+  }
+}
+
+/**
  * F-27 (D7): Widen the phase collapse from 3 narrow → full PhaseName, so the
  * reserved left-rail slot (F-31) and the orientation banner can show all 7
  * phases.  The spine's state ids ARE the PhaseNames.
@@ -281,6 +300,18 @@ function LessonSession({
             >
               <span className="spoken-speaker">{interim.speaker === 'learner' ? 'You' : 'Tutor'}</span>
               <span className="spoken-text">{interim.text}</span>
+            </div>
+          )}
+
+          {/* "ACTIVE NOW" marker — only once there's history scrolled above, so the
+              pinned card at the foot reads as the LIVE focus (the thing to act on),
+              not a repeat of a card already in the log. Hidden for full-screen
+              overlay specs that own the surface and for the very first card (no
+              history yet). */}
+          {transcript.length > 0 && showsActiveMarker(mounted) && (
+            <div className="thread__active-marker" aria-hidden="true">
+              <span className="thread__active-marker-pip" />
+              <span className="thread__active-marker-label">Active now</span>
             </div>
           )}
 
@@ -658,6 +689,13 @@ export function App(): ReactElement {
   const onAskQuestion = useCallback((): void => {
     const q = question.trim();
     if (!sessionId || awaitingAgent || q.length === 0) return;
+    // Echo the learner's typed question into the transcript IMMEDIATELY as a
+    // learner spoken-turn bubble — the same "You: …" chat bubble the voice path
+    // produces — so the conversation reads as you → tutor → you, and the agent's
+    // reply (which lands as an AgentAnswer turn below) has visible context.
+    // Voice turns are echoed by the server's spoken-turn path instead, so the
+    // answer-side learner-bubble prepend (App's action handler) is gated on
+    // `spoken` to avoid double-echoing — a typed question is echoed here, once.
     if (phaseRef.current === 'transferring' && activeHiddenReps.current.length > 0) {
       const asked = wantsHiddenRep(q, activeHiddenReps.current);
       if (asked) {
@@ -667,12 +705,13 @@ export function App(): ReactElement {
           answer: transferRepRefusal(asked),
           topicClassification: 'on_topic',
         };
-        setSurface((prev) => applyMount(prev, refusalSpec));
+        setSurface((prev) => applyMount(appendSpokenTurn(prev, 'learner', q), refusalSpec));
         setQuestion('');
         return;
       }
     }
     setAwaitingAgent(true);
+    setSurface((prev) => appendSpokenTurn(prev, 'learner', q));
     socketRef.current?.send({ kind: 'learner_question', sessionId, question: q });
     setQuestion('');
   }, [awaitingAgent, question, sessionId]);
