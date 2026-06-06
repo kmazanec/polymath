@@ -119,9 +119,23 @@ describe('#3/#8 interleaved forward-progress ladder', () => {
     expect(mountRep(action)).not.toBe('truth_table');
   });
 
-  it('returns null (lets a privileged path own the turn) when the gate is already satisfied', () => {
+  it('returns null (lets the mastery celebration own the turn) when FULL mastery is satisfied', () => {
     const input = submitInput(1, 'l1-and', 'truth_table', { passedItemIds: new Set(['l1-and']) });
     expect(forwardProgressFallbackAction(input, true)).toBeNull();
+  });
+
+  it('keeps the learner in interleaved practice when the rule gate passed but FULL mastery is NOT yet reached (the I1 dead-end fix)', () => {
+    // The stuck-session scenario: every authored item passed, the rule gate is cleared,
+    // but mastery is unreachable this turn (no transfer item / explain-back deferred).
+    // `fullMasterySatisfied` is FALSE → the fallback must hand back a practice mount,
+    // never null (which would let the caller fall through to a silent no_action).
+    const allPassed = new Set(['l1-and', 'l1-or', 'l1-not', 'l1-review-mix']);
+    const input = submitInput(1, 'l1-not', 'pseudocode', {
+      recentHistory: [mountTurn('PseudocodeChallenge', 'NOT A')],
+      passedItemIds: allPassed,
+    });
+    const action = forwardProgressFallbackAction(input, false);
+    expect(action?.type).toBe('mount'); // NOT null, NOT no_action — the learner can act.
   });
 });
 

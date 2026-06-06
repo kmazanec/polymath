@@ -1424,13 +1424,23 @@ function pickInterleavedLadderMount(
  */
 export function forwardProgressFallbackAction(
   input: AgentInput,
-  gateSatisfied: boolean,
+  fullMasterySatisfied: boolean,
 ): Action | null {
   const event = input.event;
   if (event.kind !== 'submit') return null;
   if (input.currentSubmitCorrect !== true) return null;
-  // (1) Gate already satisfied → let a privileged path own the turn.
-  if (gateSatisfied) return null;
+  // (1) FULL MASTERY already satisfied → a privileged path (the server-minted
+  // MasteryCelebration / mastery transition) owns this turn; stay out of its way.
+  // NOTE: this must be the FULL mastery predicate, NOT the rule gate alone. A
+  // learner who clears only the rule gate (BKT + streak + ≥2 reps) but cannot yet
+  // reach mastery — because the transfer/explain-back path can't complete this turn
+  // (no unseen transfer item, or the voice explain-back bridge is deferred in I1) —
+  // has NO privileged path to own the turn. Bailing here on the rule gate alone is
+  // exactly what stranded such a learner in a silent `no_action` (solved item stays
+  // mounted, Submit dead). So we only defer on FULL mastery; otherwise we keep the
+  // learner in interleaved cross-rep practice below. We never DECLARE mastery here —
+  // the real gate still owns that — we only refuse to dead-end.
+  if (fullMasterySatisfied) return null;
 
   const items = input.lesson.content.items;
   if (items.length === 0) return null;
@@ -1478,6 +1488,34 @@ export function forwardProgressFallbackAction(
     `B7 forward-progress fallback — all authored items passed but mastery gate unmet; re-mounting hardest-tier item "${picked.item.itemId}" in rep=${ladderRep} (prev rep=${prev.rep}) to continue the INTERLEAVED consecutive-correct ladder`,
     ladderRep,
   );
+}
+
+/** The message shown on a continued-practice mount when the learner has cleared the
+ *  RULE GATE but cannot yet reach mastery (I1: the held-out transfer + voice
+ *  explain-back path can't complete this turn). It explains why they are still
+ *  practicing instead of leaving a solved item silently mounted. Prepended to the
+ *  item's own grounding prompt so the practice surface is unchanged otherwise. */
+const MASTERY_PENDING_NOTE =
+  "You've shown this across all three views — nicely done. Full mastery unlocks with a spoken explain-back, which is coming soon. Until then, keep sharpening here.";
+
+/** Return the practice-mount `action` with the mastery-pending note prepended to its
+ *  prompt. A no-op for any non-practice mount (the fallback only ever emits the three
+ *  practice components, but we stay total/fail-soft rather than assume). */
+function withMasteryPendingPrompt(action: Action): Action {
+  if (action.type !== 'mount') return action;
+  const c = action.component;
+  if (
+    c.kind !== 'TruthTablePractice' &&
+    c.kind !== 'CircuitBuilder' &&
+    c.kind !== 'PseudocodeChallenge'
+  ) {
+    return action;
+  }
+  const basePrompt = c.prompt ? `${c.prompt} ` : '';
+  return {
+    ...action,
+    component: { ...c, prompt: `${MASTERY_PENDING_NOTE} ${basePrompt}`.trim() },
+  };
 }
 
 /** Run the agent turn under a timeout; a timeout degrades to `no_action`. */
@@ -2989,12 +3027,26 @@ export async function handleClientFrame(
     event.kind === 'submit' &&
     learnerDerived.currentSubmitCorrect === true
   ) {
-    const candidate = forwardProgressFallbackAction(
-      input,
-      gateEvaluation.passed || learnerDerived.snapshot.ruleGatePassed,
-    );
+    // Pass the FULL mastery predicate (`gateEvaluation.passed`), NOT `|| ruleGatePassed`.
+    // The old `|| ruleGatePassed` made B7 bail whenever the rule gate passed — but a
+    // rule-gate-only learner has no privileged path to own the turn in I1 (the transfer
+    // probe may have no unseen item, and the voice explain-back bridge is deferred), so
+    // bailing stranded them in a silent `no_action`. With full-mastery only, B7 keeps a
+    // rule-gate-cleared learner in interleaved cross-rep practice instead of dead-ending,
+    // and still defers (returns null) the moment real mastery is actually reached.
+    const candidate = forwardProgressFallbackAction(input, gateEvaluation.passed);
     if (candidate) {
-      const { action: fpShaped } = validateOutboundAction(candidate);
+      // When the learner has cleared the RULE GATE but mastery is not yet reachable
+      // (the I1 state: continued practice with no privileged path), tell them WHY they
+      // are still practicing rather than silently re-mounting an item. Rides on the
+      // existing `prompt` field of the practice mount — no contract change, no new
+      // ComponentKind. (A learner who has NOT cleared the rule gate just gets normal
+      // continued practice with the default prompt.)
+      const withMessage =
+        learnerDerived.snapshot.ruleGatePassed && !gateEvaluation.passed
+          ? withMasteryPendingPrompt(candidate)
+          : candidate;
+      const { action: fpShaped } = validateOutboundAction(withMessage);
       const fpLayer2 = validateLayer2(fpShaped);
       const fpRejection = rejectUnauthorizedAction(
         fpShaped,
