@@ -88,6 +88,13 @@ describe('VoiceBridge — persona config wired into session.connect (no DB neede
     expect(connectedConfig.systemPrompt).toContain(VOICE_PERSONA);
     expect(connectedConfig.systemPrompt.startsWith(VOICE_PERSONA)).toBe(true);
   });
+
+  it('getSession() returns the same RealtimeSession the bridge wraps (so the explain-back capture can subscribe to the one conversation stream)', () => {
+    const stubDb = { insert: () => ({ values: () => Promise.resolve() }) } as unknown as Db;
+    const session = new MockRealtimeSession();
+    const bridge = new VoiceBridge(bridgeOpts(session, stubDb, 'sess-getter'));
+    expect(bridge.getSession()).toBe(session);
+  });
 });
 
 describe('VoiceBridge — barge-in (no DB needed)', () => {

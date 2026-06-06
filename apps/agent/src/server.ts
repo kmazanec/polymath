@@ -110,12 +110,17 @@ export interface ServerDeps {
    *  precondition #3. Defaults to the injected `explainBackCaptureRegistry`'s getter
    *  in `createServer`, so the production path has a real server-side transcript seam. */
   explainBackTranscriptFor?: (sessionId: string, targetItemId: string) => string | undefined;
-  /** F-11 server-side voice-capture registry (the bridge ↔ explain-back seam). When
+  /** F-11/F-34 server-side voice-capture registry (the bridge ↔ explain-back seam). When
    *  the caller doesn't inject `explainBackTranscriptFor`/`explainBackProsodyFor`
    *  directly, `createServer` sources both from this registry — the production wiring
-   *  that makes a real spoken explain-back yield a server-side transcript. Defaults to
-   *  a fresh registry; populating it from a live device session is the deferred
-   *  cross-platform smoke (see explainBackRegistry.ts). */
+   *  that makes a real spoken explain-back yield a server-side transcript. Defaults to a
+   *  fresh registry. The fill path is LIVE: when the server mounts an `ExplainBackPrompt`
+   *  and a live `VoiceBridge` exists for the session, `handleClientFrame` binds that
+   *  bridge's `RealtimeSession` here via `register(sessionId, targetItemId, session)` —
+   *  so the learner's spoken explain-back (the same one conversation) is captured and read
+   *  by the gate. Only the live cross-platform DEVICE smoke (real mic + keys) remains
+   *  deferred (docs/voice-cross-platform-smoke.md); the binding is exercised offline with
+   *  a MockRealtimeSession. Fail-closed: no live bridge → no capture → gate blocks. */
   explainBackCaptureRegistry?: ExplainBackCaptureRegistry;
   /**
    * F-30 (ADR-016): the general-utterance registry backing `latestLearnerUtteranceFor`.
@@ -123,16 +128,16 @@ export interface ServerDeps {
    * the client frame. When not injected, `createServer` defaults a fresh registry and
    * exposes it as `server.learnerUtteranceRegistry`.
    *
-   * NOTE (MR !11 review — do not overclaim): the registry is *designed to be filled*
-   * by a server-side `VoiceBridge.onLearnerUtterance` callback, but — exactly like the
-   * sibling `explainBackCaptureRegistry` — that bridge is NOT constructed in production
-   * yet. `handleRealtimeSession` only mints a LiveKit token; connecting a server-side
-   * VoiceBridge to the LiveKit room (so a real spoken utterance reaches this registry)
-   * is the DEFERRED cross-platform voice-capture smoke (docs/voice-cross-platform-smoke.md),
-   * pending a human tester with real devices + keys. Until then the registry stays empty
-   * in production and every `spoken_turn` fails closed to an ack — the gate is built and
-   * airtight, but the legitimate fill path is deferred together with explain-back's.
-   * Tests inject either the registry (to prime it) or the getter directly.
+   * The registry is filled by a server-side `VoiceBridge.onLearnerUtterance` callback.
+   * The production bridge IS now constructed: when `voiceConfigured()` and `OPENAI_API_KEY`
+   * are set, `createServer` wires the live `createRealtimeSession` factory and
+   * `handleRealtimeSession` starts a real `VoiceBridge` (joining the LiveKit room + an
+   * OpenAI-Realtime session), whose `onLearnerUtterance` calls `setLatest` here. So in a
+   * configured deploy the fill path is ACTIVE and `spoken_turn` answers a real utterance;
+   * with voice unconfigured the registry stays empty and `spoken_turn` fails closed to an
+   * ack. The only piece still deferred is the live cross-platform DEVICE smoke (real mic +
+   * keys across browsers — docs/voice-cross-platform-smoke.md); the seam is exercised
+   * offline with a MockRealtimeSession. Tests inject either the registry or the getter.
    */
   learnerUtteranceRegistry?: LearnerUtteranceRegistry;
   /**
@@ -3093,6 +3098,28 @@ export async function handleClientFrame(
         action = wsShaped;
         wrongSubmitNetFired = true;
       }
+    }
+  }
+
+  // EXPLAIN-BACK LIVE CAPTURE BINDING. The explain-back is the one point in the single
+  // tutor conversation where voice is REQUIRED and the SPOKEN transcript is the integrity
+  // source. When this turn's wire action mounts the ExplainBackPrompt, bind the session's
+  // already-running live RealtimeSession (the same one the conversational bridge uses) into
+  // the ExplainBackCaptureRegistry for this item — so the learner's spoken explain-back is
+  // captured server-side and read by `explainBackTranscriptFor` at the gate. Fail-closed:
+  // a session with NO live bridge (voice unconfigured, or a text-only learner) binds
+  // nothing, the capture stays empty, and the gate fails closed at precondition #3 exactly
+  // as before. The capture only ingests finalized learner segments and is read ONLY through
+  // the server seam — never `event.transcript`. register() is idempotent per (session,item),
+  // so a reconnect re-mount reuses the existing capture rather than dropping the stream.
+  if (action.type === 'mount' && action.component.kind === 'ExplainBackPrompt') {
+    const liveBridge = deps.liveBridgeRegistry?.get(event.sessionId);
+    if (liveBridge) {
+      deps.explainBackCaptureRegistry?.register(
+        event.sessionId,
+        action.component.targetItemId,
+        liveBridge.getSession(),
+      );
     }
   }
 

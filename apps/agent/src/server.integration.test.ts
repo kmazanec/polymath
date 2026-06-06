@@ -14,6 +14,10 @@ import { deriveState, toLearnerState, type LoggedEvent } from './mastery/eventCo
 import { loadLesson } from './lessons/loader.js';
 import type { ExplainBackJudge } from '@polymath/graph';
 import { eq } from 'drizzle-orm';
+import { ExplainBackCaptureRegistry } from './voice/explainBackRegistry.js';
+import { LiveBridgeRegistry } from './voice/liveBridgeRegistry.js';
+import { MockRealtimeSession } from './voice/realtimeClient.js';
+import { VoiceBridge } from './voice/bridge.js';
 
 /**
  * End-to-end integration test. Boots a throwaway Postgres in Docker, runs
@@ -899,6 +903,196 @@ describe.skipIf(!canRunPg)('agent server end-to-end', () => {
     expect(gateSeries.some((g) => g.passed === true)).toBe(true); // then passed
     expect(replay.events.some((e) => e.payload.explainBackVerdict?.passed === true)).toBe(true);
     expect(replay.events.some((e) => e.payload.statechartDecision === 'accept')).toBe(true);
+  });
+
+  /**
+   * F-34 — the PRODUCTION binding test: a SPOKEN explain-back reaches the gate WITHOUT
+   * the test ever calling `setTranscript`. The other mastery tests inject the transcript
+   * by hand (simulating the binding production never performed); this one proves the real
+   * path: when the server mounts the ExplainBackPrompt it binds the session's live
+   * RealtimeSession into the ExplainBackCaptureRegistry, so the learner's spoken utterance
+   * — pushed through that same session's transcript stream — is captured server-side and
+   * read by the gate. Uses an injected MockRealtimeSession bridge (no LiveKit/keys), so it
+   * runs offline; the live device smoke is the human checklist in docs/features/34-*.md.
+   */
+  it('F-34: a spoken explain-back captured via the live-bridge binding clears the gate to mastery — no hand-injected transcript', async () => {
+    // A dedicated server with INJECTED voice registries we can pre-populate with a mock
+    // bridge. Everything else (db, agent) matches the shared server.
+    const captureRegistry = new ExplainBackCaptureRegistry();
+    const bridgeRegistry = new LiveBridgeRegistry();
+    const f34Server = createServer({
+      db,
+      agent: new StubAgentClient(),
+      explainBackCaptureRegistry: captureRegistry,
+      liveBridgeRegistry: bridgeRegistry,
+    });
+    await new Promise<void>((resolve) => f34Server.httpServer.listen(0, resolve));
+    const { port } = f34Server.httpServer.address() as AddressInfo;
+    const f34Base = `http://localhost:${port}`;
+    const f34Ws = `ws://localhost:${port}/agent`;
+
+    try {
+      const { sessionId } = (await (await fetch(`${f34Base}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+
+      // Drive past the rule gate to the transfer probe, then pass the transfer — the
+      // server reflex mounts ExplainBackPrompt, and (the feature) binds the capture.
+      const upToProbe = await driveToTransferProbe(sessionId, f34Ws, l1CorrectFor);
+      const probe = upToProbe.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+      const probedItemId =
+        probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+      const probedExpr =
+        probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+      expect(probedItemId).toBeTruthy();
+
+      // Let the drive socket's deferred close (and its closeAndUnregister teardown) fully
+      // settle BEFORE we register our bridge — otherwise the close event races our
+      // register() and removes the bridge right after we add it.
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Stand up a live bridge for the session, backed by a MockRealtimeSession (no
+      // network). reserve()+register() is the same lifecycle handleRealtimeSession uses.
+      // Registered AFTER the drive socket closed (its WS-close would otherwise tear the
+      // bridge down via closeAndUnregister) and BEFORE the transfer turn that mounts the
+      // ExplainBackPrompt — modelling "a live voice bridge is present when explain-back
+      // begins," which is the real production precondition.
+      const mockSession = new MockRealtimeSession();
+      await mockSession.connect({ systemPrompt: 'p', cacheKey: 'k', model: 'gpt-realtime' });
+      const bridge = new VoiceBridge({
+        session: mockSession,
+        db,
+        sessionId,
+        learnerId: sessionId,
+        lessonId: 1,
+        lessonTitle: 'AND, OR, NOT',
+        phase: 'practicing',
+        modelVersion: 'gpt-realtime',
+        publishAudio: () => {},
+      });
+      expect(bridgeRegistry.reserve(sessionId)).toBe(true);
+      expect(bridgeRegistry.register(sessionId, bridge, () => Promise.resolve())).toBe(true);
+
+      // Passing the transfer mounts the ExplainBackPrompt → triggers the capture binding
+      // for (sessionId, probedItemId). These sockets never send `session_start`, so they
+      // never bind the session and their close never tears down the bridge we registered.
+      const ebPrompt = await new Promise<Action>((resolve, reject) => {
+        const ws = new WebSocket(f34Ws);
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({ kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            resolve(Action.parse(msg.action));
+            ws.close();
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('explain-back mount timed out')), 8000);
+      });
+      expect(ebPrompt.type).toBe('mount');
+      expect(ebPrompt.type === 'mount' && ebPrompt.component.kind).toBe('ExplainBackPrompt');
+
+      // AC-2: the binding fired, so the capture is live for this item. The learner SPEAKS
+      // — push a finalized learner utterance through the SAME session's transcript stream.
+      // We never call captureRegistry.setTranscript; the binding is the only fill path.
+      mockSession.pushLearnerUtterance(
+        'For this AND gate the output is true only when both A and B are true across every row of the truth table.',
+      );
+      mockSession.flush();
+      expect(captureRegistry.transcriptFor(sessionId, probedItemId)).toContain('both A and B are true');
+
+      // AC-5: with the SERVER-captured transcript present (not hand-injected), the
+      // synthetic-PASS seam folds, the full gate clears, and a MasteryCelebration mounts.
+      const mastery = await new Promise<Action>((resolve, reject) => {
+        const ws = new WebSocket(`${f34Ws}?testExplainBackVerdict=pass`);
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({
+              kind: 'explain_back_recording_ended',
+              sessionId,
+              targetItemId: probedItemId,
+              transcript: 'ignored — the server reads its own capture, never this field',
+              durationMs: 20000,
+            }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            resolve(Action.parse(msg.action));
+            ws.close();
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('mastery turn timed out')), 8000);
+      });
+      expect(mastery.type).toBe('mount');
+      expect(mastery.type === 'mount' && mastery.component.kind).toBe('MasteryCelebration');
+    } finally {
+      await f34Server.close();
+    }
+  });
+
+  /**
+   * F-34 fail-closed: with NO live bridge for the session (a text-only learner, or voice
+   * unconfigured), mounting the ExplainBackPrompt binds nothing, the capture stays empty,
+   * and the gate fails closed — exactly as before the feature. Proves the binding never
+   * weakens the integrity default.
+   */
+  it('F-34: no live bridge → ExplainBackPrompt mounts but the capture stays empty (fail closed)', async () => {
+    const captureRegistry = new ExplainBackCaptureRegistry();
+    const bridgeRegistry = new LiveBridgeRegistry(); // intentionally EMPTY — no bridge registered
+    const f34Server = createServer({
+      db,
+      agent: new StubAgentClient(),
+      explainBackCaptureRegistry: captureRegistry,
+      liveBridgeRegistry: bridgeRegistry,
+    });
+    await new Promise<void>((resolve) => f34Server.httpServer.listen(0, resolve));
+    const { port } = f34Server.httpServer.address() as AddressInfo;
+    const f34Base = `http://localhost:${port}`;
+    const f34Ws = `ws://localhost:${port}/agent`;
+
+    try {
+      const { sessionId } = (await (await fetch(`${f34Base}/api/session`, { method: 'POST' })).json()) as {
+        sessionId: string;
+      };
+      const upToProbe = await driveToTransferProbe(sessionId, f34Ws, l1CorrectFor);
+      const probe = upToProbe.findLast((a) => a.type === 'mount' && a.component.kind === 'TransferProbe');
+      const probedItemId =
+        probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.itemId : '';
+      const probedExpr =
+        probe?.type === 'mount' && probe.component.kind === 'TransferProbe' ? probe.component.expression : '';
+      expect(probedItemId).toBeTruthy();
+
+      const ebPrompt = await new Promise<Action>((resolve, reject) => {
+        const ws = new WebSocket(f34Ws);
+        ws.on('open', () =>
+          ws.send(
+            JSON.stringify({ kind: 'transfer_submitted', sessionId, itemId: probedItemId, submission: probedExpr }),
+          ),
+        );
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.kind === 'action') {
+            resolve(Action.parse(msg.action));
+            ws.close();
+          }
+        });
+        ws.on('error', reject);
+        setTimeout(() => reject(new Error('explain-back mount timed out')), 8000);
+      });
+      expect(ebPrompt.type === 'mount' && ebPrompt.component.kind).toBe('ExplainBackPrompt');
+
+      // No bridge bound → the capture is empty → the gate cannot read a transcript.
+      expect(captureRegistry.transcriptFor(sessionId, probedItemId)).toBeUndefined();
+    } finally {
+      await f34Server.close();
+    }
   });
 
   /**

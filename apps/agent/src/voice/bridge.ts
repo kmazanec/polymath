@@ -124,6 +124,14 @@ export class VoiceBridge {
     this.turn = freshTurn(this.nextTurnId());
   }
 
+  /** The live `RealtimeSession` this bridge wraps. The explain-back capture binds to
+   *  THIS session — the spoken explain-back is part of the same one conversation, so
+   *  its transcript arrives on the same `onTranscript` stream the bridge consumes,
+   *  not a separate session. */
+  getSession(): RealtimeSession {
+    return this.opts.session;
+  }
+
   /** Connect the session and subscribe to its transcript/audio streams. */
   async start(): Promise<void> {
     if (this.started) return;
